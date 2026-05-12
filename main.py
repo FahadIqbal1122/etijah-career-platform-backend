@@ -25,7 +25,8 @@ supabase: Client = create_client(
 
 @app.get("/")
 def root():
-    return {"status": "ok"}
+    key = os.getenv("SUPABASE_KEY", "NOT SET")
+    return {"status": "ok", "key_prefix": key[:20]}
 
 @app.post("/assessment/{response_id}/score")
 def score_assessment(response_id:str):
