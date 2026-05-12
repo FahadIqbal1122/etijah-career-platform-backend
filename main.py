@@ -27,7 +27,7 @@ supabase: Client = create_client(
 def root():
     return {"status": "ok"}
 
-@aoo.post("/assessment/{response_id}/score")
+@app.post("/assessment/{response_id}/score")
 def score_assessment(response_id:str):
     # Fetch the response
     row = supabase.table('assessment_responses') \
