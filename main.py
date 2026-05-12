@@ -29,7 +29,10 @@ def root():
 
 @app.post("/assessment/{response_id}/score")
 def score_assessment(response_id:str):
-    # Fetch the response
+    print(f"DEBUG: querying response_id={repr(response_id)}", flush=True)
+    all_rows = supabase.table('assessment_responses').select('id').execute()
+    print(f"DEBUG: all ids in table={[r['id'] for r in all_rows.data]}", flush=True)
+
     row = supabase.table('assessment_responses') \
         .select('answers') \
         .eq('id', response_id) \
