@@ -1,0 +1,131 @@
+# Maps forced-choice answers to numeric scores
+FORCED_CHOICE_SCORES = {
+    'Q6':  {'A': 6, 'B': 1},   # A=Artistic, B=Conventional
+    'Q17': {'A': 6, 'B': 1},   # A=Extrovert, B=Introvert
+    'Q36': {'A': 6, 'B': 1},   # A=Wealth, B=low Wealth                                                                                                                                                
+    'Q38': {'A': 6, 'B': 1},   # A=National, B=International
+    'Q40': {'A': 6, 'B': 1},   # A=Reputation, B=Impact
+    'Q59': {'A': 1, 'B': 6},   # A=low resilience, B=high
+    'Q60': {'A': 1, 'B': 4, 'C': 6},
+    'Q61': {'A': 1, 'B': 2, 'C': 4, 'D': 6},                                                                                                                                                           
+    'Q64': {'A': 1, 'B': 6, 'C': 4},                                                                                                                                                                   
+    'Q65': {'A': 6, 'B': 1},   # A=fast-paced, B=steady
+    'Q66': {'A': 1, 'B': 6},   # A=large org, B=startup
+    'Q67': {'A': 1, 'B': 6},   # A=public, B=private                                                                                                                                                   
+    'Q71': {'A': 6, 'B': 1},   # A=high risk, B=low risk
+}
+
+REVERSE_SCORED = {'Q21', 'Q22'}
+
+# Maps each question to its framework and dimension
+QUESTION_MAP = {
+    # RIASEC
+    'Q1':  ('riasec', 'realistic'),
+    'Q2':  ('riasec', 'realistic'),
+    'Q3':  ('riasec', 'investigative'),
+    'Q4':  ('riasec', 'investigative'),
+    'Q5':  ('riasec', 'artistic'),
+    'Q6':  ('riasec', 'artistic'),       # forced-choice: A=artistic
+    'Q7':  ('riasec', 'social'),
+    'Q8':  ('riasec', 'social'),
+    'Q9':  ('riasec', 'enterprising'),
+    'Q10': ('riasec', 'enterprising'),
+    'Q11': ('riasec', 'conventional'),
+    'Q12': ('riasec', 'conventional'),
+    # Big Five
+    'Q13': ('big_five', 'openness'),
+    'Q14': ('big_five', 'openness'),
+    'Q15': ('big_five', 'conscientiousness'),
+    'Q16': ('big_five', 'conscientiousness'),
+    'Q17': ('big_five', 'extraversion'),  # forced-choice
+    'Q18': ('big_five', 'extraversion'),
+    'Q19': ('big_five', 'agreeableness'),
+    'Q20': ('big_five', 'agreeableness'),
+    'Q21': ('big_five', 'stability'),     # reverse scored
+    'Q22': ('big_five', 'stability'),     # reverse scored
+    # Values
+    'Q23': ('values', 'security'),
+    'Q24': ('values', 'security'),
+    'Q25': ('values', 'freedom'),
+    'Q26': ('values', 'freedom'),
+    'Q27': ('values', 'impact'),
+    'Q28': ('values', 'impact'),
+    'Q29': ('values', 'status'),
+    'Q30': ('values', 'status'),
+    'Q31': ('values', 'family'),
+    'Q32': ('values', 'family'),
+    'Q33': ('values', 'creativity'),
+    'Q34': ('values', 'creativity'),
+    'Q35': ('values', 'wealth'),
+    'Q36': ('values', 'wealth'),          # forced-choice
+    'Q37': ('values', 'national_contribution'),
+    'Q38': ('values', 'national_contribution'),  # forced-choice
+    'Q39': ('values', 'reputation'),
+    'Q40': ('values', 'reputation'),      # forced-choice
+    # Strengths
+    'Q41': ('strengths', 'strategic'),
+    'Q42': ('strengths', 'strategic'),
+    'Q43': ('strengths', 'leadership'),
+    'Q44': ('strengths', 'leadership'),
+    'Q45': ('strengths', 'relationships'),
+    'Q46': ('strengths', 'relationships'),
+    'Q47': ('strengths', 'execution'),
+    'Q48': ('strengths', 'execution'),
+    'Q49': ('strengths', 'communication'),
+    'Q50': ('strengths', 'communication'),
+    'Q51': ('strengths', 'learning'),
+    'Q52': ('strengths', 'learning'),
+    # Resilience
+    'Q53': ('resilience', 'long_term_focus'),
+    'Q54': ('resilience', 'long_term_focus'),
+    'Q55': ('resilience', 'long_term_focus'),
+    'Q56': ('resilience', 'long_term_focus'),
+    'Q57': ('resilience', 'long_term_focus'),
+    'Q59': ('resilience', 'workplace_resilience'),  # forced-choice
+    'Q60': ('resilience', 'workplace_resilience'),  # forced-choice
+    'Q61': ('resilience', 'workplace_resilience'),  # forced-choice
+    'Q64': ('resilience', 'workplace_resilience'),  # forced-choice
+    # Work Style
+    'Q65': ('work_style', 'pace'),
+    'Q66': ('work_style', 'environment'),
+    'Q67': ('work_style', 'sector'),
+    'Q68': ('work_style', 'mobility'),
+    # Entrepreneurship
+    'Q69': ('entrepreneurship', 'prior_experience'),
+    'Q71': ('entrepreneurship', 'risk_tolerance'),  # forced-choice
+    'Q73': ('entrepreneurship', 'portfolio_interest'),
+}
+
+def score_answer(question_id: str, raw_answer) -> float:
+    if question_id in FORCED_CHOICE_SCORES:
+        return float(FORCED_CHOICE_SCORES[question_id].get(str(raw_answer), 0))
+    score = float(raw_answer)
+    if question_id in FORCED_CHOICE_SCORES:
+        score = 7-score
+    return score
+
+def compute_scores(answers: dict) -> list[dict]:
+    # Accumulate scores per (framework, dimension)
+    buckets: dict[tuple, list[float]] = {}
+    for q_id, raw in answers.items():
+        if q_id not in QUESTION_MAP:
+            continue
+        framework, dimension = QUESTION_MAP[q_id]
+        score = score_answer(q_id, raw)
+        key = (framework, dimension)
+        buckets.setdefault(key, []).append(score)
+
+    results = []
+    for (framework, dimension), scores in buckets.items():
+        raw_score = sum(scores) 
+        count = len(scores)
+        min_possible = 1 * count
+        max_possible = 6 * count
+        normalized = round((raw_score - min_possible) / (max_possible - min_possible) * 100, 1)
+        results.append({
+            'framework': framework,
+            'dimension': dimension,
+            'raw_score': raw_score,
+            'normalized_score': normalized,
+        })
+    return results
