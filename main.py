@@ -25,15 +25,10 @@ supabase: Client = create_client(
 
 @app.get("/")
 def root():
-    key = os.getenv("SUPABASE_KEY", "NOT SET")
-    return {"status": "ok", "key_prefix": key[:20]}
+    return {"status": "ok"}
 
 @app.post("/assessment/{response_id}/score")
 def score_assessment(response_id:str):
-    print(f"DEBUG: querying response_id={repr(response_id)}", flush=True)
-    all_rows = supabase.table('assessment_responses').select('id').execute()
-    print(f"DEBUG: all ids in table={[r['id'] for r in all_rows.data]}", flush=True)
-
     row = supabase.table('assessment_responses') \
         .select('answers') \
         .eq('id', response_id) \
