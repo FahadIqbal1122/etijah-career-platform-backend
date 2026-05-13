@@ -100,8 +100,8 @@ def score_answer(question_id: str, raw_answer) -> float:
     if question_id in FORCED_CHOICE_SCORES:
         return float(FORCED_CHOICE_SCORES[question_id].get(str(raw_answer), 0))
     score = float(raw_answer)
-    if question_id in FORCED_CHOICE_SCORES:
-        score = 7-score
+    if question_id in REVERSE_SCORED:
+        score = 7 - score
     return score
 
 def compute_scores(answers: dict) -> list[dict]:
@@ -129,3 +129,56 @@ def compute_scores(answers: dict) -> list[dict]:
             'normalized_score': normalized,
         })
     return results
+
+
+def build_framework_output(scores: list[dict]) -> dict:
+    grouped = {}
+    for s in scores:
+        fw = s['framework']
+        grouped.setdefault(fw, []).append(s)
+
+    def top_n(dims, n):
+        sorted_dims = sorted(dims, key=lambda x: x['normalized_score'], reverse=True)
+        return [d['dimension'] for d in sorted_dims[:n]]
+
+    def label(score):
+        if score >= 67: return 'high'
+        if score >= 34: return 'medium'
+        return 'low'
+
+    output = {}
+
+    if 'riasec' in grouped:
+        output['riasec'] = {'top_types': top_n(grouped['riasec'], 3)}
+
+    if 'values' in grouped:
+        output['values'] = {'top_values': top_n(grouped['values'], 3)}
+
+    if 'strengths' in grouped:
+        output['strengths'] = {'top_strengths': top_n(grouped['strengths'], 3)}
+
+    if 'big_five' in grouped:
+        output['big_five'] = {
+            d['dimension']: label(d['normalized_score'])
+            for d in grouped['big_five']
+        }
+
+    if 'resilience' in grouped:
+        output['resilience'] = {
+            d['dimension']: d['normalized_score']
+            for d in grouped['resilience']
+        }
+
+    if 'work_style' in grouped:
+        output['work_style'] = {
+            d['dimension']: d['normalized_score']
+            for d in grouped['work_style']
+        }
+
+    if 'entrepreneurship' in grouped:
+        output['entrepreneurship'] = {
+            d['dimension']: d['normalized_score']
+            for d in grouped['entrepreneurship']
+        }
+
+    return output

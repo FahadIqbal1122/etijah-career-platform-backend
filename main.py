@@ -3,7 +3,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from supabase import create_client, Client
 from dotenv import load_dotenv
-from scoring_engine import compute_scores
+from scoring_engine import compute_scores, build_framework_output
 
 load_dotenv()
 
@@ -40,12 +40,12 @@ def score_assessment(response_id:str):
 
     answers = row.data['answers']
     results = compute_scores(answers)
+    summary = build_framework_output(results)
 
-    # Insert into assessment_results
     rows_to_insert = [
         {**r, 'response_id': response_id}
         for r in results
     ]
     supabase.table('assessment_results').upsert(rows_to_insert).execute()
 
-    return {'scored': len(rows_to_insert), 'results': results}
+    return {'scored': len(rows_to_insert), 'results': results, 'summary': summary}
