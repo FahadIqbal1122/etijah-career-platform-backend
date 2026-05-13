@@ -46,6 +46,6 @@ def score_assessment(response_id:str):
         {**r, 'response_id': response_id}
         for r in results
     ]
-    supabase.table('assessment_results').upsert(rows_to_insert).execute()
+    supabase.table('assessment_results').upsert(rows_to_insert, on_conflict='response_id,framework,dimension').execute()
 
     return {'scored': len(rows_to_insert), 'results': results, 'summary': summary}
