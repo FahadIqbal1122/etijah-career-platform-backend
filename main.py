@@ -58,6 +58,15 @@ def root():
     return {"status": "ok"}
 
 
+@app.get("/admin/submissions")
+def get_submissions():
+    data = supabase.table('assessment_responses') \
+        .select('id, full_name, email, phone, country, age_bracket, current_stage, completed, created_at') \
+        .order('created_at', desc=True) \
+        .execute()
+    return data.data or []
+
+
 @app.post("/assessment/check-existing")
 def check_existing(body: CheckExistingRequest):
     result = supabase.rpc('check_existing_response', {
