@@ -27,6 +27,11 @@ supabase: Client = create_client(
     os.getenv("SUPABASE_KEY"),
 )
 
+class OnetLinkRequest(BaseModel):
+    email: str
+    onet_url: str
+    label: str | None = None
+
 class CheckExistingRequest(BaseModel):
     email: str
     phone: str
@@ -106,6 +111,59 @@ def score_assessment(response_id:str):
     supabase.table('assessment_results').upsert(rows_to_insert, on_conflict='response_id,framework,dimension').execute()
 
     return {'scored': len(rows_to_insert), 'results': results, 'summary': summary}
+
+
+@app.delete("/assessment/{response_id}")
+def delete_assessment(response_id: str):
+    # 1. Get the email first
+    row = supabase.table('assessment_responses').select('email').eq('id', response_id).single().execute()
+    if not row.data:
+        raise HTTPException(status_code=404, detail="Not Found")
+
+    email = row.data['email']
+
+    # 2. Delete results
+    supabase.table('assessment_results').delete().eq('response_id',response_id).execute()
+
+    # 3. Delete onet link if exists
+    if email:
+        supabase.table('onet_links').delete().eq('email', email).execute()
+
+    # Delete the response
+    supabase.table('assessment_responses').delete().eq('id', response_id).execute()
+
+    return {"deleted": response_id}
+    
+
+@app.get("/onet")
+def get_onet_links():
+    links = supabase.table('onet_links').select('*').order('created_at', desc=True).execute()
+    emails = [l['email'] for l in links.data] if links.data else []
+    assessment_emails = []
+    if emails:
+        responses = supabase.table('assessment_responses').select('email').in_('email', emails).eq('completed', True).execute()
+        assessment_emails = [r['email'] for r in responses.data] if responses.data else []
+    result = [{**l, 'has_assessment': l['email'] in assessment_emails} for l in (links.data or [])]
+    return result
+
+
+@app.post("/onet")
+def add_onet_link(body: OnetLinkRequest):
+    data = supabase.table('onet_links').insert({
+        'email': body.email.lower().strip(),
+        'onet_url': body.onet_url,
+        'label': body.label,
+    }).execute()
+    if not data.data:
+        raise HTTPException(status_code=500, detail="Failed to insert onet link")
+    return data.data[0]
+
+
+@app.delete("/onet/{onet_id}")
+def delete_onet_link(onet_id: str):
+    supabase.table('onet_links').delete().eq('id', onet_id).execute()
+    return {"deleted": onet_id}
+
 
 @app.get("/assessment/{response_id}/results")
 def get_results(response_id: str):
