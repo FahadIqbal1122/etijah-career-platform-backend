@@ -1,5 +1,6 @@
 import os
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Depends, Security
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.middleware.cors import CORSMiddleware
 from supabase import create_client, Client
 from dotenv import load_dotenv
@@ -26,6 +27,24 @@ supabase: Client = create_client(
     os.getenv("SUPABASE_URL"),
     os.getenv("SUPABASE_KEY"),
 )
+
+_bearer = HTTPBearer()
+
+def get_current_user(credentials: HTTPAuthorizationCredentials = Security(_bearer)):
+    try:
+        response = supabase.auth.get_user(credentials.credentials)
+        if not response.user:
+            raise HTTPException(status_code=401, detail="Invalid token")
+        return response.user
+    except Exception:
+        raise HTTPException(status_code=401, detail="Invalid or Expired token")
+
+def require_admin(user=Depends(get_current_user)):
+    role = (user.app_metadata or {}).get("role")
+    if role != "admin":
+        raise HTTPException(status_code=403, detail="Admin access required")
+    return user
+
 
 class OnetLinkRequest(BaseModel):
     email: str
@@ -59,7 +78,7 @@ def root():
 
 
 @app.get("/admin/submissions")
-def get_submissions():
+def get_submissions(_=Depends(require_admin)):
     data = supabase.table('assessment_responses') \
         .select('id, full_name, email, phone, country, age_bracket, current_stage, completed, created_at') \
         .order('created_at', desc=True) \
@@ -100,7 +119,7 @@ def submit_assessment(body: SubmitRequest):
 
 
 @app.post("/assessment/{response_id}/score")
-def score_assessment(response_id:str):
+def score_assessment(response_id:str, _=Depends(require_admin)):
     row = supabase.table('assessment_responses') \
         .select('answers') \
         .eq('id', response_id) \
@@ -123,7 +142,7 @@ def score_assessment(response_id:str):
 
 
 @app.delete("/assessment/{response_id}")
-def delete_assessment(response_id: str):
+def delete_assessment(response_id: str, _=Depends(require_admin)):
     # 1. Get the email first
     row = supabase.table('assessment_responses').select('email').eq('id', response_id).single().execute()
     if not row.data:
@@ -169,7 +188,7 @@ def add_onet_link(body: OnetLinkRequest):
 
 
 @app.delete("/onet/{onet_id}")
-def delete_onet_link(onet_id: str):
+def delete_onet_link(onet_id: str, _=Depends(require_admin)):
     supabase.table('onet_links').delete().eq('id', onet_id).execute()
     return {"deleted": onet_id}
 
