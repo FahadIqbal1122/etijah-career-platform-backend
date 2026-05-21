@@ -72,6 +72,24 @@ class SubmitRequest(BaseModel):
     answers: dict[str, Any]
     completed: bool
 
+class FeedbackRequest(BaseModel):
+    fname: str
+    email: EmailStr
+    age: str
+    country: str | None = None
+    source: str | None = None
+    accurate: str | None = None
+    rating_careers: int | None = None
+    rating_personality: int | None = None
+    rating_clarity: int | None = None
+    rating_length: int | None = None
+    rating_overall: int | None = None
+    surprised: str | None = None
+    careers_relevant: str | None = None
+    ai_outlook: str | None = None
+    recommend: str | None = None
+    other: str | None = None
+
 @app.get("/")
 def root():
     return {"status": "ok"}
@@ -204,3 +222,17 @@ def get_results(response_id: str):
 
     summary = build_framework_output(rows.data)
     return {'results': rows.data, 'summary': summary}
+
+@app.post("/feedback")
+def submit_feedback(body: FeedbackRequest):
+    result = supabase.table('feedback_responses').insert(body.model_dump()).execute()
+    if not reseult.data:
+        raise HTTPException(status_code=500, detail="Failed to insert feedback")
+    return {"id": result.data[0]["id"]}
+
+@app.get("/admin/feedback")
+def get_feedback(_=Depends(require_admin)):
+    data = supabase.table('feedback_responses') \
+        .select('*') \
+        .execute()
+    return data.data or []
