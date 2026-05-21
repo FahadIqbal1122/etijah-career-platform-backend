@@ -226,7 +226,7 @@ def get_results(response_id: str):
 @app.post("/feedback")
 def submit_feedback(body: FeedbackRequest):
     result = supabase.table('feedback_responses').insert(body.model_dump()).execute()
-    if not reseult.data:
+    if not result.data:
         raise HTTPException(status_code=500, detail="Failed to insert feedback")
     return {"id": result.data[0]["id"]}
 
@@ -234,5 +234,6 @@ def submit_feedback(body: FeedbackRequest):
 def get_feedback(_=Depends(require_admin)):
     data = supabase.table('feedback_responses') \
         .select('*') \
+        .order('created_at', desc=True) \
         .execute()
     return data.data or []
