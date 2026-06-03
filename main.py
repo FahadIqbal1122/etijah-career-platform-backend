@@ -246,7 +246,17 @@ def get_career_suggestions(response_id: str):
         .eq('response_id', response_id) \
         .execute()
     if not rows.data:
-        raise HTTPException(status_code=404, details="No results found")
+        raise HTTPException(status_code=404, detail="No results found")
+
+    # Get user profile data (education + sectors of interest)
+    profile = supabase.table('assessment_responses') \
+        .select('education_field, sectors_of_interest') \
+        .eq('id', response_id) \
+        .single() \
+        .execute()
+
+    user_education = profile.data.get('education_field', '') if profile.data else ''
+    user_sectors = profile.data.get('sectors_of_interest', []) if profile.data else []
 
     summary = build_framework_output(rows.data)
     careers = supabase.table('careers').select('*').execute().data or []
@@ -264,6 +274,18 @@ def get_career_suggestions(response_id: str):
         entreprenuer.get('risk_tolerance', 0) +
         entreprenuer.get('portfolio_interest', 0)
     ) / 2
+
+    # Normalize sector names for matching
+    sector_map = {
+        'technology': 'Technology', 'healthcare': 'Healthcare',
+        'finance': 'Finance', 'government': 'Government',
+        'hospitality': 'Hospitality', 'education': 'Education',
+        'creative': 'Creative', 'consulting': 'Business',
+        'real_estate': 'Real Estate', 'sports': 'Sports',
+        'nonprofit': 'Social Services', 'logistics': 'Operations',
+        'energy': 'Engineering', 'media': 'Media',
+    }
+    user_sector_names = [sector_map.get(s, s) for s in (user_sectors or [])]
 
     def score_career(career):
         score = 0
@@ -291,6 +313,15 @@ def get_career_suggestions(response_id: str):
 
         # Entrepreneurship
         if career['entrepreneurship_friendly'] and user_entrepreneur_score >= 50:
+            score += 2
+        
+        # Education match
+        if user_education and user_education != 'not_applicable':
+            if user_education in (career['education_fields'] or []):
+                score += 3
+
+        # Sectors of interest
+        if career['sector'] in user_sector_names:
             score += 2
         
         return score
