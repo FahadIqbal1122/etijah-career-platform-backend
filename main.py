@@ -275,7 +275,7 @@ def get_career_suggestions(response_id: str):
         
         # Values
         for v in user_values:
-            if v in (career['values'] or []):
+            if v in (career['top_values'] or []):
                 score += 2
 
         # Strengths
