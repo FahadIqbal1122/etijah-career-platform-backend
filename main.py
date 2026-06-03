@@ -237,3 +237,75 @@ def get_feedback(_=Depends(require_admin)):
         .order('created_at', desc=True) \
         .execute()
     return data.data or []
+
+@app.get("/assessment/{response_id}/career-suggestions")
+def get_career_suggestions(response_id: str):
+    # Get stored results
+    rows = supabase.table('assessment_results') \
+        .select('*') \
+        .eq('response_id', response_id) \
+        .execute()
+    if not rows.data:
+        raise HTTPException(status_code=404, details="No results found")
+
+    summary = build_framework_output(rows.data)
+    careers = supabase.table('careers').select('*').execute().data or []
+
+    user_riasec = summary.get('riasec', {}).get('top_types', [])
+    user_values = summary.get('values', {}).get('top_values', [])
+    user_strengths = summary.get('strengths', {}).get('top_strengths', [])
+    work_style = summary.get('work_style', {})
+    entreprenuer = summary.get('entrepreneurship', {})
+
+    # Derive work preferences from normalized scores
+    user_pace = 'fast' if work_style.get('pace', 50) >= 50 else 'steady'
+    user_sector = 'private' if work_style.get('sector', 50) >= 50 else 'public'
+    user_entrepreneur_score = (
+        entreprenuer.get('risk_tolerance', 0) +
+        entreprenuer.get('portfolio_interest', 0)
+    ) / 2
+
+    def score_career(career):
+        score = 0
+
+        # RIASEC - Weighted by rank (primary match worth more)
+        for i, t in enumerate(user_riasec):
+            if t in (career['riasec'] or []):
+                score += 3 - i # primary=3, second=2, third=1
+        
+        # Values
+        for v in user_values:
+            if v in (career['values'] or []):
+                score += 2
+
+        # Strengths
+        for s in user_strengths:
+            if s in (career['top_strengths'] or []):
+                score += 2
+
+        # Work Style
+        if career['work_pace'] == user_pace:
+            score += 1
+        if career['work_sector'] == user_sector:
+            score += 1
+
+        # Entrepreneurship
+        if career['entrepreneurship_friendly'] and user_entrepreneur_score >= 50:
+            score += 2
+        
+        return score
+
+    scored = sorted(careers, key=score_career, reverse=True)
+    top10 = scored[:10]
+
+    return {
+        "riasec_code": ''.join(t[0].upper() for t in user_riasec),
+        "suggestions": [
+            {
+                "title": c['title'],
+                "sector": c['sector'],
+                "entrepreneurship_friendly": c['entrepreneurship_friendly']
+            }
+            for c in top10
+        ]
+    }
