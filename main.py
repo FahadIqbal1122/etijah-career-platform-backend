@@ -7,6 +7,9 @@ from dotenv import load_dotenv
 from scoring_engine import compute_scores, build_framework_output
 from pydantic import BaseModel, EmailStr
 from typing import Any
+import io
+from fastapi.responses import StreamingResponse
+from report_generator import create_report
 
 load_dotenv()
 
@@ -340,3 +343,20 @@ def get_career_suggestions(response_id: str):
             for c in top10
         ]
     }
+
+@app.get("/assessment/{response_id}/report")
+def get_report(response_id: str):
+    try:
+        pdf_bytes = create_report(response_id, supabase)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        raise HTTPSException(status_code=500, details=f"Report generation failed: {str(e)}")
+
+    filename = f"career-report-{response_id[:8]}.pdf"
+    return StreamingResponse(
+        io.BytesIO(pdf_bytes),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
