@@ -54,7 +54,10 @@ BIG_FIVE_LABELS = {
 
 def generate_ai_content(user_data: dict, summary: dict, raw_scores: list, careers: list) -> dict:
     genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
-    model = genai.GenerativeModel("gemini-2.5-flash")
+    model = genai.GenerativeModel(
+      "gemini-2.5-flash",
+      generation_config={"response_mime_type": "application/json"}
+    )
 
     scores = {r['dimension']: r['normalized_score'] for r in raw_scores}
 
