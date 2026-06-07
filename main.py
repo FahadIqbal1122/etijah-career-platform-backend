@@ -4,7 +4,7 @@ from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.middleware.cors import CORSMiddleware
 from supabase import create_client, Client
 from dotenv import load_dotenv
-from scoring_engine import compute_scores, build_framework_output
+from scoring_engine import compute_scores, build_framework_output, score_careers
 from pydantic import BaseModel, EmailStr
 from typing import Any
 import io
@@ -243,102 +243,26 @@ def get_feedback(_=Depends(require_admin)):
 
 @app.get("/assessment/{response_id}/career-suggestions")
 def get_career_suggestions(response_id: str):
-    # Get stored results
     rows = supabase.table('assessment_results') \
-        .select('*') \
-        .eq('response_id', response_id) \
-        .execute()
+        .select('*').eq('response_id', response_id).execute()
     if not rows.data:
         raise HTTPException(status_code=404, detail="No results found")
 
-    # Get user profile data (education + sectors of interest)
     profile = supabase.table('assessment_responses') \
         .select('education_field, sectors_of_interest') \
-        .eq('id', response_id) \
-        .single() \
-        .execute()
-
-    user_education = profile.data.get('education_field', '') if profile.data else ''
-    user_sectors = profile.data.get('sectors_of_interest', []) if profile.data else []
-
+        .eq('id', response_id).single().execute()
+  
     summary = build_framework_output(rows.data)
     careers = supabase.table('careers').select('*').execute().data or []
+    top10   = score_careers(summary, profile.data or {}, careers)
 
     user_riasec = summary.get('riasec', {}).get('top_types', [])
-    user_values = summary.get('values', {}).get('top_values', [])
-    user_strengths = summary.get('strengths', {}).get('top_strengths', [])
-    work_style = summary.get('work_style', {})
-    entreprenuer = summary.get('entrepreneurship', {})
-
-    # Derive work preferences from normalized scores
-    user_pace = 'fast' if work_style.get('pace', 50) >= 50 else 'steady'
-    user_sector = 'private' if work_style.get('sector', 50) >= 50 else 'public'
-    user_entrepreneur_score = (
-        entreprenuer.get('risk_tolerance', 0) +
-        entreprenuer.get('portfolio_interest', 0)
-    ) / 2
-
-    # Normalize sector names for matching
-    sector_map = {
-        'technology': 'Technology', 'healthcare': 'Healthcare',
-        'finance': 'Finance', 'government': 'Government',
-        'hospitality': 'Hospitality', 'education': 'Education',
-        'creative': 'Creative', 'consulting': 'Business',
-        'real_estate': 'Real Estate', 'sports': 'Sports',
-        'nonprofit': 'Social Services', 'logistics': 'Operations',
-        'energy': 'Engineering', 'media': 'Media',
-    }
-    user_sector_names = [sector_map.get(s, s) for s in (user_sectors or [])]
-
-    def score_career(career):
-        score = 0
-
-        # RIASEC - Weighted by rank (primary match worth more)
-        for i, t in enumerate(user_riasec):
-            if t in (career['riasec'] or []):
-                score += 3 - i # primary=3, second=2, third=1
-        
-        # Values
-        for v in user_values:
-            if v in (career['top_values'] or []):
-                score += 2
-
-        # Strengths
-        for s in user_strengths:
-            if s in (career['top_strengths'] or []):
-                score += 2
-
-        # Work Style
-        if career['work_pace'] == user_pace:
-            score += 1
-        if career['work_sector'] == user_sector:
-            score += 1
-
-        # Entrepreneurship
-        if career['entrepreneurship_friendly'] and user_entrepreneur_score >= 50:
-            score += 2
-        
-        # Education match
-        if user_education and user_education != 'not_applicable':
-            if user_education in (career['education_fields'] or []):
-                score += 3
-
-        # Sectors of interest
-        if career['sector'] in user_sector_names:
-            score += 2
-        
-        return score
-
-    scored = sorted(careers, key=score_career, reverse=True)
-    top10 = scored[:10]
-
     return {
         "riasec_code": ''.join(t[0].upper() for t in user_riasec),
-        "suggestions": [
-            {
+        "suggestions": [                                                                                                                                                                                               {
                 "title": c['title'],
                 "sector": c['sector'],
-                "entrepreneurship_friendly": c['entrepreneurship_friendly']
+                "entrepreneurship_friendly": c['entrepreneurship_friendly'],
             }
             for c in top10
         ]

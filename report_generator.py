@@ -9,6 +9,7 @@ import re
 from datetime import datetime
 import google.generativeai as genai 
 from weasyprint import HTML
+from scoring_engine import build_framework_output, score_careers
 
 # ─── Static metadata ──────────────────────────────────────────────────────────
 
@@ -727,8 +728,7 @@ def generate_pdf(html: str) -> bytes:
 # ─── Main orchestrator ─────────────────────────────────────────────────────────
 
 def create_report(response_id: str, supabase_client) -> bytes:
-    from scoring_engine import build_framework_output
-
+    
     profile = supabase_client.table('assessment_responses') \
         .select('full_name,email,age_bracket,current_stage,education_field,'
                 'sectors_of_interest,geographic_openness,why_here') \
@@ -743,7 +743,8 @@ def create_report(response_id: str, supabase_client) -> bytes:
 
     raw_scores = scores_row.data
     summary    = build_framework_output(raw_scores)
-    careers    = supabase_client.table('careers').select('*').execute().data or []
-    ai_content = generate_ai_content(profile.data, summary, raw_scores, careers)
-    html       = build_html_report(profile.data, summary, raw_scores, ai_content, careers)
+    all_careers = supabase_client.table('careers').select('*').execute().data or []
+    top_careers = score_careers(summary, profile.data, all_careers)
+    ai_content  = generate_ai_content(profile.data, summary, raw_scores, top_careers)
+    html       = build_html_report(profile.data, summary, raw_scores, ai_content, top_careers)
     return generate_pdf(html)

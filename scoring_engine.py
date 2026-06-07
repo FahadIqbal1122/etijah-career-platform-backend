@@ -182,3 +182,59 @@ def build_framework_output(scores: list[dict]) -> dict:
         }
 
     return output
+
+def score_careers(summary: dict, user_data: dict, careers: list) -> list:
+    """Returns top 10 careers using the same deterministic algorithm as the results page."""
+
+    user_riasec      = summary.get('riasec',   {}).get('top_types',    [])
+    user_values      = summary.get('values',   {}).get('top_values',   [])
+    user_strengths   = summary.get('strengths',{}).get('top_strengths',[])
+    work_style       = summary.get('work_style', {})
+    entrepreneurship = summary.get('entrepreneurship', {})
+
+    user_pace   = 'fast'    if work_style.get('pace',   50) >= 50 else 'steady'
+    user_sector = 'private' if work_style.get('sector', 50) >= 50 else 'public'
+    user_entrepreneur_score = (
+        entrepreneurship.get('risk_tolerance',    0) +
+        entrepreneurship.get('portfolio_interest', 0)
+    ) / 2
+
+    user_education = user_data.get('education_field', '')
+    user_sectors   = user_data.get('sectors_of_interest', [])
+
+    sector_map = {
+        'technology': 'Technology', 'healthcare': 'Healthcare',
+        'finance': 'Finance', 'government': 'Government',
+        'hospitality': 'Hospitality', 'education': 'Education',
+        'creative': 'Creative', 'consulting': 'Business',
+        'real_estate': 'Real Estate', 'sports': 'Sports',
+        'nonprofit': 'Social Services', 'logistics': 'Operations',
+        'energy': 'Engineering', 'media': 'Media',
+    }
+    user_sector_names = [sector_map.get(s, s) for s in (user_sectors or [])]
+
+    def _score(career):
+        score = 0
+        for i, t in enumerate(user_riasec):
+            if t in (career.get('riasec') or []):
+                score += 3 - i
+        for v in user_values:
+            if v in (career.get('top_values') or []):
+                score += 2
+        for s in user_strengths:
+            if s in (career.get('top_strengths') or []):
+                score += 2
+        if career.get('work_pace') == user_pace:
+            score += 1
+        if career.get('work_sector') == user_sector:
+            score += 1
+        if career.get('entrepreneurship_friendly') and user_entrepreneur_score >= 50:
+            score += 2
+        if user_education and user_education != 'not_applicable':
+            if user_education in (career.get('education_fields') or []):
+                score += 3
+        if career.get('sector') in user_sector_names:
+            score += 2
+        return score
+
+    return sorted(careers, key=_score, reverse=True)[:10]
