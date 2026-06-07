@@ -351,7 +351,7 @@ def get_report(response_id: str):
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
-        raise HTTPSException(status_code=500, detail=f"Report generation failed: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Report generation failed: {str(e)}")
 
     filename = f"career-report-{response_id[:8]}.pdf"
     return StreamingResponse(
