@@ -157,8 +157,19 @@ def generate_ai_content(user_data: dict, summary: dict, raw_scores: list, career
 
     response = model.generate_content(prompt)
     text = response.text.strip()
+
+    # Strip markdown code fences if present
     text = re.sub(r'^```[a-z]*\n?', '', text)
     text = re.sub(r'\n?```$', '', text)
+    text = text.strip() 
+
+    # Extract just the JSON object in case there's surrounding text
+    start = text.find('{')
+    end   = text.rfind('}')
+    if start == -1 or end == -1:  
+      raise ValueError(f"No JSON object found in Gemini response: {text[:200]}")
+    text = text[start:end+1]
+  
     return json.loads(text)
 
 # ─── HTML helpers ──────────────────────────────────────────────────────────────
