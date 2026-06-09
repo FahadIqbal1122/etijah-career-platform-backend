@@ -189,10 +189,12 @@ def get_onet_links():
     links = supabase.table('onet_links').select('*').order('created_at', desc=True).execute()
     emails = [l['email'] for l in links.data] if links.data else []
     assessment_emails = []
+    name_map = {}
     if emails:
-        responses = supabase.table('assessment_responses').select('email').in_('email', emails).eq('completed', True).execute()
+        responses = supabase.table('assessment_responses').select('email, full_name').in_('email', emails).eq('completed', True).execute()
         assessment_emails = [r['email'] for r in responses.data] if responses.data else []
-    result = [{**l, 'has_assessment': l['email'] in assessment_emails} for l in (links.data or [])]
+        name_map = {r['email']: r['full_name'] for r in responses.data} if responses.data else {}
+    result = [{**l, 'has_assessment': l['email'] in assessment_emails, 'name': name_map.get(l['email'])} for l in (links.data or [])]
     return result
 
 
@@ -283,4 +285,26 @@ def get_report(response_id: str):
         media_type="application/pdf",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
+
+@app.get("/admin/country-profiles")
+def get_country_profiles(_=Depends(require_admin)):
+    data = supabase.table('country_profiles').select('*').order('country_name').execute()
+    return data.data
+
+@app.post("/admin/country-profiles")
+def create_country_profile(body: dict, _=Depends(require_admin)):
+    result = supabase.table('country_profiles').insert(body).execute()
+    if not result.data:
+        raise HTTPException(status_code=500, detail="Failed to create country profile")
+    return result.data[0]
+
+@app.put("/admin.country-profile/{country_code}")
+def update_country_profile(country_code: str, body: dict, _=Depends(require_admin)):
+    result = supabase.table('country_profiles').update(body).eq('country_code', country_code).execute()
+    return result.data[0] if result.data else {}
+
+@app.delete("/admin.country-profile/{country_code}")
+def delete_country_profile(country_code: str, _=Depends(require_admin)):
+    result = supabase.table('country_profiles').delete().eq('country_code', country_code).execute()
+    return {"deleted": True}
 
