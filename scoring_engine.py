@@ -13,6 +13,8 @@ FORCED_CHOICE_SCORES = {
     'Q66': {'A': 1, 'B': 6},   # A=large org, B=startup
     'Q67': {'A': 1, 'B': 6},   # A=public, B=private                                                                                                                                                   
     'Q71': {'A': 6, 'B': 1},   # A=high risk, B=low risk
+    'QFC_RI': {'A': 5, 'B': 1}, # A=Realistic, B=Low Realistic (Investigative)
+    'QFC_SE': {'A': 5, 'B': 1}, # A=Social, B=Low Social (Enterprising)
 }
 
 REVERSE_SCORED = {'Q21', 'Q22'}
@@ -32,6 +34,8 @@ QUESTION_MAP = {
     'Q10': ('riasec', 'enterprising'),
     'Q11': ('riasec', 'conventional'),
     'Q12': ('riasec', 'conventional'),
+    'QFC_RI': ('riasec', 'realistic'),
+    'QFC_SE': ('riasec', 'social'),
     # Big Five
     'Q13': ('big_five', 'openness'),
     'Q14': ('big_five', 'openness'),
@@ -105,23 +109,36 @@ def score_answer(question_id: str, raw_answer) -> float:
     return score
 
 def compute_scores(answers: dict) -> list[dict]:
-    # Accumulate scores per (framework, dimension)
-    buckets: dict[tuple, list[float]] = {}
+    # Detect flat RIASEC behavioral profile (≥80% of scale answers are 5 or 6)
+    riasec_behavioral = [
+        float(answers[q]) for q in answers
+        if q in QUESTION_MAP
+        and QUESTION_MAP[q][0] == 'riasec'
+        and q not in FORCED_CHOICE_SCORES
+    ]
+    flat_riasec = (
+        len(riasec_behavioral) >= 5 and
+        sum(1 for s in riasec_behavioral if s >= 5) / len(riasec_behavioral) >= 0.8
+    )
+
+    buckets: dict[tuple, list[tuple[float, float]]] = {}
     for q_id, raw in answers.items():
         if q_id not in QUESTION_MAP:
             continue
         framework, dimension = QUESTION_MAP[q_id]
         score = score_answer(q_id, raw)
+
+        weight = 3.0 if (flat_riasec and framework == 'riasec' and q_id in FORCED_CHOICE_SCORES) else 1.0
+
         key = (framework, dimension)
-        buckets.setdefault(key, []).append(score)
+        buckets.setdefault(key, []).append((score, weight))
 
     results = []
-    for (framework, dimension), scores in buckets.items():
-        raw_score = sum(scores) 
-        count = len(scores)
-        min_possible = 1 * count
-        max_possible = 6 * count
-        normalized = round((raw_score - min_possible) / (max_possible - min_possible) * 100, 1)
+    for (framework, dimension), entries in buckets.items():
+        raw_score    = sum(s * w for s, w in entries)
+        min_possible = sum(1.0 * w for _, w in entries)
+        max_possible = sum(6.0 * w for _, w in entries)
+        normalized   = round((raw_score - min_possible) / (max_possible - min_possible) * 100, 1)
         results.append({
             'framework': framework,
             'dimension': dimension,
