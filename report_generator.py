@@ -53,7 +53,7 @@ BIG_FIVE_LABELS = {
 
 # ─── Gemini content generation ────────────────────────────────────────────────
 
-def generate_ai_content(user_data: dict, summary: dict, raw_scores: list, careers: list) -> dict:
+def generate_ai_content(user_data: dict, summary: dict, raw_scores: list, careers: list, country_profile: dict | None = None) -> dict:
     genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
     model = genai.GenerativeModel(
       "gemini-2.5-flash",
@@ -108,7 +108,18 @@ def generate_ai_content(user_data: dict, summary: dict, raw_scores: list, career
         f"  - Risk tolerance: {entrepreneurship.get('risk_tolerance',0):.0f}/100\n"
         f"  - Portfolio interest: {entrepreneurship.get('portfolio_interest',0):.0f}/100\n\n"
         f"Matched careers:\n{careers_text}\n\n"
-        "=== OUTPUT ===\n\n"
+        + (
+            f"=== COUNTRY CONTEXT: {country_profile.get('country_name', user_data.get('country', 'Unknown'))} ===\n\n"
+            f"Labour market authority: {country_profile.get('labour_market_authority', 'N/A')}\n"
+            f"Nationalisation programme: {country_profile.get('nationalisation_programme', 'N/A')}\n"
+            f"Strategic priorities: {json.dumps(country_profile.get('strategic_priorities') or {})}\n"
+            f"Nationalisation rates by sector: {json.dumps(country_profile.get('nationalisation_rates_by_sector') or {})}\n\n"
+            "IMPORTANT: Use this country context to qualify career recommendations. "
+            "If a career is low-demand or restricted by nationalisation quotas in this country, note that in fit_summary. "
+            "If it aligns with strategic priorities, highlight that as an advantage.\n\n"
+            if country_profile else ""
+        )
+        + "=== OUTPUT ===\n\n"
         "Return ONLY a valid JSON object (no markdown, no code fences) with exactly these keys:\n\n"
         "{\n"
         '  "executive_summary": "3-4 sentences: compelling personalized overview referencing RIASEC combination, a key value, and primary strength.",\n\n'
@@ -728,10 +739,10 @@ def generate_pdf(html: str) -> bytes:
 # ─── Main orchestrator ─────────────────────────────────────────────────────────
 
 def create_report(response_id: str, supabase_client) -> bytes:
-    
+
     profile = supabase_client.table('assessment_responses') \
         .select('full_name,email,age_bracket,current_stage,education_field,'
-                'sectors_of_interest,geographic_openness,why_here') \
+                'sectors_of_interest,geographic_openness,why_here,country') \
         .eq('id', response_id).single().execute()
     if not profile.data:
         raise ValueError(f"No assessment found for {response_id}")
@@ -741,10 +752,15 @@ def create_report(response_id: str, supabase_client) -> bytes:
     if not scores_row.data:
         raise ValueError(f"No scores found for {response_id}")
 
+    user_country = profile.data.get('country', '')
+    country_row = supabase_client.table('country_profiles') \
+        .select('*').ilike('country_name', user_country).limit(1).execute()
+    country_profile = country_row.data[0] if country_row.data else None
+
     raw_scores = scores_row.data
     summary    = build_framework_output(raw_scores)
     all_careers = supabase_client.table('careers').select('*').execute().data or []
     top_careers = score_careers(summary, profile.data, all_careers)
-    ai_content  = generate_ai_content(profile.data, summary, raw_scores, top_careers)
+    ai_content  = generate_ai_content(profile.data, summary, raw_scores, top_careers, country_profile)
     html       = build_html_report(profile.data, summary, raw_scores, ai_content, top_careers)
     return generate_pdf(html)

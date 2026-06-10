@@ -298,13 +298,13 @@ def create_country_profile(body: dict, _=Depends(require_admin)):
         raise HTTPException(status_code=500, detail="Failed to create country profile")
     return result.data[0]
 
-@app.put("/admin.country-profile/{country_code}")
+@app.put("/admin/country-profiles/{country_code}")
 def update_country_profile(country_code: str, body: dict, _=Depends(require_admin)):
     result = supabase.table('country_profiles').update(body).eq('country_code', country_code).execute()
     return result.data[0] if result.data else {}
 
-@app.delete("/admin.country-profile/{country_code}")
+@app.delete("/admin/country-profiles/{country_code}")
 def delete_country_profile(country_code: str, _=Depends(require_admin)):
-    result = supabase.table('country_profiles').delete().eq('country_code', country_code).execute()
-    return {"deleted": True}
+    supabase.table('country_profiles').delete().eq('country_code', country_code).execute()
+    return {"deleted": country_code}
 
