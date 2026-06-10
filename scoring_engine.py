@@ -1,6 +1,6 @@
 # Maps forced-choice answers to numeric scores
 FORCED_CHOICE_SCORES = {
-    'Q6':  {'A': 6, 'B': 1},   # A=Artistic, B=Conventional
+    'Q6':  {'A': 5, 'B': 3},   # A=Artistic, B=Conventional
     'Q17': {'A': 6, 'B': 1},   # A=Extrovert, B=Introvert
     'Q36': {'A': 6, 'B': 1},   # A=Wealth, B=low Wealth                                                                                                                                                
     'Q38': {'A': 6, 'B': 1},   # A=National, B=International
