@@ -327,3 +327,25 @@ def delete_country_profile(country_code: str, _=Depends(require_admin)):
     supabase.table('country_profiles').delete().eq('country_code', country_code).execute()
     return {"deleted": country_code}
 
+@app.get("/admin/courses")
+def get_courses(_=Depends(require_admin)):
+    data = supabase.table('courses').select('*').order('created_at', desc=True).execute()
+    return data.data or []
+
+@app.post("/admin/courses")
+def create_course(body: dict, _=Depends(require_admin)):
+    result = supabase.table('courses').insert(body).execute()
+    if not result.data:
+        raise HTTPException(status_code=500, detail="Failed to create course")
+    return result.data[0]
+
+@app.put("/admin/courses/{course_id}")
+def update_course(course_id: str, body: dict, _=Depends(require_admin)):
+    result = supabase.table('courses').update(body).eq('id', course_id).execute()
+    return result.data[0] if result.data else {}
+
+@app.delete("/admin/courses/{course_id}")
+def delete_course(course_id: str, _=Depends(require_admin)):
+    supabase.table('courses').delete().eq('id', course_id).execute()
+    return {"deleted": course_id}
+
