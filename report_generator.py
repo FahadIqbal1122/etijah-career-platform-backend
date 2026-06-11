@@ -731,9 +731,64 @@ def build_html_report(user_data: dict, summary: dict, raw_scores: list, ai: dict
   </body>
   </html>"""
 
+# ─── AI Impact Analysis ────────────────────────────────────────────────────────
+
+def generate_ai_impact(user_data: dict, summary: dict, careers: list) -> dict:
+  genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
+  model = genai.GenerativeModel(
+    "gemini-2.5-flash",
+    generation_config={"response_mime_type": "application/json"}
+  )
+
+  riasec_types   = summary.get('riasec',    {}).get('top_types',    [])
+  top_strengths  = summary.get('strengths', {}).get('top_strengths', [])
+  top_values     = summary.get('values',    {}).get('top_values',   [])
+  careers_text   = "\n".join(f" - {c['title']} ({c['sector']})" for c in careers[:5])
+
+  prompt = (
+    "You are a career futurist specializing in AI's impact on work in the GCC region.\n"
+    "Analyze how AI and automation will affect this specific person's top career matches.\n"                                                                                                         
+    "Be honest about risks but focus on what protects them and how to future-proof.\n\n"
+    "=== USER PROFILE ===\n"
+    f"RIASEC top types: {', '.join(riasec_types)}\n"
+    f"Top strengths: {', '.join(top_strengths)}\n"                                                                                                                                                   
+    f"Top values: {', '.join(top_values)}\n"                                                                                                                                                                   f"Current stage: {user_data.get('current_stage', 'N/A')}\n"
+    f"Country: {user_data.get('country', 'GCC')}\n\n"
+    "=== TOP MATCHED CAREERS ===\n"
+    f"{careers_text}\n\n"
+    "=== OUTPUT ===\n"
+    "Return ONLY valid JSON (no markdown, no code fences):\n"
+    "{\n"
+    '  "overall_summary": "2-3 sentences on this persons overall AI exposure given their strengths and career matches.",\n'
+    '  "careers": [\n'
+    '    {\n'   
+    '      "title": "exact career title from the list",\n'
+    '      "ai_risk_level": "low or medium or high",\n'
+    '      "at_risk_tasks": ["task 1", "task 2"],\n'
+    '      "protected_skills": ["skill 1", "skill 2"],\n'
+    '      "upskilling": ["1 specific recommendation", "1 specific recommendation"],\n'
+    '      "gcc_outlook": "1 sentence on AI adoption pace in this career in the GCC specifically."\n'
+    '    }\n'
+    '  ]\n'
+    "}\n\n"
+    "Cover all 5 careers. Be specific and GCC-aware throughout."
+  )
+
+  response = model.generate_content(prompt)
+  text     = response.text.strip()
+  text     = re.sub(r'^```[a-z]*\n?', '', text)
+  text     = re.sub(r'\n?```$', '', text)
+  text     = text.strip()
+  start    = text.find('{')
+  end      = text.rfind('}')
+  if start == -1 or end == -1:
+    raise ValueError(f"No JSON found in Gemini response: {text[:200]}")
+  return json.loads(text[start:end+1])
+
 # ─── PDF renderer ──────────────────────────────────────────────────────────────
 
-def generate_pdf(html: str) -> bytes:
+def generate_pdf(
+  html: str) -> bytes:
     return HTML(string=html).write_pdf()
 
 # ─── Main orchestrator ─────────────────────────────────────────────────────────

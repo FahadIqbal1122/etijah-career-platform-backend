@@ -270,6 +270,25 @@ def get_career_suggestions(response_id: str):
         ]
     }
 
+@app.get("/assessment/{response_id}/ai-impact")
+def get_ai_impact(response_id: str):
+    rows = supabase.table('assessment_results') \
+        .select('*').eq('response_id', response_id).execute()
+    if not rows.data:
+        raise HTTPException(status_code=404, detail="No results found")
+
+    profile = supabase.table('assessment_responses') \
+        .select('full_name,current_stage,country,education_field,sectors_of_interest') \
+        .eq('id', response_id).single().execute()
+
+    summary = build_framework_output(rows.data)
+    careers = supabase.table('careers').select('*').execute().data or []
+    top5    = score_careers(summary, profile.data or {}, careers)[:5]
+
+    from report_generator import generate_ai_impact
+    result = generate_ai_impact(profile.data or {}, summary, top5)
+    return result
+
 @app.get("/assessment/{response_id}/report")
 def get_report(response_id: str):
     try:
