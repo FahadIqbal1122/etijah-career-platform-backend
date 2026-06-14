@@ -397,6 +397,7 @@ def get_job_listings(response_id: str):
                         "url": job.get("job_applu_link"),
                         "matched_career": career['title'],
                     })
-        except Exception:
+        except Exception as e:
+            print("JSearch error:", e)
             continue
     return {"jobs": all_jobs[:12]}
