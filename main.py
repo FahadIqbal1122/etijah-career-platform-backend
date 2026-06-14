@@ -393,7 +393,6 @@ def get_job_listings(response_id: str):
                 timeout=8.0,
             )
             resp.raise_for_status()
-            print("JSearch response:", resp.json())
             for job in (resp.json().get("data") or [])[:4]:
                 job_id = job.get("job_id")
                 if job_id and job_id not in seen_ids:
@@ -404,7 +403,7 @@ def get_job_listings(response_id: str):
                         "location": f"{job.get('job_city', '')} {job.get('job_country', '')}".strip(),
                         "source": job.get("job_publisher"),
 
-                        "url": job.get("job_applu_link"),
+                        "url": job.get("job_apply_link"),
                         "matched_career": career['title'],
                     })
         except Exception as e:
