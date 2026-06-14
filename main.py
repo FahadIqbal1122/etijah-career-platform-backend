@@ -383,6 +383,7 @@ def get_job_listings(response_id: str):
                 timeout=8.0,
             )
             resp.raise_for_status()
+            print("JSearch response:", resp.json())
             for job in (resp.json().get("data") or [])[:4]:
                 job_id = job.get("job_id")
                 if job_id and job_id not in seen_ids:
