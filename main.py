@@ -10,6 +10,7 @@ from typing import Any
 import io
 from fastapi.responses import StreamingResponse
 from report_generator import create_report
+import httpx
 
 load_dotenv()
 
@@ -349,3 +350,52 @@ def delete_course(course_id: str, _=Depends(require_admin)):
     supabase.table('courses').delete().eq('id', course_id).execute()
     return {"deleted": course_id}
 
+@app.get("/assessment/{response_id}/job-listings")
+def get_job_listings(response_id: str):
+    profile = supabase.table('assessment_responses') \
+        .select('country, education_field, sectors_of_interest') \
+        .eq('id', response_id).single().execute()
+    rows = supabase.table('assessment_results') \
+        .select('*') \
+        .eq('response_id', response_id).execute()
+    if not rows.data or not profile.data:
+        raise HTTPException(status_code=404, details="No results found")
+    
+    summary = build_framework_output(rows.data)
+    careers = supabase.table('careers').select('*').execute().data or []
+    top3    = score_careers(summary, profile.data, careers)[:3]
+
+    country = profile.data.get('country', '')
+    rapidapi_key = os.getenv("RAPIDAPI_KEY")
+
+    all_jobs = []
+    seen_ids = set()
+
+    for career in top3:
+        try:
+            resp = httpx.get(
+                "https://jsearch.p.rapidapi.com/search",
+                params={"query": f"{career['title']} {country}", "num_pages": "1", "page": "1"},
+                headers={
+                    "X-RapidAPI-Key": rapidapi_key,
+                    "X-RapidAPI-Host": "jsearch.p.rapidapi.com",
+                },
+                timeout=8.0,
+            )
+            resp.raise_for_status()
+            for job in (resp.json().get("data") or [])[:4]:
+                job_id = job.get("job_id")
+                if job_id and job_id not in seen_ids:
+                    seen_ids.add(job_id)
+                    all_jobs.append({
+                        "title": job.get("job_title"),
+                        "company": job.get("employer_name"),
+                        "location": f"{job.get('job_city', '')} {job.get('job_country', '')}".strip(),
+                        "source": job.get("job_publisher"),
+
+                        "url": job.get("job_applu_link"),
+                        "matched_career": career['title'],
+                    })
+        except Exception:
+            continue
+    return {"jobs": all_jobs[:12]}
