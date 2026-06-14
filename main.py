@@ -273,21 +273,31 @@ def get_career_suggestions(response_id: str):
 
 @app.get("/assessment/{response_id}/ai-impact")
 def get_ai_impact(response_id: str):
+    profile_row = supabase.table('assessment_responses') \
+        .select('full_name,current_stage,country,education_field,sectors_of_interest,ai_impact_cache') \
+        .eq('id', response_id).single().execute()
+    if not profile_row.data:
+        raise HTTPException(status_code=404, detail="No results found")
+
+    if profile_row.data.get('ai_impact_cache'):
+        return profile_row.data['ai_impact_cache']
+
     rows = supabase.table('assessment_results') \
         .select('*').eq('response_id', response_id).execute()
     if not rows.data:
         raise HTTPException(status_code=404, detail="No results found")
 
-    profile = supabase.table('assessment_responses') \
-        .select('full_name,current_stage,country,education_field,sectors_of_interest') \
-        .eq('id', response_id).single().execute()
-
     summary = build_framework_output(rows.data)
     careers = supabase.table('careers').select('*').execute().data or []
-    top5    = score_careers(summary, profile.data or {}, careers)[:5]
+    top5    = score_careers(summary, profile_row.data or {}, careers)[:5]
 
     from report_generator import generate_ai_impact
-    result = generate_ai_impact(profile.data or {}, summary, top5)
+    result = generate_ai_impact(profile_row.data or {}, summary, top5)
+
+    supabase.table('assessment_responses') \
+        .update({'ai_impact_cache': result}) \
+        .eq('id', response_id).execute()
+
     return result
 
 @app.get("/assessment/{response_id}/report")
