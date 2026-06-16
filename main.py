@@ -8,6 +8,7 @@ from scoring_engine import compute_scores, build_framework_output, score_careers
 from pydantic import BaseModel, EmailStr
 from typing import Any
 import io
+from datetime import datetime, timezone
 from fastapi.responses import StreamingResponse
 from report_generator import create_report
 import httpx
@@ -75,6 +76,21 @@ class SubmitRequest(BaseModel):
     why_here: str
     answers: dict[str, Any]
     completed: bool
+
+APPLICATION_STATUSES = {"saved", "applied", "interview", "offer", "rejected"}
+
+class ApplicationCreate(BaseModel):
+    response_id: str | None = None
+    job_title: str
+    company: str | None = None
+    location: str | None = None
+    source: str | None = None
+    url: str | None = None
+    matched_career: str | None = None
+
+class ApplicationUpdate(BaseModel):
+    status: str | None = None
+    notes: str | None = None
 
 class FeedbackRequest(BaseModel):
     fname: str
@@ -410,3 +426,48 @@ def get_job_listings(response_id: str):
             print("JSearch error:", e)
             continue
     return {"jobs": all_jobs[:12]}
+
+
+@app.get("/applications")
+def list_applications(user=Depends(get_current_user)):
+    data = supabase.table('applications') \
+        .select('*') \
+        .eq('user_id', user.id) \
+        .order('created_at', desc=True) \
+        .execute()
+    return data.data or []
+
+
+@app.post("/applications")
+def create_application(body: ApplicationCreate, user=Depends(get_current_user)):
+    row = {**body.model_dump(), "user_id": user.id, "status": "saved"}
+    result = supabase.table('applications').insert(row).execute()
+    if not result.data:
+        raise HTTPException(status_code=500, detail="Failed to save application")
+    return result.data[0]
+
+
+@app.patch("/applications/{application_id}")
+def update_application(application_id: str, body: ApplicationUpdate, user=Depends(get_current_user)):
+    updates = {k: v for k, v in body.model_dump().items() if v is not None}
+    if not updates:
+        raise HTTPException(status_code=400, detail="No fields to update")
+    if 'status' in updates:
+        if updates['status'] not in APPLICATION_STATUSES:
+            raise HTTPException(status_code=400, detail="Invalid status")
+        if updates['status'] == 'applied':
+            updates['applied_at'] = datetime.now(timezone.utc).isoformat()
+    result = supabase.table('applications') \
+        .update(updates) \
+        .eq('id', application_id) \
+        .eq('user_id', user.id) \
+        .execute()
+    if not result.data:
+        raise HTTPException(status_code=404, detail="Application not found")
+    return result.data[0]
+
+
+@app.delete("/applications/{application_id}")
+def delete_application(application_id: str, user=Depends(get_current_user)):
+    supabase.table('applications').delete().eq('id', application_id).eq('user_id', user.id).execute()
+    return {"deleted": application_id}
