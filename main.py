@@ -110,6 +110,14 @@ class FeedbackRequest(BaseModel):
     recommend: str | None = None
     other: str | None = None
 
+COUNTRY_CODE_MAP = {
+    'saudi_arabia': 'SA',
+    'bahrain': 'BH',
+    'kuwait': 'KW',
+    'oman': 'OM',
+    'qatar': 'QA',
+}
+
 @app.get("/")
 def root():
     return {"status": "ok"}
@@ -471,3 +479,32 @@ def update_application(application_id: str, body: ApplicationUpdate, user=Depend
 def delete_application(application_id: str, user=Depends(get_current_user)):
     supabase.table('applications').delete().eq('id', application_id).eq('user_id', user.id).execute()
     return {"deleted": application_id}
+
+@app.get("/assessment/{response_id}/companies")
+def get_companies_suggestions(response_id: str):
+    profile = supabase.table('assessment_responses') \
+        .select('country, education_field, sectors_of_interest') \
+        .eq('id', response_id).single().execute()
+    rows = supabase.table('assessment_results') \
+        .select('*') \
+        .eq('response_id', response_id).execute()
+    if not rows.data or not profile.data:
+        raise HTTPException(status_code=404, detail="No data found")
+
+    summary = build_framework_output(rows.data)
+    careers = supabase.table('careers').select('*').execute().data or []
+    top5    = score_careers(summary, profile.data, careers)[:5]
+
+    sectors = list(dict.fromkeys(c['sector'] for c in top5))
+    country_code = COUNTRY_CODE_MAP.get(profile.data.get('country', ''))
+
+    query = supabase.table('companies').select(
+        'id, name_en, sector, size, is_government, career_page_url, logo_url, country_code'
+    )    
+    if country_code:
+        query = query.eq('country_code', country_code)
+    if sectors:
+        query = query.in_('sector', sectors)
+
+    result = query.order('name_en').limit(15).execute()
+    return result.data or []
