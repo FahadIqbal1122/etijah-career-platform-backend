@@ -1,4 +1,5 @@
 import os
+from threading import _profile_hook
 from fastapi import FastAPI, HTTPException, Depends, Security
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.middleware.cors import CORSMiddleware
@@ -383,6 +384,32 @@ def update_course(course_id: str, body: dict, _=Depends(require_admin)):
 def delete_course(course_id: str, _=Depends(require_admin)):
     supabase.table('courses').delete().eq('id', course_id).execute()
     return {"deleted": course_id}
+
+@app.get("/assessment/{response_id}/courses")
+def get_course_recommendations(response_id: str):
+    rows = supabase.table('assessment_results').select('*').eq('response_id', response_id).execute()
+    profile = supabase.table('assessment_responses') \
+        .select('country, education_field, sectors_of_interest') \
+        .eq('id', response_id).single().execute()
+    if not rows.data or not profile.data:
+        raise HTTPException(status_code=404, detail="No results found")
+    summary = build_framework_output(rows.data)
+    careers = supabase.table('careers').select('*').execute().data or []
+    top5    = score_careers(summary, profile.data, careers)[:5]
+
+    user_riasec = set(summary.get('riasec', {}).get('top_types', []))
+    sectors     = set(c['sector'] for c in top5)
+
+    all_courses = supabase.table('courses').select('*').execute().data or []
+
+    def score_course(course):
+        riasec_overlap = len(set(course.get('riasec_tags') or []) & user_riasec)
+        sector_overlap = len(set(course.get('career_tags') or []) & sectors)
+        return sector_overlap * 3 + riasec_overlap * 2
+
+    scored  = sorted(all_courses, key=score_course, reverse=True)
+    matched = [c for c in scored if score_course(c) > 0][:10]
+    return matched if matched else scored[:10]
 
 @app.get("/assessment/{response_id}/job-listings")
 def get_job_listings(response_id: str):
