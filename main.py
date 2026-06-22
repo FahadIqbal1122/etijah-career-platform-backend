@@ -1,3 +1,4 @@
+from http import HTTPStatus
 import os
 from threading import _profile_hook
 from fastapi import FastAPI, HTTPException, Depends, Security
@@ -9,10 +10,13 @@ from scoring_engine import compute_scores, build_framework_output, score_careers
 from pydantic import BaseModel, EmailStr
 from typing import Any
 import io
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from fastapi.responses import StreamingResponse
 from report_generator import create_report
 import httpx
+from coaching_methodology import METHODOLOGY_DOC 
+from coaching_pipeline import chunk_transcript, embed_and_store_chunks, client
+import google.generativeai as genai
 
 load_dotenv()
 
@@ -60,6 +64,10 @@ class OnetLinkRequest(BaseModel):
 class CheckExistingRequest(BaseModel):
     email: str
     phone: str
+
+class LinkByEmailRequest(BaseModel):
+    user_id: str
+    email: EmailStr
 
 class SubmitRequest(BaseModel):
     full_name: str
@@ -110,6 +118,16 @@ class FeedbackRequest(BaseModel):
     ai_outlook: str | None = None
     recommend: str | None = None
     other: str | None = None
+
+class coachingSessionRequest(BaseModel):
+    client_label: str | None = None
+    topic: str | None = None
+    session_date: str | None = None #YYYY-MM-DD
+    raw_transcript: str
+
+class CoachRequest(BaseModel):
+    message: str
+    conversation_history: list[dict] = []
 
 COUNTRY_CODE_MAP = {
     'saudi_arabia': 'SA',
@@ -251,8 +269,12 @@ def get_results(response_id: str):
     if not rows.data:
         raise HTTPException(status_code=404, detail="No results found for this response")
 
+    profile = supabase.table('assessment_responses') \
+        .select('email') \
+        .eq('id', response_id).single().execute()
+
     summary = build_framework_output(rows.data)
-    return {'results': rows.data, 'summary': summary}
+    return {'results': rows.data, 'summary': summary, 'email': profile.data.get('email') if profile.data else None}
 
 @app.post("/feedback")
 def submit_feedback(body: FeedbackRequest):
@@ -411,8 +433,16 @@ def get_course_recommendations(response_id: str):
     matched = [c for c in scored if score_course(c) > 0][:10]
     return matched if matched else scored[:10]
 
+JOB_LISTINGS_CACHE_TTL = timedelta(hours=24)
+
 @app.get("/assessment/{response_id}/job-listings")
 def get_job_listings(response_id: str):
+    cached = supabase.table('job_listings_cache').select('*').eq('response_id', response_id).execute()
+    if cached.data:
+        fetched_at = datetime.fromisoformat(cached.data[0]['fetched_at'])
+        if datetime.now(timezone.utc) - fetched_at < JOB_LISTINGS_CACHE_TTL:
+            return {"jobs": cached.data[0]['jobs']}
+
     profile = supabase.table('assessment_responses') \
         .select('country, education_field, sectors_of_interest') \
         .eq('id', response_id).single().execute()
@@ -420,8 +450,8 @@ def get_job_listings(response_id: str):
         .select('*') \
         .eq('response_id', response_id).execute()
     if not rows.data or not profile.data:
-        raise HTTPException(status_code=404, details="No results found")
-    
+        raise HTTPException(status_code=404, detail="No results found")
+
     summary = build_framework_output(rows.data)
     careers = supabase.table('careers').select('*').execute().data or []
     top3    = score_careers(summary, profile.data, careers)[:3]
@@ -460,7 +490,37 @@ def get_job_listings(response_id: str):
         except Exception as e:
             print("JSearch error:", e)
             continue
-    return {"jobs": all_jobs[:12]}
+
+    result_jobs = all_jobs[:12]
+
+    supabase.table('job_listings_cache').upsert({
+        'response_id': response_id,
+        'jobs': result_jobs,
+        'fetched_at': datetime.now(timezone.utc).isoformat(),
+    }).execute()
+
+    return {"jobs": result_jobs}
+
+
+@app.get("/assessment/my-assessments")
+def get_my_assessments(user=Depends(get_current_user)):
+    responses = supabase.table('assessment_responses') \
+        .select('id, full_name, country, completed, created_at') \
+        .eq('user_id', user.id) \
+        .eq('completed', True) \
+        .order('created_at', desc=True) \
+        .execute()
+
+    items = []
+    for r in (responses.data or []):
+        top_type = None
+        rows = supabase.table('assessment_results').select('*').eq('response_id', r['id']).execute()
+        if rows.data:
+            summary = build_framework_output(rows.data)
+            top_types = summary.get('riasec', {}).get('top_types') or []
+            top_type = top_types[0] if top_types else None
+        items.append({**r, 'top_type': top_type})
+    return items
 
 
 @app.get("/applications")
@@ -535,3 +595,73 @@ def get_companies_suggestions(response_id: str):
 
     result = query.order('name_en').limit(15).execute()
     return result.data or []
+
+@app.post("/assessment/link-by-email")
+def link_by_email(body: LinkByEmailRequest):
+    try:
+        admin_user = supabase.auth.admin.get_user_by_id(body.user_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="invalid user_id")
+
+    if not admin_user.user or (admin_user.user.email or "").lower() != body.email.lower():
+        raise HTTPException(status_code=403, detail="user_id does not match the email")
+
+    result = supabase.table('assessment_responses') \
+        .update({"user_id": body.user_id}) \
+        .ilike('email', body.email) \
+        .is_('user_id', 'null') \
+        .execute()
+    return {"linked": len(result.data or [])}
+
+@app.get("/admin/coaching-sessions")
+def list_coaching_sessions(user=Depends(require_admin)):
+    result = supabase.table("coaching_sessions") \
+        .select("id, client_label, topic, session_date, created_at") \
+        .order("created_at", desc=True) \
+        .execute()
+    return result.data or []
+
+@app.post("/admin/coaching-sessions")
+def create_coaching_session(
+    payload: coachingSessionRequest,
+    user=Depends(require_admin),
+):
+    result = supabase.table("coaching_sessions").insert({
+        "client_label": payload.client_label,
+        "topic": payload.topic,
+        "session_date": payload.session_date,
+        "raw_transcript": payload.raw_transcript,
+    }).execute()
+    session = result.data[0]
+
+    chunks = chunk_transcript(payload.raw_transcript)
+    embed_and_store_chunks(session["id"], chunks)
+
+    return {"session_id": session["id"], "chunks_created": len(chunks)}
+
+@app.post("/coach")
+def coach(payload: CoachRequest, user=Depends(get_current_user)):
+    query_embedding = genai.embed_content(
+        model="models/text-embedding-004",
+        content=payload.message,
+    )["embedding"]
+
+    matches = supabase.rpc("match_coaching_chunks", {
+        "query_embedding": query_embedding,
+        "match_count": 5,
+    }).execute().data
+
+    examples = "\n\n".join(
+        f"Situation: {m['situation']}\nCoach response: {m['coach_response']}"
+        for m in matches
+    )
+
+    system_prompt = f"{METHODOLOGY_DOC}\n\nRelevant past examples:\n{examples}"
+
+    response = client.messages.create(
+        model="claude-sonnet-4-6",
+        max_tokens=1024,
+        system=system_prompt,
+        messages=payload.conversation_history + [{"role": "user", "content": payload.message}],
+    )
+    return {"reply": response.content[0].text}
