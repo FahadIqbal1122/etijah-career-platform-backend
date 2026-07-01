@@ -1,11 +1,18 @@
 import os
 import json
+import requests
 from anthropic import Anthropic
-import google.generativeai as genai
 from supabase import create_client, Client
 
 client = Anthropic()
 supabase = create_client(os.getenv("SUPABASE_URL"), os.getenv("SUPABASE_KEY"))
+
+def _gemini_embed(text: str) -> list[float]:
+    api_key = os.getenv("GEMINI_API_KEY")
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-001:embedContent?key={api_key}"
+    resp = requests.post(url, json={"content": {"parts": [{"text": text}]}, "outputDimensionality": 768})
+    resp.raise_for_status()
+    return resp.json()["embedding"]["values"]
 
 def chunk_transcript(raw_transcript: str) -> list[dict]:
     prompt = f"""Split this speaker-labeled coaching transcript into discrete beats.
@@ -24,10 +31,7 @@ def chunk_transcript(raw_transcript: str) -> list[dict]:
 def embed_and_store_chunks(session_id: str, chunks: list[dict]):
     for i, chunk in enumerate(chunks):
         text_for_embedding = f"Situation: {chunk['situation']}\nResponse: {chunk['coach_response']}"
-        embedding = genai.embed_content(
-            model="models/text-embedding-004",
-            content=text_for_embedding,
-        )["embedding"]
+        embedding = _gemini_embed(text_for_embedding)
 
         supabase.table("coaching_chunks").insert({
             "session_id": session_id,
@@ -71,10 +75,7 @@ def embed_country_profile(profile: dict) -> list[float]:
             parts.append(f"{label}: {json.dumps(val) if isinstance(val, (dict, list)) else val}")
 
     text = "\n".join(parts)
-    return genai.embed_content(
-        model="models/text-embedding-004",
-        content=text,
-    )["embedding"]
+    return _gemini_embed(text)
 
 
 def sync_country_profile_embedding(country_code: str, profile: dict):

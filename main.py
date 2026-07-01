@@ -16,8 +16,7 @@ from report_generator import create_report
 import httpx
 import json
 from coaching_methodology import METHODOLOGY_DOC
-from coaching_pipeline import chunk_transcript, embed_and_store_chunks, client, embed_country_profile, sync_country_profile_embedding
-import google.generativeai as genai
+from coaching_pipeline import chunk_transcript, embed_and_store_chunks, client, embed_country_profile, sync_country_profile_embedding, _gemini_embed
 
 load_dotenv()
 
@@ -654,10 +653,7 @@ def create_coaching_session(
 
 @app.post("/coach")
 def coach(payload: CoachRequest, user=Depends(get_current_user)):
-    query_embedding = genai.embed_content(
-        model="models/text-embedding-004",
-        content=payload.message,
-    )["embedding"]
+    query_embedding = _gemini_embed(payload.message)
 
     matches = supabase.rpc("match_coaching_chunks", {
         "query_embedding": query_embedding,
