@@ -14,8 +14,9 @@ from datetime import datetime, timezone, timedelta
 from fastapi.responses import StreamingResponse
 from report_generator import create_report
 import httpx
-from coaching_methodology import METHODOLOGY_DOC 
-from coaching_pipeline import chunk_transcript, embed_and_store_chunks, client
+import json
+from coaching_methodology import METHODOLOGY_DOC
+from coaching_pipeline import chunk_transcript, embed_and_store_chunks, client, embed_country_profile, sync_country_profile_embedding
 import google.generativeai as genai
 
 load_dotenv()
@@ -373,17 +374,29 @@ def create_country_profile(body: dict, _=Depends(require_admin)):
     result = supabase.table('country_profiles').insert(body).execute()
     if not result.data:
         raise HTTPException(status_code=500, detail="Failed to create country profile")
-    return result.data[0]
+    profile = result.data[0]
+    sync_country_profile_embedding(profile['country_code'], profile)
+    return profile
 
 @app.put("/admin/country-profiles/{country_code}")
 def update_country_profile(country_code: str, body: dict, _=Depends(require_admin)):
     result = supabase.table('country_profiles').update(body).eq('country_code', country_code).execute()
-    return result.data[0] if result.data else {}
+    profile = result.data[0] if result.data else {}
+    if profile:
+        sync_country_profile_embedding(country_code, profile)
+    return profile
 
 @app.delete("/admin/country-profiles/{country_code}")
 def delete_country_profile(country_code: str, _=Depends(require_admin)):
     supabase.table('country_profiles').delete().eq('country_code', country_code).execute()
     return {"deleted": country_code}
+
+@app.post("/admin/country-profiles/embed-all")
+def embed_all_country_profiles(_=Depends(require_admin)):
+    profiles = supabase.table('country_profiles').select('*').execute().data or []
+    for p in profiles:
+        sync_country_profile_embedding(p['country_code'], p)
+    return {"embedded": len(profiles)}
 
 @app.get("/admin/courses")
 def get_courses(_=Depends(require_admin)):
@@ -651,12 +664,28 @@ def coach(payload: CoachRequest, user=Depends(get_current_user)):
         "match_count": 5,
     }).execute().data
 
+    country_matches = supabase.rpc("match_country_profiles", {
+        "query_embedding": query_embedding,
+        "match_count": 2,
+    }).execute().data or []
+
     examples = "\n\n".join(
         f"Situation: {m['situation']}\nCoach response: {m['coach_response']}"
         for m in matches
     )
 
-    system_prompt = f"{METHODOLOGY_DOC}\n\nRelevant past examples:\n{examples}"
+    country_context = ""
+    if country_matches:
+        country_context = "\n\nRelevant country labour market context:\n" + "\n\n".join(
+            f"Country: {c['country_name']}\n"
+            f"Context tier: {c.get('context_tier', '')}\n"
+            f"Labour market authority: {c.get('labour_market_authority', '')}\n"
+            f"Nationalisation programme: {c.get('nationalisation_programme', '')}\n"
+            f"Strategic priorities: {json.dumps(c.get('strategic_priorities') or {})}"
+            for c in country_matches
+        )
+
+    system_prompt = f"{METHODOLOGY_DOC}\n\nRelevant past examples:\n{examples}{country_context}"
 
     response = client.messages.create(
         model="claude-sonnet-4-6",

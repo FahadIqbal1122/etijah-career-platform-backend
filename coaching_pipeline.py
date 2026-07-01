@@ -48,3 +48,35 @@ def parse_json_beats(text: str) -> list[dict]:
         if "situation" not in beat or "coach_response" not in beat:
             raise ValueError(f"Beat missing required keys: {beat!r}")
     return beats
+
+
+def embed_country_profile(profile: dict) -> list[float]:
+    parts = [
+        f"Country: {profile.get('country_name', '')} ({profile.get('country_code', '')})",
+        f"Context tier: {profile.get('context_tier', '')}",
+    ]
+    for key, label in [
+        ('labour_market_authority', 'Labour market authority'),
+        ('nationalisation_programme', 'Nationalisation programme'),
+    ]:
+        if profile.get(key):
+            parts.append(f"{label}: {profile[key]}")
+    for key, label in [
+        ('strategic_priorities', 'Strategic priorities'),
+        ('nationalisation_rates_by_sector', 'Nationalisation rates by sector'),
+        ('wage_support_tiers', 'Wage support tiers'),
+    ]:
+        if profile.get(key):
+            val = profile[key]
+            parts.append(f"{label}: {json.dumps(val) if isinstance(val, (dict, list)) else val}")
+
+    text = "\n".join(parts)
+    return genai.embed_content(
+        model="models/text-embedding-004",
+        content=text,
+    )["embedding"]
+
+
+def sync_country_profile_embedding(country_code: str, profile: dict):
+    embedding = embed_country_profile(profile)
+    supabase.table("country_profiles").update({"embedding": embedding}).eq("country_code", country_code).execute()
