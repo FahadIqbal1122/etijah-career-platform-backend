@@ -467,11 +467,10 @@ def _get_week_start() -> str:
     return monday.isoformat()
 
 @app.post("/admin/market-analysis/fetch")
-def fetch_market_analysis(_=Depends(require_admin)):
+async def fetch_market_analysis(_=Depends(require_admin)):
+    import asyncio
     mega_key = os.getenv("JSEARCH_MEGA_KEY")
     week_start = _get_week_start()
-    inserted = 0
-    errors = 0
 
     existing = supabase.table("job_market_snapshots") \
         .select("job_id") \
@@ -479,27 +478,47 @@ def fetch_market_analysis(_=Depends(require_admin)):
         .execute()
     seen_ids = {r["job_id"] for r in (existing.data or [])}
 
-    for country in MARKET_COUNTRIES:
-        for role in MARKET_ROLE_CATEGORIES:
-            try:
-                resp = httpx.get(
-                    "https://jsearch-mega.p.rapidapi.com/search",
-                    params={"query": f"{role} {country['query_suffix']}", "num_pages": "1", "page": "1"},
-                    headers={
-                        "X-RapidAPI-Key": mega_key,
-                        "X-RapidAPI-Host": "jsearch-mega.p.rapidapi.com",
-                    },
-                    timeout=10.0,
-                )
-                resp.raise_for_status()
-                jobs = resp.json().get("data") or []
-                rows = []
+    tasks = [
+        (country, role)
+        for country in MARKET_COUNTRIES
+        for role in MARKET_ROLE_CATEGORIES
+    ]
+
+    all_rows = []
+    errors = 0
+
+    async def fetch_one(client: httpx.AsyncClient, country: dict, role: str):
+        try:
+            resp = await client.get(
+                "https://jsearch-mega.p.rapidapi.com/search",
+                params={"query": f"{role} {country['query_suffix']}", "num_pages": "1", "page": "1"},
+                headers={
+                    "X-RapidAPI-Key": mega_key,
+                    "X-RapidAPI-Host": "jsearch-mega.p.rapidapi.com",
+                },
+                timeout=12.0,
+            )
+            resp.raise_for_status()
+            return country, role, resp.json().get("data") or []
+        except Exception as e:
+            print(f"Market fetch error [{country['code']}][{role}]: {e}")
+            return country, role, None
+
+    async with httpx.AsyncClient() as client:
+        # Run in batches of 10 to avoid overwhelming the API
+        for i in range(0, len(tasks), 10):
+            batch = tasks[i:i+10]
+            results = await asyncio.gather(*[fetch_one(client, c, r) for c, r in batch])
+            for country, role, jobs in results:
+                if jobs is None:
+                    errors += 1
+                    continue
                 for job in jobs[:8]:
                     job_id = job.get("job_id")
                     if not job_id or job_id in seen_ids:
                         continue
                     seen_ids.add(job_id)
-                    rows.append({
+                    all_rows.append({
                         "fetched_week": week_start,
                         "country_code": country["code"],
                         "country_name": country["name"],
@@ -513,13 +532,11 @@ def fetch_market_analysis(_=Depends(require_admin)):
                         "salary_currency": job.get("job_salary_currency"),
                         "url": job.get("job_apply_link"),
                     })
-                if rows:
-                    supabase.table("job_market_snapshots").insert(rows).execute()
-                    inserted += len(rows)
-            except Exception as e:
-                print(f"Market fetch error [{country['code']}][{role}]: {e}")
-                errors += 1
-                continue
+
+    inserted = 0
+    if all_rows:
+        supabase.table("job_market_snapshots").insert(all_rows).execute()
+        inserted = len(all_rows)
 
     return {"week": week_start, "inserted": inserted, "errors": errors}
 
