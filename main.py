@@ -447,6 +447,124 @@ def get_course_recommendations(response_id: str):
 
 JOB_LISTINGS_CACHE_TTL = timedelta(hours=24)
 
+MARKET_ROLE_CATEGORIES = [
+    "software engineer", "data analyst", "project manager", "accountant",
+    "financial analyst", "marketing manager", "HR manager", "civil engineer",
+    "mechanical engineer", "nurse", "doctor", "teacher", "sales manager",
+    "operations manager", "supply chain", "business analyst", "architect",
+    "cybersecurity", "logistics", "procurement", "legal counsel",
+    "graphic designer", "banker", "consultant", "pharmacist",
+]
+
+MARKET_COUNTRIES = [
+    {"code": "SA", "name": "Saudi Arabia", "query_suffix": "Saudi Arabia"},
+    {"code": "BH", "name": "Bahrain", "query_suffix": "Bahrain"},
+]
+
+def _get_week_start() -> str:
+    today = datetime.now(timezone.utc).date()
+    monday = today - timedelta(days=today.weekday())
+    return monday.isoformat()
+
+@app.post("/admin/market-analysis/fetch")
+def fetch_market_analysis(_=Depends(require_admin)):
+    mega_key = os.getenv("JSEARCH_MEGA_KEY")
+    week_start = _get_week_start()
+    inserted = 0
+    errors = 0
+
+    existing = supabase.table("job_market_snapshots") \
+        .select("job_id") \
+        .eq("fetched_week", week_start) \
+        .execute()
+    seen_ids = {r["job_id"] for r in (existing.data or [])}
+
+    for country in MARKET_COUNTRIES:
+        for role in MARKET_ROLE_CATEGORIES:
+            try:
+                resp = httpx.get(
+                    "https://jsearch-mega.p.rapidapi.com/search",
+                    params={"query": f"{role} {country['query_suffix']}", "num_pages": "1", "page": "1"},
+                    headers={
+                        "X-RapidAPI-Key": mega_key,
+                        "X-RapidAPI-Host": "jsearch-mega.p.rapidapi.com",
+                    },
+                    timeout=10.0,
+                )
+                resp.raise_for_status()
+                jobs = resp.json().get("data") or []
+                rows = []
+                for job in jobs[:8]:
+                    job_id = job.get("job_id")
+                    if not job_id or job_id in seen_ids:
+                        continue
+                    seen_ids.add(job_id)
+                    rows.append({
+                        "fetched_week": week_start,
+                        "country_code": country["code"],
+                        "country_name": country["name"],
+                        "role_category": role,
+                        "job_id": job_id,
+                        "job_title": job.get("job_title"),
+                        "company": job.get("employer_name"),
+                        "location": f"{job.get('job_city', '')} {job.get('job_country', '')}".strip(),
+                        "salary_min": job.get("job_min_salary"),
+                        "salary_max": job.get("job_max_salary"),
+                        "salary_currency": job.get("job_salary_currency"),
+                        "url": job.get("job_apply_link"),
+                    })
+                if rows:
+                    supabase.table("job_market_snapshots").insert(rows).execute()
+                    inserted += len(rows)
+            except Exception as e:
+                print(f"Market fetch error [{country['code']}][{role}]: {e}")
+                errors += 1
+                continue
+
+    return {"week": week_start, "inserted": inserted, "errors": errors}
+
+@app.get("/admin/market-analysis/trends")
+def get_market_trends(_=Depends(require_admin)):
+    rows = supabase.table("job_market_snapshots") \
+        .select("fetched_week, country_code, country_name, role_category, salary_min, salary_max") \
+        .order("fetched_week", desc=False) \
+        .execute().data or []
+
+    # Demand: count per role per week per country
+    demand: dict = {}
+    salary: dict = {}
+    for r in rows:
+        week = r["fetched_week"]
+        country = r["country_code"]
+        role = r["role_category"]
+        key = (week, country, role)
+        demand[key] = demand.get(key, 0) + 1
+        if r.get("salary_min") or r.get("salary_max"):
+            if key not in salary:
+                salary[key] = []
+            vals = [v for v in [r.get("salary_min"), r.get("salary_max")] if v]
+            salary[key].extend(vals)
+
+    demand_list = [
+        {"week": k[0], "country": k[1], "role": k[2], "count": v}
+        for k, v in demand.items()
+    ]
+    salary_list = [
+        {"week": k[0], "country": k[1], "role": k[2], "avg_salary": round(sum(v) / len(v), 0)}
+        for k, v in salary.items()
+    ]
+
+    weeks = sorted({r["fetched_week"] for r in rows})
+    roles = sorted({r["role_category"] for r in rows})
+
+    return {
+        "weeks": weeks,
+        "roles": roles,
+        "demand": demand_list,
+        "salary": salary_list,
+        "total_snapshots": len(rows),
+    }
+
 @app.get("/assessment/{response_id}/job-listings")
 def get_job_listings(response_id: str):
     cached = supabase.table('job_listings_cache').select('*').eq('response_id', response_id).execute()
