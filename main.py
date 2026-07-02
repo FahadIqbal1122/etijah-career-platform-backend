@@ -543,33 +543,58 @@ async def fetch_market_analysis(_=Depends(require_admin)):
 @app.get("/admin/market-analysis/trends")
 def get_market_trends(_=Depends(require_admin)):
     rows = supabase.table("job_market_snapshots") \
-        .select("fetched_week, country_code, country_name, role_category, salary_min, salary_max") \
+        .select("*") \
         .order("fetched_week", desc=False) \
         .execute().data or []
 
-    # Demand: count per role per week per country
+    # Demand per role/week/country
     demand: dict = {}
     salary: dict = {}
+    company_count: dict = {}   # company -> {SA: n, BH: n}
+    role_titles: dict = {}     # role_category -> [job_title, ...]
+
     for r in rows:
         week = r["fetched_week"]
         country = r["country_code"]
         role = r["role_category"]
         key = (week, country, role)
-        demand[key] = demand.get(key, 0) + 1
-        if r.get("salary_min") or r.get("salary_max"):
-            if key not in salary:
-                salary[key] = []
-            vals = [v for v in [r.get("salary_min"), r.get("salary_max")] if v]
-            salary[key].extend(vals)
 
-    demand_list = [
-        {"week": k[0], "country": k[1], "role": k[2], "count": v}
-        for k, v in demand.items()
-    ]
-    salary_list = [
-        {"week": k[0], "country": k[1], "role": k[2], "avg_salary": round(sum(v) / len(v), 0)}
-        for k, v in salary.items()
-    ]
+        demand[key] = demand.get(key, 0) + 1
+
+        if r.get("salary_min") or r.get("salary_max"):
+            salary.setdefault(key, [])
+            salary[key].extend(v for v in [r.get("salary_min"), r.get("salary_max")] if v)
+
+        company = (r.get("company") or "").strip()
+        if company:
+            if company not in company_count:
+                company_count[company] = {"SA": 0, "BH": 0, "total": 0}
+            company_count[company][country] = company_count[company].get(country, 0) + 1
+            company_count[company]["total"] += 1
+
+        title = (r.get("job_title") or "").strip()
+        if title:
+            role_titles.setdefault(role, {})
+            role_titles[role][title] = role_titles[role].get(title, 0) + 1
+
+    # Top 20 companies
+    top_companies = sorted(
+        [{"company": k, **v} for k, v in company_count.items()],
+        key=lambda x: x["total"], reverse=True
+    )[:20]
+
+    # Top job titles per role (top 3)
+    top_titles_by_role = {
+        role: sorted(titles.items(), key=lambda x: x[1], reverse=True)[:3]
+        for role, titles in role_titles.items()
+    }
+
+    # Recent 30 jobs (latest week)
+    recent = supabase.table("job_market_snapshots") \
+        .select("job_title, company, location, country_code, role_category, url, fetched_week, salary_min, salary_max, salary_currency") \
+        .order("fetched_at", desc=True) \
+        .limit(50) \
+        .execute().data or []
 
     weeks = sorted({r["fetched_week"] for r in rows})
     roles = sorted({r["role_category"] for r in rows})
@@ -577,9 +602,13 @@ def get_market_trends(_=Depends(require_admin)):
     return {
         "weeks": weeks,
         "roles": roles,
-        "demand": demand_list,
-        "salary": salary_list,
+        "demand": [{"week": k[0], "country": k[1], "role": k[2], "count": v} for k, v in demand.items()],
+        "salary": [{"week": k[0], "country": k[1], "role": k[2], "avg_salary": round(sum(v)/len(v), 0)} for k, v in salary.items()],
+        "top_companies": top_companies,
+        "top_titles_by_role": top_titles_by_role,
+        "recent_jobs": recent,
         "total_snapshots": len(rows),
+        "total_companies": len(company_count),
     }
 
 @app.get("/assessment/{response_id}/job-listings")
