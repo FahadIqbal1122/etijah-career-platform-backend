@@ -110,11 +110,17 @@ def generate_ai_content(user_data: dict, summary: dict, raw_scores: list, career
         f"Matched careers:\n{careers_text}\n\n"
         + (
             f"=== COUNTRY CONTEXT: {country_profile.get('country_name', user_data.get('country', 'Unknown'))} ===\n\n"
-            f"Labour market authority: {country_profile.get('labour_market_authority', 'N/A')}\n"
-            f"Nationalisation programme: {country_profile.get('nationalisation_programme', 'N/A')}\n"
-            f"Strategic priorities: {json.dumps(country_profile.get('strategic_priorities') or {})}\n"
-            f"Nationalisation rates by sector: {json.dumps(country_profile.get('nationalisation_rates_by_sector') or {})}\n\n"
-            "IMPORTANT: Use this country context to qualify career recommendations. "
+            + (
+                country_profile['raw_notes']
+                if country_profile.get('raw_notes')
+                else (
+                    f"Labour market authority: {country_profile.get('labour_market_authority', 'N/A')}\n"
+                    f"Nationalisation programme: {country_profile.get('nationalisation_programme', 'N/A')}\n"
+                    f"Strategic priorities: {json.dumps(country_profile.get('strategic_priorities') or {})}\n"
+                    f"Nationalisation rates by sector: {json.dumps(country_profile.get('nationalisation_rates_by_sector') or {})}\n"
+                )
+            )
+            + "\n\nIMPORTANT: Use this country context to qualify career recommendations. "
             "If a career is low-demand or restricted by nationalisation quotas in this country, note that in fit_summary. "
             "If it aligns with strategic priorities, highlight that as an advantage.\n\n"
             if country_profile else ""

@@ -55,26 +55,26 @@ def parse_json_beats(text: str) -> list[dict]:
 
 
 def embed_country_profile(profile: dict) -> list[float]:
-    parts = [
-        f"Country: {profile.get('country_name', '')} ({profile.get('country_code', '')})",
-        f"Context tier: {profile.get('context_tier', '')}",
-    ]
-    for key, label in [
-        ('labour_market_authority', 'Labour market authority'),
-        ('nationalisation_programme', 'Nationalisation programme'),
-    ]:
-        if profile.get(key):
-            parts.append(f"{label}: {profile[key]}")
-    for key, label in [
-        ('strategic_priorities', 'Strategic priorities'),
-        ('nationalisation_rates_by_sector', 'Nationalisation rates by sector'),
-        ('wage_support_tiers', 'Wage support tiers'),
-    ]:
-        if profile.get(key):
-            val = profile[key]
-            parts.append(f"{label}: {json.dumps(val) if isinstance(val, (dict, list)) else val}")
-
-    text = "\n".join(parts)
+    header = f"Country: {profile.get('country_name', '')} ({profile.get('country_code', '')})"
+    if profile.get('raw_notes'):
+        text = f"{header}\n\n{profile['raw_notes']}"
+    else:
+        parts = [header]
+        for key, label in [
+            ('labour_market_authority', 'Labour market authority'),
+            ('nationalisation_programme', 'Nationalisation programme'),
+        ]:
+            if profile.get(key):
+                parts.append(f"{label}: {profile[key]}")
+        for key, label in [
+            ('strategic_priorities', 'Strategic priorities'),
+            ('nationalisation_rates_by_sector', 'Nationalisation rates by sector'),
+            ('wage_support_tiers', 'Wage support tiers'),
+        ]:
+            if profile.get(key):
+                val = profile[key]
+                parts.append(f"{label}: {json.dumps(val) if isinstance(val, (dict, list)) else val}")
+        text = "\n".join(parts)
     return _gemini_embed(text)
 
 
