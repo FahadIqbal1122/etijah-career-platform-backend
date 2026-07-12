@@ -33,6 +33,15 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+import traceback
+from fastapi.responses import JSONResponse
+from fastapi import Request
+
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception):
+    traceback.print_exc()
+    return JSONResponse(status_code=500, content={"error": str(exc)})
+
 supabase: Client = create_client(
     os.getenv("SUPABASE_URL"),
     os.getenv("SUPABASE_KEY"),
@@ -534,11 +543,19 @@ async def fetch_market_analysis(_=Depends(require_admin)):
                     })
 
     inserted = 0
+    insert_error = None
     if all_rows:
-        supabase.table("job_market_snapshots").insert(all_rows).execute()
-        inserted = len(all_rows)
+        try:
+            supabase.table("job_market_snapshots").upsert(all_rows, on_conflict="fetched_week,job_id").execute()
+            inserted = len(all_rows)
+        except Exception as e:
+            print(f"Market snapshot insert failed: {e}")
+            insert_error = str(e)
 
-    return {"week": week_start, "inserted": inserted, "errors": errors}
+    result = {"week": week_start, "inserted": inserted, "errors": errors}
+    if insert_error:
+        result["insert_error"] = insert_error
+    return result
 
 @app.get("/admin/market-analysis/trends")
 def get_market_trends(_=Depends(require_admin)):
