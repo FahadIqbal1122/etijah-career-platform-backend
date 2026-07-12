@@ -479,6 +479,8 @@ def _get_week_start() -> str:
 async def fetch_market_analysis(_=Depends(require_admin)):
     import asyncio
     mega_key = os.getenv("JSEARCH_MEGA_KEY")
+    if not mega_key:
+        return {"week": _get_week_start(), "inserted": 0, "errors": 0, "insert_error": "JSEARCH_MEGA_KEY is not set on the backend"}
     week_start = _get_week_start()
 
     existing = supabase.table("job_market_snapshots") \
@@ -510,7 +512,7 @@ async def fetch_market_analysis(_=Depends(require_admin)):
             resp.raise_for_status()
             return country, role, resp.json().get("data") or []
         except Exception as e:
-            print(f"Market fetch error [{country['code']}][{role}]: {e}")
+            print(f"Market fetch error [{country['code']}][{role}]: {type(e).__name__}: {e!r}")
             return country, role, None
 
     async with httpx.AsyncClient() as client:
