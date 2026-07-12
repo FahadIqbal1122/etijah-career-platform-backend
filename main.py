@@ -499,27 +499,36 @@ async def fetch_market_analysis(_=Depends(require_admin)):
     errors = 0
 
     async def fetch_one(client: httpx.AsyncClient, country: dict, role: str):
-        try:
-            resp = await client.get(
-                "https://jsearch-mega.p.rapidapi.com/search",
-                params={"query": f"{role} {country['query_suffix']}", "num_pages": "1", "page": "1"},
-                headers={
-                    "X-RapidAPI-Key": mega_key,
-                    "X-RapidAPI-Host": "jsearch-mega.p.rapidapi.com",
-                },
-                timeout=12.0,
-            )
-            resp.raise_for_status()
-            return country, role, resp.json().get("data") or []
-        except Exception as e:
-            print(f"Market fetch error [{country['code']}][{role}]: {type(e).__name__}: {e!r}")
-            return country, role, None
+        for attempt in range(3):
+            try:
+                resp = await client.get(
+                    "https://jsearch-mega.p.rapidapi.com/search",
+                    params={"query": f"{role} {country['query_suffix']}", "num_pages": "1", "page": "1"},
+                    headers={
+                        "X-RapidAPI-Key": mega_key,
+                        "X-RapidAPI-Host": "jsearch-mega.p.rapidapi.com",
+                    },
+                    timeout=12.0,
+                )
+                if resp.status_code == 429 and attempt < 2:
+                    await asyncio.sleep(3 * (attempt + 1))
+                    continue
+                resp.raise_for_status()
+                return country, role, resp.json().get("data") or []
+            except Exception as e:
+                if attempt < 2 and isinstance(e, httpx.HTTPStatusError) and e.response.status_code == 429:
+                    await asyncio.sleep(3 * (attempt + 1))
+                    continue
+                print(f"Market fetch error [{country['code']}][{role}]: {type(e).__name__}: {e!r}")
+                return country, role, None
 
     async with httpx.AsyncClient() as client:
-        # Run in batches of 10 to avoid overwhelming the API
-        for i in range(0, len(tasks), 10):
-            batch = tasks[i:i+10]
+        # Small batches with a pause between them to stay under the RapidAPI rate limit
+        for i in range(0, len(tasks), 3):
+            batch = tasks[i:i+3]
             results = await asyncio.gather(*[fetch_one(client, c, r) for c, r in batch])
+            if i + 3 < len(tasks):
+                await asyncio.sleep(1)
             for country, role, jobs in results:
                 if jobs is None:
                     errors += 1
