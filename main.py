@@ -27,6 +27,8 @@ app.add_middleware(
     allow_origins=[
         "http://localhost:3000",
         "https://careercompass.etijahcoaching.com",
+        "https://myetijahi.com",
+        "https://www.myetijahi.com",
     ],
     allow_credentials=True,
     allow_methods=["*"],
