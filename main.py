@@ -130,6 +130,12 @@ class FeedbackRequest(BaseModel):
     recommend: str | None = None
     other: str | None = None
 
+class WaitlistRequest(BaseModel):
+    email: EmailStr
+    name: str | None = None
+    locale: str | None = None
+    source: str | None = None
+
 class coachingSessionRequest(BaseModel):
     client_label: str | None = None
     topic: str | None = None
@@ -297,6 +303,26 @@ def submit_feedback(body: FeedbackRequest):
 @app.get("/admin/feedback")
 def get_feedback(_=Depends(require_admin)):
     data = supabase.table('feedback_responses') \
+        .select('*') \
+        .order('created_at', desc=True) \
+        .execute()
+    return data.data or []
+
+@app.post("/waitlist")
+def join_waitlist(body: WaitlistRequest):
+    try:
+        result = supabase.table('waitlist_signups').insert(body.model_dump()).execute()
+    except Exception as e:
+        if 'duplicate key' in str(e).lower():
+            return {"status": "already_joined"}
+        raise HTTPException(status_code=500, detail="Failed to join waitlist")
+    if not result.data:
+        raise HTTPException(status_code=500, detail="Failed to join waitlist")
+    return {"status": "joined", "id": result.data[0]["id"]}
+
+@app.get("/admin/waitlist")
+def get_waitlist(_=Depends(require_admin)):
+    data = supabase.table('waitlist_signups') \
         .select('*') \
         .order('created_at', desc=True) \
         .execute()
