@@ -133,6 +133,8 @@ class FeedbackRequest(BaseModel):
 class WaitlistRequest(BaseModel):
     email: EmailStr
     name: str | None = None
+    country: str | None = None
+    status: str | None = None
     locale: str | None = None
     source: str | None = None
 
