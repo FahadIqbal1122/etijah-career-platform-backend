@@ -10,6 +10,8 @@ from datetime import datetime
 import google.generativeai as genai 
 from weasyprint import HTML
 from scoring_engine import build_framework_output, score_careers
+from coaching_pipeline import _gemini_embed
+from content_policy import is_appropriate, CULTURAL_GUARDRAIL
 
 # ─── Static metadata ──────────────────────────────────────────────────────────
 
@@ -53,7 +55,7 @@ BIG_FIVE_LABELS = {
 
 # ─── Gemini content generation ────────────────────────────────────────────────
 
-def generate_ai_content(user_data: dict, summary: dict, raw_scores: list, careers: list, country_profile: dict | None = None) -> dict:
+def generate_ai_content(user_data: dict, summary: dict, raw_scores: list, careers: list, country_profile: dict | None = None, coaching_chunks: list[dict] | None = None) -> dict:
     genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
     model = genai.GenerativeModel(
       "gemini-2.5-flash",
@@ -82,6 +84,7 @@ def generate_ai_content(user_data: dict, summary: dict, raw_scores: list, career
         f"You are writing a professional, personalized career development report for {user_data['full_name']}.\n"
         "Write in second person (you, your). Be warm, specific, and empowering — not generic.\n"
         "Reference actual scores and combinations. Do not write boilerplate.\n\n"
+        f"{CULTURAL_GUARDRAIL}\n\n"
         "=== ASSESSMENT DATA ===\n\n"
         f"Name: {user_data['full_name']}\n"
         f"Age bracket: {user_data.get('age_bracket','N/A')}\n"
@@ -124,6 +127,18 @@ def generate_ai_content(user_data: dict, summary: dict, raw_scores: list, career
             "If a career is low-demand or restricted by nationalisation quotas in this country, note that in fit_summary. "
             "If it aligns with strategic priorities, highlight that as an advantage.\n\n"
             if country_profile else ""
+        )
+        + (
+            "=== RELEVANT COACHING KNOWLEDGE ===\n\n"
+            + "\n\n".join(
+                f"Situation: {c['situation']}\nCoach response: {c['coach_response']}"
+                for c in coaching_chunks
+            )
+            + "\n\nIMPORTANT: These are real excerpts from professional career coaching sessions "
+            "with similar client profiles. Use the coach's tone, framing, and specific advice patterns "
+            "to inform the narratives and action plan below — don't quote them verbatim, but let them "
+            "shape how you'd counsel this person.\n\n"
+            if coaching_chunks else ""
         )
         + "=== OUTPUT ===\n\n"
         "Return ONLY a valid JSON object (no markdown, no code fences) with exactly these keys:\n\n"
@@ -204,6 +219,15 @@ def _bar(score: float, color: str = "#c9a84c") -> str:
         f'<span class="bar-num">{pct:.0f}</span>'
     )
 
+def _risk_badge(risk: str) -> str:
+    colors = {'low': '#2a9d5c', 'medium': '#d4a017', 'high': '#e05a3a'}
+    c = colors.get(risk, '#888')
+    return (
+        f'<span style="font-size:7pt;font-weight:700;padding:2px 8px;border-radius:10px;'
+        f'background:{c}22;color:{c};border:1px solid {c};letter-spacing:1px;white-space:nowrap;">'
+        f'{(risk or "").upper()} RISK</span>'
+    )
+
 def _badge(level: str) -> str:
     colors = {'high': '#2a9d5c', 'medium': '#d4a017', 'low': '#e05a3a'}
     c = colors.get(level, '#888')
@@ -215,7 +239,7 @@ def _badge(level: str) -> str:
 
 # ─── HTML report builder ───────────────────────────────────────────────────────
 
-def build_html_report(user_data: dict, summary: dict, raw_scores: list, ai: dict, careers: list) -> str:
+def build_html_report(user_data: dict, summary: dict, raw_scores: list, ai: dict, careers: list, ai_impact: dict | None = None) -> str:
     scores = {r['dimension']: r['normalized_score'] for r in raw_scores}
     name = user_data['full_name']
     date_str = datetime.now().strftime("%B %d, %Y")
@@ -387,6 +411,30 @@ def build_html_report(user_data: dict, summary: dict, raw_scores: list, ai: dict
             f'<p class="muted" style="margin-top:4px;font-style:italic;">{rec.get("growth_note","")}</p>'
             f'</div>'
         )
+
+    # ── AI impact cards ───────────────────────────────────────────────────────
+    ai_impact_cards = ""
+    for c in (ai_impact or {}).get('careers', [])[:5]:
+        protected_pills = "".join(
+            f'<span class="pill" style="margin:2px 4px 2px 0;">{s}</span>'
+            for s in c.get('protected_skills', [])
+        )
+        upskilling_items = "".join(
+            f'<li class="action-item" style="border-left-color:#457b9d;">{tip}</li>'
+            for tip in c.get('upskilling', [])
+        )
+        ai_impact_cards += (
+            f'<div class="card" style="margin-bottom:10px;">'
+            f'<div class="card-row">'
+            f'<h4 class="card-title">{c.get("title","")}</h4>'
+            f'{_risk_badge(c.get("ai_risk_level",""))}'
+            f'</div>'
+            f'<p class="body-text" style="margin-top:6px;">{c.get("gcc_outlook","")}</p>'
+            f'<div style="margin-top:8px;">{protected_pills}</div>'
+            f'<ul class="action-list" style="margin-top:8px;">{upskilling_items}</ul>'
+            f'</div>'
+        )
+    ai_impact_summary = (ai_impact or {}).get('overall_summary', '')
 
     # ── Action plan ───────────────────────────────────────────────────────────
     ap = ai.get('action_plan', {})
@@ -707,7 +755,7 @@ def build_html_report(user_data: dict, summary: dict, raw_scores: list, ai: dict
     </div>
   </div>
 
-  <!-- PAGE 8 — 90-DAY ACTION PLAN -->
+  <!-- PAGE 8 — AI IMPACT & FUTURE-PROOFING -->
   <div class="page">
     <div class="page-hdr">
       <span class="page-hdr-brand">Career Compass · Etijah Coaching</span>
@@ -715,12 +763,30 @@ def build_html_report(user_data: dict, summary: dict, raw_scores: list, ai: dict
     </div>
     <div class="sec-heading">
       <div class="sec-accent"></div>
-      <div><div class="sec-num">09</div><div class="sec-title">Your 90-Day Action Plan</div></div>
+      <div><div class="sec-num">09</div><div class="sec-title">AI Impact &amp; Future-Proofing</div></div>
+    </div>
+    <div class="intro-box">{ai_impact_summary}</div>
+    {ai_impact_cards}
+    <div class="page-ftr">
+      <span>Career Compass Report · Confidential · {date_str}</span>
+      <span>Page 8</span>
+    </div>
+  </div>
+
+  <!-- PAGE 9 — 90-DAY ACTION PLAN -->
+  <div class="page">
+    <div class="page-hdr">
+      <span class="page-hdr-brand">Career Compass · Etijah Coaching</span>
+      <span class="page-hdr-name">{name}</span>
+    </div>
+    <div class="sec-heading">
+      <div class="sec-accent"></div>
+      <div><div class="sec-num">10</div><div class="sec-title">Your 90-Day Action Plan</div></div>
     </div>
     {action_html}
     <div class="page-ftr">
       <span>Career Compass Report · Confidential · {date_str}</span>
-      <span>Page 8</span>
+      <span>Page 9</span>
     </div>
   </div>
 
@@ -755,6 +821,7 @@ def generate_ai_impact(user_data: dict, summary: dict, careers: list) -> dict:
     "You are a career futurist specializing in AI's impact on work in the GCC region.\n"
     "Analyze how AI and automation will affect this specific person's top career matches.\n"                                                                                                         
     "Be honest about risks but focus on what protects them and how to future-proof.\n\n"
+    f"{CULTURAL_GUARDRAIL}\n\n"
     "=== USER PROFILE ===\n"
     f"RIASEC top types: {', '.join(riasec_types)}\n"
     f"Top strengths: {', '.join(top_strengths)}\n"                                                                                                                                                   
@@ -803,7 +870,7 @@ def create_report(response_id: str, supabase_client) -> bytes:
 
     profile = supabase_client.table('assessment_responses') \
         .select('full_name,email,age_bracket,current_stage,education_field,'
-                'sectors_of_interest,geographic_openness,why_here,country') \
+                'sectors_of_interest,geographic_openness,why_here,country,ai_impact_cache') \
         .eq('id', response_id).single().execute()
     if not profile.data:
         raise ValueError(f"No assessment found for {response_id}")
@@ -821,7 +888,37 @@ def create_report(response_id: str, supabase_client) -> bytes:
     raw_scores = scores_row.data
     summary    = build_framework_output(raw_scores)
     all_careers = supabase_client.table('careers').select('*').execute().data or []
-    top_careers = score_careers(summary, profile.data, all_careers)
-    ai_content  = generate_ai_content(profile.data, summary, raw_scores, top_careers, country_profile)
-    html       = build_html_report(profile.data, summary, raw_scores, ai_content, top_careers)
+
+    query_text = (
+        f"RIASEC: {', '.join(summary.get('riasec', {}).get('top_types', []))}. "
+        f"Top values: {', '.join(summary.get('values', {}).get('top_values', []))}. "
+        f"Top strengths: {', '.join(summary.get('strengths', {}).get('top_strengths', []))}. "
+        f"Sectors of interest: {', '.join(profile.data.get('sectors_of_interest', []))}. "
+        f"Current stage: {profile.data.get('current_stage', '')}."
+    )
+    query_embedding = _gemini_embed(query_text)
+    coaching_matches = supabase_client.rpc("match_coaching_chunks", {
+        "query_embedding": query_embedding,
+        "match_count": 5,
+    }).execute().data
+
+    try:
+        career_matches = supabase_client.rpc("match_careers", {
+            "query_embedding": query_embedding,
+            "match_count": 250,
+        }).execute().data or []
+        semantic_scores = {m['id']: m['similarity'] for m in career_matches}
+    except Exception:
+        semantic_scores = {}
+    top_careers = score_careers(summary, profile.data, all_careers, semantic_scores)
+
+    ai_impact = profile.data.get('ai_impact_cache')
+    if not ai_impact:
+        ai_impact = generate_ai_impact(profile.data, summary, top_careers[:5])
+        supabase_client.table('assessment_responses') \
+            .update({'ai_impact_cache': ai_impact}) \
+            .eq('id', response_id).execute()
+
+    ai_content  = generate_ai_content(profile.data, summary, raw_scores, top_careers, country_profile, coaching_matches)
+    html       = build_html_report(profile.data, summary, raw_scores, ai_content, top_careers, ai_impact)
     return generate_pdf(html)

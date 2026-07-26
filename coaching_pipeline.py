@@ -81,3 +81,27 @@ def embed_country_profile(profile: dict) -> list[float]:
 def sync_country_profile_embedding(country_code: str, profile: dict):
     embedding = embed_country_profile(profile)
     supabase.table("country_profiles").update({"embedding": embedding}).eq("country_code", country_code).execute()
+
+
+def embed_career(career: dict) -> list[float]:
+    parts = [f"Career: {career.get('title', '')}"]
+    if career.get('sector'):
+        parts.append(f"Sector: {career['sector']}")
+    if career.get('riasec'):
+        parts.append(f"RIASEC type: {', '.join(career['riasec'])}")
+    if career.get('top_values'):
+        parts.append(f"Core values: {', '.join(career['top_values'])}")
+    if career.get('top_strengths'):
+        parts.append(f"Key strengths: {', '.join(career['top_strengths'])}")
+    if career.get('work_pace'):
+        parts.append(f"Work pace: {career['work_pace']}")
+    if career.get('work_sector'):
+        parts.append(f"Work sector: {career['work_sector']}")
+    if career.get('education_fields'):
+        parts.append(f"Related education fields: {', '.join(career['education_fields'])}")
+    return _gemini_embed("\n".join(parts))
+
+
+def sync_career_embedding(career_id: str, career: dict):
+    embedding = embed_career(career)
+    supabase.table("careers").update({"embedding": embedding}).eq("id", career_id).execute()

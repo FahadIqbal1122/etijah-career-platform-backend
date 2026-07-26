@@ -6,7 +6,7 @@ from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.middleware.cors import CORSMiddleware
 from supabase import create_client, Client
 from dotenv import load_dotenv
-from scoring_engine import compute_scores, build_framework_output, score_careers
+from scoring_engine import compute_scores, build_framework_output, score_careers, get_career_semantic_scores
 from pydantic import BaseModel, EmailStr
 from typing import Any
 import io
@@ -16,7 +16,8 @@ from report_generator import create_report
 import httpx
 import json
 from coaching_methodology import METHODOLOGY_DOC
-from coaching_pipeline import chunk_transcript, embed_and_store_chunks, client, embed_country_profile, sync_country_profile_embedding, _gemini_embed
+from coaching_pipeline import chunk_transcript, embed_and_store_chunks, client, embed_country_profile, sync_country_profile_embedding, sync_career_embedding, _gemini_embed
+from content_policy import is_appropriate, CULTURAL_GUARDRAIL
 
 load_dotenv()
 
@@ -343,7 +344,8 @@ def get_career_suggestions(response_id: str):
   
     summary = build_framework_output(rows.data)
     careers = supabase.table('careers').select('*').execute().data or []
-    top10   = score_careers(summary, profile.data or {}, careers)
+    semantic_scores = get_career_semantic_scores(supabase, summary, profile.data or {})
+    top10   = score_careers(summary, profile.data or {}, careers, semantic_scores)
 
     user_riasec = summary.get('riasec', {}).get('top_types', [])
     return {
@@ -358,14 +360,14 @@ def get_career_suggestions(response_id: str):
     }
 
 @app.get("/assessment/{response_id}/ai-impact")
-def get_ai_impact(response_id: str):
+def get_ai_impact(response_id: str, force: bool = False):
     profile_row = supabase.table('assessment_responses') \
         .select('full_name,current_stage,country,education_field,sectors_of_interest,ai_impact_cache') \
         .eq('id', response_id).single().execute()
     if not profile_row.data:
         raise HTTPException(status_code=404, detail="No results found")
 
-    if profile_row.data.get('ai_impact_cache'):
+    if profile_row.data.get('ai_impact_cache') and not force:
         return profile_row.data['ai_impact_cache']
 
     rows = supabase.table('assessment_results') \
@@ -375,7 +377,8 @@ def get_ai_impact(response_id: str):
 
     summary = build_framework_output(rows.data)
     careers = supabase.table('careers').select('*').execute().data or []
-    top5    = score_careers(summary, profile_row.data or {}, careers)[:5]
+    semantic_scores = get_career_semantic_scores(supabase, summary, profile_row.data or {})
+    top5    = score_careers(summary, profile_row.data or {}, careers, semantic_scores)[:5]
 
     from report_generator import generate_ai_impact
     result = generate_ai_impact(profile_row.data or {}, summary, top5)
@@ -436,6 +439,13 @@ def embed_all_country_profiles(_=Depends(require_admin)):
         sync_country_profile_embedding(p['country_code'], p)
     return {"embedded": len(profiles)}
 
+@app.post("/admin/careers/embed-all")
+def embed_all_careers(_=Depends(require_admin)):
+    careers = supabase.table('careers').select('*').execute().data or []
+    for c in careers:
+        sync_career_embedding(c['id'], c)
+    return {"embedded": len(careers)}
+
 @app.get("/admin/courses")
 def get_courses(_=Depends(require_admin)):
     data = supabase.table('courses').select('*').order('created_at', desc=True).execute()
@@ -468,7 +478,8 @@ def get_course_recommendations(response_id: str):
         raise HTTPException(status_code=404, detail="No results found")
     summary = build_framework_output(rows.data)
     careers = supabase.table('careers').select('*').execute().data or []
-    top5    = score_careers(summary, profile.data, careers)[:5]
+    semantic_scores = get_career_semantic_scores(supabase, summary, profile.data)
+    top5    = score_careers(summary, profile.data, careers, semantic_scores)[:5]
 
     user_riasec = set(summary.get('riasec', {}).get('top_types', []))
     sectors     = set(c['sector'] for c in top5)
@@ -670,9 +681,9 @@ def get_market_trends(_=Depends(require_admin)):
     }
 
 @app.get("/assessment/{response_id}/job-listings")
-def get_job_listings(response_id: str):
+def get_job_listings(response_id: str, force: bool = False):
     cached = supabase.table('job_listings_cache').select('*').eq('response_id', response_id).execute()
-    if cached.data:
+    if cached.data and not force:
         fetched_at = datetime.fromisoformat(cached.data[0]['fetched_at'])
         if datetime.now(timezone.utc) - fetched_at < JOB_LISTINGS_CACHE_TTL:
             return {"jobs": cached.data[0]['jobs']}
@@ -688,7 +699,8 @@ def get_job_listings(response_id: str):
 
     summary = build_framework_output(rows.data)
     careers = supabase.table('careers').select('*').execute().data or []
-    top3    = score_careers(summary, profile.data, careers)[:3]
+    semantic_scores = get_career_semantic_scores(supabase, summary, profile.data)
+    top3    = score_careers(summary, profile.data, careers, semantic_scores)[:3]
 
     country = profile.data.get('country', '')
     rapidapi_key = os.getenv("RAPIDAPI_KEY")
@@ -710,11 +722,15 @@ def get_job_listings(response_id: str):
             resp.raise_for_status()
             for job in (resp.json().get("data") or [])[:4]:
                 job_id = job.get("job_id")
+                job_title = job.get("job_title")
+                employer_name = job.get("employer_name")
+                if not is_appropriate(job_title, employer_name, job.get("job_description")):
+                    continue
                 if job_id and job_id not in seen_ids:
                     seen_ids.add(job_id)
                     all_jobs.append({
-                        "title": job.get("job_title"),
-                        "company": job.get("employer_name"),
+                        "title": job_title,
+                        "company": employer_name,
                         "location": f"{job.get('job_city', '')} {job.get('job_country', '')}".strip(),
                         "source": job.get("job_publisher"),
 
@@ -814,7 +830,8 @@ def get_companies_suggestions(response_id: str):
 
     summary = build_framework_output(rows.data)
     careers = supabase.table('careers').select('*').execute().data or []
-    top5    = score_careers(summary, profile.data, careers)[:5]
+    semantic_scores = get_career_semantic_scores(supabase, summary, profile.data)
+    top5    = score_careers(summary, profile.data, careers, semantic_scores)[:5]
 
     sectors = list(dict.fromkeys(c['sector'] for c in top5))
     country_code = COUNTRY_CODE_MAP.get(profile.data.get('country', ''))
@@ -828,7 +845,7 @@ def get_companies_suggestions(response_id: str):
         query = query.in_('sector', sectors)
 
     result = query.order('name_en').limit(15).execute()
-    return result.data or []
+    return [c for c in (result.data or []) if is_appropriate(c.get('name_en'), c.get('sector'))]
 
 @app.post("/assessment/link-by-email")
 def link_by_email(body: LinkByEmailRequest):
@@ -903,7 +920,7 @@ def coach(payload: CoachRequest, user=Depends(get_current_user)):
             for c in country_matches
         )
 
-    system_prompt = f"{METHODOLOGY_DOC}\n\nRelevant past examples:\n{examples}{country_context}"
+    system_prompt = f"{METHODOLOGY_DOC}\n\n{CULTURAL_GUARDRAIL}\n\nRelevant past examples:\n{examples}{country_context}"
 
     response = client.messages.create(
         model="claude-sonnet-4-6",

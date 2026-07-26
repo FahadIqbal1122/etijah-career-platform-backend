@@ -200,8 +200,44 @@ def build_framework_output(scores: list[dict]) -> dict:
 
     return output
 
-def score_careers(summary: dict, user_data: dict, careers: list) -> list:
-    """Returns top 10 careers using the same deterministic algorithm as the results page."""
+def get_career_semantic_scores(supabase_client, summary: dict, user_data: dict) -> dict:
+    """Embedding-similarity scores {career_id: similarity} for all careers with an embedding.
+
+    Complements the tag-overlap scoring below by catching good fits that the
+    riasec/values/strengths tag arrays miss (imprecise tagging, near-synonyms).
+    Returns {} on any failure (e.g. embeddings not backfilled yet) so callers
+    can fall back to pure tag-based scoring.
+    """
+    try:
+        from coaching_pipeline import _gemini_embed
+        query_text = (
+            f"RIASEC: {', '.join(summary.get('riasec', {}).get('top_types', []))}. "
+            f"Top values: {', '.join(summary.get('values', {}).get('top_values', []))}. "
+            f"Top strengths: {', '.join(summary.get('strengths', {}).get('top_strengths', []))}. "
+            f"Sectors of interest: {', '.join(user_data.get('sectors_of_interest', []) or [])}. "
+            f"Education field: {user_data.get('education_field', '')}. "
+            f"Current stage: {user_data.get('current_stage', '')}."
+        )
+        embedding = _gemini_embed(query_text)
+        matches = supabase_client.rpc("match_careers", {
+            "query_embedding": embedding,
+            "match_count": 250,
+        }).execute().data or []
+        return {m['id']: m['similarity'] for m in matches}
+    except Exception:
+        return {}
+
+def score_careers(summary: dict, user_data: dict, careers: list, semantic_scores: dict | None = None) -> list:
+    """Returns top 10 careers using deterministic tag-overlap scoring blended
+    with embedding-similarity scoring (see get_career_semantic_scores)."""
+
+    from content_policy import is_appropriate
+    careers = [
+        c for c in careers
+        if is_appropriate(c.get('title'), c.get('sector'), c.get('description'))
+    ]
+
+    semantic_scores = semantic_scores or {}
 
     user_riasec      = summary.get('riasec',   {}).get('top_types',    [])
     user_values      = summary.get('values',   {}).get('top_values',   [])
@@ -252,6 +288,9 @@ def score_careers(summary: dict, user_data: dict, careers: list) -> list:
                 score += 3
         if career.get('sector') in user_sector_names:
             score += 2
+        # Similarity is 0-1; weighted to be comparable to the tag signals above
+        # without letting it fully override an exact tag match on its own.
+        score += semantic_scores.get(career.get('id'), 0) * 5
         return score
 
     return sorted(careers, key=_score, reverse=True)[:10]
