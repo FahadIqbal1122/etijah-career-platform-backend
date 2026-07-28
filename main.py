@@ -13,8 +13,7 @@ import io
 from datetime import datetime, timezone, timedelta
 from fastapi.responses import StreamingResponse
 from report_generator import create_report
-import httpx
-import json
+import httpx, hmac, hashlib, json
 from coaching_methodology import METHODOLOGY_DOC
 from coaching_pipeline import chunk_transcript, embed_and_store_chunks, client, embed_country_profile, sync_country_profile_embedding, sync_career_embedding, _gemini_embed
 from content_policy import is_appropriate, CULTURAL_GUARDRAIL
@@ -49,6 +48,11 @@ supabase: Client = create_client(
     os.getenv("SUPABASE_URL"),
     os.getenv("SUPABASE_KEY"),
 )
+
+HUB_API_KEY = os.getenv("HUB_API_KEY")
+SHOP_BASE_URL = os.getenv("SHOP_BASE_URL", "https://shop.etijahcoaching.com")
+BILLING_RETURN_URL = "https://myetijahi.com/account/billing"
+PLAN_EXTENSTION_DAYS = 30
 
 _bearer = HTTPBearer()
 
@@ -148,6 +152,22 @@ class coachingSessionRequest(BaseModel):
 class CoachRequest(BaseModel):
     message: str
     conversation_history: list[dict] = []
+
+class CheckoutRequest(BaseModel):
+    plan_code: str
+    plan_name: str
+    amount: float
+    currency: str = "BHD"
+
+class HubTransactionBody(BaseModel):
+    external_user_id: str
+    order_ref: str
+    plan_code: str
+    amount: float
+    currency: str
+    status: str
+    tap_charge_id: str | None = None
+    paid_at: str | None = None
 
 COUNTRY_CODE_MAP = {
     'saudi_arabia': 'SA',
@@ -929,3 +949,111 @@ def coach(payload: CoachRequest, user=Depends(get_current_user)):
         messages=payload.conversation_history + [{"role": "user", "content": payload.message}],
     )
     return {"reply": response.content[0].text}
+
+
+@app.post("/billing/checkout")
+def create_checkout(body: CheckoutRequest, user=Depends(get_current_user)):
+    full_name = (user.user_metadata or {}).get("full_name", "") or ""
+    first_name, _, last_name = full_name.strip().partition(" ")
+
+    payload = {
+        "external_user_id": user.id,
+        "first_name": first_name or None,
+        "last_name": last_name or None,
+        "email": user.email,
+        "plan_code": body.plan_code,
+        "plan_name": body.plan_name,
+        "amount": body.amount,
+        "currency": body.currency,
+        "return_url": BILLING_RETURN_URL,
+    }
+
+    try: 
+        resp = httpx.post(
+            f"{SHOP_BASE_URL}/api/hub/orders",
+            json=payload,
+            headers={"Authorization": f"Bearer {HUB_API_KEY}"},
+            timeout=15.0,
+        )
+        resp.raise_for_status()
+    except httpx.HTTPStatusError as e:
+        raise HTTPException(status_code=502, detail=f"Shop rejected the order: {e.response.text}")
+    except httpx.RequestError as e:
+        raise HTTPException(status_code=502, detail=f"Could not reach Shop: {e}")
+
+    checkout_url = resp.json().get("checkout_url")
+    if not checkout_url:
+        raise HTTPException(status_code=502, detail="Shop response did not include a checkout_url")
+
+    return {"checkout_url": checkout_url}
+
+
+@app.get("/billing/transaction")
+def get_my_transaction(user=Depends(get_current_user)):
+    data = supabase.table('transactions') \
+        .select('*') \
+        .eq('user_id', user.id) \
+        .order('created_at', desc=True) \
+        .execute()
+    return data.data or []
+
+
+@app.get("/billing/plan")
+def get_my_plan(user=Depends(get_current_user)):
+    row = supabase.table('user_plans').select('*').eq('user_id', user.id).execute()
+    if not row.data:
+        return {"plan_code": None, "status": "free", "current_period_end": None}
+    plan = row.data[0]
+    is_active = plan['status'] == 'active' and datetime.fromisoformat(plan['current_period_end']) > datetime.now(timezone.utc)
+    return {**plan, "status": "active" if is_active else "expired"}
+
+def _active_plan(user_id: str, plan_code: str):
+    now = datetime.now(timezone.utc)
+    existing = supabase.table('user_plans').select('current_period_end').eq('user_id', user_id).execute()
+    base = now
+    if existing.data:
+        current_end = existing.data[0].get('current_period_end')
+        if current_end:
+            current_end_dt = datetime.fromisoformat(current_end)
+            if current_end_dt > now:
+                base = current_end_dt
+    new_end = base + timedelta(days=PLAN_EXTENSTION_DAYS)
+    supabase.table('user_plans').upsert({
+        'user_id': user_id,
+        'plan_code': plan_code,
+        'status': 'active',
+        'current_period_end': new_end.isoformat(),
+    }, on_conflict='user_id').execute()
+
+
+@app.post("/hub/transactions")
+async def receive_hub_transaction(request: Request):
+    raw_body = await request.body()
+    signature = request.headers.get("X-Hub-Signature", "")
+    expected = hmac.new(HUB_API_KEY.encode(), raw_body, hashlib.sha256).hexdigest()
+    if not hmac.compare_digest(expected, signature):
+        raise HTTPException(status_code=401, detail="Invalid Signature")
+
+    body = HubTransactionBody(**json.loads(raw_body))
+
+    existing = supabase.table('transactions') \
+        .select('status') \
+        .eq('order_ref', body.order_ref) \
+        .execute()
+    already_paid = bool(existing.data) and existing.data[0]['status'] == 'paid'
+
+    supabase.table('transactions').upsert({
+        'user_id': body.external_user_id,
+        'order_ref': body.order_ref,
+        'plan_code': body.plan_code,
+        'amount': body.amount,
+        'currency': body.currency,
+        'status': body.status, 
+        'tap_charge_id': body.tap_charge_id,
+        'paid_at': body.paid_at,
+    }, on_conflict='order_ref').execute()
+
+    if body.status == 'paid' and not already_paid:
+        _active_plan(body.external_user_id, body.plan_code)
+    
+    return {"received": True}
