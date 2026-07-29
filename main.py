@@ -958,8 +958,8 @@ def create_checkout(body: CheckoutRequest, user=Depends(get_current_user)):
 
     payload = {
         "external_user_id": user.id,
-        "first_name": first_name or None,
-        "last_name": last_name or None,
+        "first_name": first_name or "Customer",
+        "last_name": last_name or "Account",
         "email": user.email,
         "plan_code": body.plan_code,
         "plan_name": body.plan_name,
