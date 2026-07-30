@@ -55,6 +55,7 @@ BILLING_RETURN_URL = "https://myetijahi.com/account/billing"
 PLAN_EXTENSTION_DAYS = 30
 
 _bearer = HTTPBearer()
+_bearer_optional = HTTPBearer(auto_error=False)
 
 def get_current_user(credentials: HTTPAuthorizationCredentials = Security(_bearer)):
     try:
@@ -64,6 +65,15 @@ def get_current_user(credentials: HTTPAuthorizationCredentials = Security(_beare
         return response.user
     except Exception:
         raise HTTPException(status_code=401, detail="Invalid or Expired token")
+
+def get_optional_user(credentials: HTTPAuthorizationCredentials | None = Security(_bearer_optional)):
+    if not credentials:
+        return None
+    try:
+        response = supabase.auth.get_user(credentials.credentials)
+        return response.user if response.user else None
+    except Exception:
+        return None
 
 def require_admin(user=Depends(get_current_user)):
     role = (user.app_metadata or {}).get("role")
@@ -101,6 +111,7 @@ class SubmitRequest(BaseModel):
     why_here: str
     answers: dict[str, Any]
     completed: bool
+    locale: str | None = 'en'
 
 APPLICATION_STATUSES = {"saved", "applied", "interview", "offer", "rejected"}
 
@@ -140,6 +151,7 @@ class WaitlistRequest(BaseModel):
     name: str | None = None
     country: str | None = None
     status: str | None = None
+    age: str | None = None
     locale: str | None = None
     source: str | None = None
 
@@ -204,7 +216,7 @@ def check_existing(body: CheckExistingRequest):
 
 
 @app.post("/assessment/submit")
-def submit_assessment(body: SubmitRequest):
+def submit_assessment(body: SubmitRequest, user=Depends(get_optional_user)):
     # Save to DB
     result = supabase.rpc('insert_assessment_response', {
         'payload': body.model_dump()
@@ -213,7 +225,13 @@ def submit_assessment(body: SubmitRequest):
     response_id = result.data
     if not response_id:
         raise HTTPException(status_code=500, detail="Failed to insert assessment response")
-    # Score it 
+
+    if user:
+        supabase.table('assessment_responses') \
+            .update({'user_id': user.id}) \
+            .eq('id', response_id).execute()
+
+    # Score it
     results = compute_scores(body.answers)
     summary = build_framework_output(results)
     rows = [{**r, "response_id": response_id} for r in results]

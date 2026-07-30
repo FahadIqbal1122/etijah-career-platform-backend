@@ -53,9 +53,147 @@ BIG_FIVE_LABELS = {
     'stability':         'Emotional Stability',
 }
 
+# ─── Arabic static metadata (Gulf-professional MSA) ──────────────────────────
+
+RIASEC_META_AR = {
+    'realistic':     {'label': 'الباني',    'tagline': 'عملي · تطبيقي · تقني'},
+    'investigative': {'label': 'المحلل',    'tagline': 'فضولي · منطقي · بحثي'},
+    'artistic':      {'label': 'المبدع',    'tagline': 'إبداعي · تعبيري · خيالي'},
+    'social':        {'label': 'المُعين',   'tagline': 'متعاطف · تعاوني · محوره الإنسان'},
+    'enterprising':  {'label': 'القائد',    'tagline': 'طموح · مقنع · يركز على النتائج'},
+    'conventional':  {'label': 'المنظّم',   'tagline': 'دقيق · منهجي · موثوق'},
+}
+
+VALUES_META_AR = {
+    'security':              'الاستقرار والأمان وقابلية التنبؤ',
+    'freedom':               'الاستقلالية وحرية توجيه مسارك بنفسك',
+    'impact':                'إحداث فرق حقيقي وملموس في حياة الآخرين',
+    'status':                'التقدير والمكانة المهنية المرموقة',
+    'family':                'التوازن بين العمل والحياة والوقت مع المقربين',
+    'creativity':            'التعبير عن الأفكار والابتكار من خلال العمل',
+    'wealth':                'النجاح المالي والإنجاز المادي',
+    'national_contribution': 'خدمة المجتمع والإسهام في تنميته',
+    'reputation':            'بناء اسم محترم وأثر مهني دائم',
+}
+
+VALUE_NAMES_AR = {
+    'security': 'الاستقرار', 'freedom': 'الحرية', 'impact': 'الأثر', 'status': 'المكانة',
+    'family': 'الأسرة والتوازن', 'creativity': 'الإبداع', 'wealth': 'الثراء المادي',
+    'national_contribution': 'الإسهام الوطني', 'reputation': 'السمعة والمكانة',
+}
+
+STRENGTH_NAMES_AR = {
+    'strategic': 'التفكير الاستراتيجي', 'leadership': 'القيادة', 'relationships': 'بناء العلاقات',
+    'execution': 'التنفيذ والإنجاز', 'communication': 'التواصل', 'learning': 'التعلّم السريع',
+}
+
+STRENGTHS_META_AR = {
+    'strategic':     'رؤية الأنماط والتخطيط المسبق وحل المشكلات المعقدة',
+    'leadership':    'إلهام الآخرين وتوجيههم وتطويرهم',
+    'relationships': 'بناء علاقات هادفة ومستدامة والحفاظ عليها',
+    'execution':     'تحقيق النتائج وإنجاز المهام حتى النهاية',
+    'communication': 'التعبير عن الأفكار بوضوح والتأثير في الآخرين',
+    'learning':      'اكتساب المهارات بسرعة والتكيّف مع التغيير',
+}
+
+BIG_FIVE_LABELS_AR = {
+    'openness':          'الانفتاح على التجارب',
+    'conscientiousness': 'اليقظة الضميرية',
+    'extraversion':      'الانبساطية',
+    'agreeableness':     'المقبولية',
+    'stability':         'الاتزان الانفعالي',
+}
+
+UI_TEXT = {
+    'en': {
+        'lang': 'en', 'dir': 'ltr',
+        'brand': 'Etijah Coaching', 'brand_header': 'Career Compass · Etijah Coaching',
+        'cover_eyebrow': 'Career Compass · Personal Report',
+        'cover_headline1': 'Your Career', 'cover_headline2': 'Identity Report',
+        'cover_sub': 'Powered by Career Compass Assessment',
+        'riasec_code_label': 'RIASEC Code',
+        'generated': 'Generated', 'confidential': 'Confidential',
+        'report_confidential_footer': 'Career Compass Report · Confidential',
+        'page': 'Page',
+        'sec01': 'Your Career Profile', 'sec02': 'Career Personality', 'sec03': 'Personality Traits',
+        'sec04': 'Core Values', 'sec05': 'Strengths Profile', 'sec06': 'Work Style & Resilience',
+        'sec07': 'Entrepreneurial Profile', 'sec08': 'Career Pathways',
+        'sec09': 'AI Impact & Future-Proofing', 'sec10': 'Your 90-Day Action Plan',
+        'exec_summary': 'Executive Summary',
+        'riasec_code_stat': 'RIASEC Code', 'primary_type_stat': 'Primary Type',
+        'top_value_stat': 'Top Value', 'top_strength_stat': 'Top Strength',
+        'full_riasec_overview': 'Full RIASEC Score Overview',
+        'rank_labels': ['Primary Type', 'Secondary Type', 'Tertiary Type'],
+        'resilience_scores': 'Resilience Scores', 'work_style_prefs': 'Work Style Preferences',
+        'entrepreneurship_scores': 'Entrepreneurship Scores',
+        'long_term_focus': 'Long-Term Focus', 'workplace_resilience': 'Workplace Resilience',
+        'work_pace': 'Work Pace', 'environment': 'Environment', 'sector': 'Sector', 'mobility': 'Mobility',
+        'pace_lo': 'Steady', 'pace_hi': 'Fast-paced', 'env_lo': 'Large Org', 'env_hi': 'Startup',
+        'sector_lo': 'Public', 'sector_hi': 'Private', 'mobility_lo': 'Local', 'mobility_hi': 'International',
+        'prior_experience': 'Prior Experience', 'risk_tolerance': 'Risk Tolerance', 'portfolio_interest': 'Portfolio Interest',
+        'match': 'MATCH', 'development_tip': 'Development tip:',
+        'risk_suffix': 'RISK',
+        'action_month1': 'Month 1 — Launch', 'action_months23': 'Months 2–3 — Build', 'action_months46': 'Months 4–6 — Grow',
+        'back_headline': 'Your Journey Starts Here',
+        'back_tagline_suffix': 'Career Compass Assessment',
+    },
+    'ar': {
+        'lang': 'ar', 'dir': 'rtl',
+        'brand': 'اتجاه للتدريب والاستشارات', 'brand_header': 'بوصلة المسار المهني · اتجاه للتدريب والاستشارات',
+        'cover_eyebrow': 'بوصلة المسار المهني · تقرير شخصي',
+        'cover_headline1': 'تقرير هويتك', 'cover_headline2': 'المهنية',
+        'cover_sub': 'مبني على تقييم بوصلة المسار المهني',
+        'riasec_code_label': 'رمز RIASEC',
+        'generated': 'تاريخ الإصدار', 'confidential': 'سرّي',
+        'report_confidential_footer': 'تقرير بوصلة المسار المهني · سرّي',
+        'page': 'صفحة',
+        'sec01': 'ملفك المهني', 'sec02': 'شخصيتك المهنية', 'sec03': 'سمات الشخصية',
+        'sec04': 'القيم الجوهرية', 'sec05': 'ملف نقاط القوة', 'sec06': 'أسلوب العمل والمرونة',
+        'sec07': 'الملف الريادي', 'sec08': 'المسارات المهنية',
+        'sec09': 'تأثير الذكاء الاصطناعي واستشراف المستقبل', 'sec10': 'خطة عملك لمدة 90 يوماً',
+        'exec_summary': 'الملخص التنفيذي',
+        'riasec_code_stat': 'رمز RIASEC', 'primary_type_stat': 'النمط الأساسي',
+        'top_value_stat': 'القيمة الأولى', 'top_strength_stat': 'أبرز نقاط القوة',
+        'full_riasec_overview': 'نظرة شاملة على درجات RIASEC',
+        'rank_labels': ['النمط الأساسي', 'النمط الثانوي', 'النمط الثالث'],
+        'resilience_scores': 'درجات المرونة', 'work_style_prefs': 'تفضيلات أسلوب العمل',
+        'entrepreneurship_scores': 'درجات الروح الريادية',
+        'long_term_focus': 'التركيز طويل المدى', 'workplace_resilience': 'المرونة في بيئة العمل',
+        'work_pace': 'وتيرة العمل', 'environment': 'بيئة العمل', 'sector': 'القطاع', 'mobility': 'قابلية التنقل',
+        'pace_lo': 'ثابتة', 'pace_hi': 'سريعة الإيقاع', 'env_lo': 'مؤسسة كبيرة', 'env_hi': 'شركة ناشئة',
+        'sector_lo': 'حكومي', 'sector_hi': 'خاص', 'mobility_lo': 'محلي', 'mobility_hi': 'دولي',
+        'prior_experience': 'خبرة سابقة', 'risk_tolerance': 'تقبّل المخاطرة', 'portfolio_interest': 'الاهتمام بمشاريع متعددة',
+        'match': 'نسبة التوافق', 'development_tip': 'نصيحة للتطوير:',
+        'risk_suffix': 'المخاطر',
+        'action_month1': 'الشهر الأول — الانطلاقة', 'action_months23': 'الشهر 2–3 — البناء', 'action_months46': 'الشهر 4–6 — النمو',
+        'back_headline': 'رحلتك تبدأ من هنا',
+        'back_tagline_suffix': 'تقييم بوصلة المسار المهني',
+    },
+}
+
+AR_MONTHS = ['يناير','فبراير','مارس','أبريل','مايو','يونيو','يوليو','أغسطس','سبتمبر','أكتوبر','نوفمبر','ديسمبر']
+
+def _format_date(locale: str) -> str:
+    now = datetime.now()
+    if locale == 'ar':
+        return f"{now.day} {AR_MONTHS[now.month - 1]} {now.year}"
+    return now.strftime("%B %d, %Y")
+
 # ─── Gemini content generation ────────────────────────────────────────────────
 
-def generate_ai_content(user_data: dict, summary: dict, raw_scores: list, careers: list, country_profile: dict | None = None, coaching_chunks: list[dict] | None = None) -> dict:
+ARABIC_LANGUAGE_INSTRUCTION = (
+    "Write the ENTIRE output in Arabic — every string value in the JSON, with no English text at all.\n"
+    "Use professional Modern Standard Arabic (فصحى) with a register and word choice that reads naturally "
+    "to a Saudi or Bahraini professional — the tone and phrasing a Gulf-based coach or business report would use. "
+    "Avoid Levantine or Egyptian colloquial expressions. Do not switch to spoken dialect; this is a formal document.\n"
+    "Keep all JSON keys exactly as specified in English — only the values should be in Arabic.\n"
+    "Use Arabic-Indic-free Western numerals (0-9) for scores and numbers.\n"
+    "Exception: any field documented as a fixed code/enum (for example ai_risk_level, which must be exactly "
+    "the English word low, medium, or high) must stay in English exactly as specified — translate only "
+    "free-text narrative fields.\n\n"
+)
+
+def generate_ai_content(user_data: dict, summary: dict, raw_scores: list, careers: list, country_profile: dict | None = None, coaching_chunks: list[dict] | None = None, locale: str = 'en') -> dict:
     genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
     model = genai.GenerativeModel(
       "gemini-2.5-flash",
@@ -85,7 +223,8 @@ def generate_ai_content(user_data: dict, summary: dict, raw_scores: list, career
         "Write in second person (you, your). Be warm, specific, and empowering — not generic.\n"
         "Reference actual scores and combinations. Do not write boilerplate.\n\n"
         f"{CULTURAL_GUARDRAIL}\n\n"
-        "=== ASSESSMENT DATA ===\n\n"
+        + (ARABIC_LANGUAGE_INSTRUCTION if locale == 'ar' else "")
+        + "=== ASSESSMENT DATA ===\n\n"
         f"Name: {user_data['full_name']}\n"
         f"Age bracket: {user_data.get('age_bracket','N/A')}\n"
         f"Current stage: {user_data.get('current_stage','N/A')}\n"
@@ -219,30 +358,44 @@ def _bar(score: float, color: str = "#c9a84c") -> str:
         f'<span class="bar-num">{pct:.0f}</span>'
     )
 
-def _risk_badge(risk: str) -> str:
+RISK_LABELS_AR = {'low': 'منخفضة', 'medium': 'متوسطة', 'high': 'عالية'}
+
+def _risk_badge(risk: str, locale: str = 'en') -> str:
     colors = {'low': '#2a9d5c', 'medium': '#d4a017', 'high': '#e05a3a'}
     c = colors.get(risk, '#888')
+    label = f'{RISK_LABELS_AR.get(risk, risk or "")} {UI_TEXT["ar"]["risk_suffix"]}' if locale == 'ar' \
+        else f'{(risk or "").upper()} {UI_TEXT["en"]["risk_suffix"]}'
     return (
         f'<span style="font-size:7pt;font-weight:700;padding:2px 8px;border-radius:10px;'
         f'background:{c}22;color:{c};border:1px solid {c};letter-spacing:1px;white-space:nowrap;">'
-        f'{(risk or "").upper()} RISK</span>'
+        f'{label}</span>'
     )
 
-def _badge(level: str) -> str:
+LEVEL_LABELS_AR = {'high': 'مرتفع', 'medium': 'متوسط', 'low': 'منخفض'}
+
+def _badge(level: str, locale: str = 'en') -> str:
     colors = {'high': '#2a9d5c', 'medium': '#d4a017', 'low': '#e05a3a'}
     c = colors.get(level, '#888')
+    label = LEVEL_LABELS_AR.get(level, level) if locale == 'ar' else level.upper()
     return (
         f'<span style="font-size:7pt;font-weight:700;padding:2px 8px;border-radius:10px;'
         f'background:{c}22;color:{c};border:1px solid {c};letter-spacing:1px;">'
-        f'{level.upper()}</span>'
+        f'{label}</span>'
     )
 
 # ─── HTML report builder ───────────────────────────────────────────────────────
 
-def build_html_report(user_data: dict, summary: dict, raw_scores: list, ai: dict, careers: list, ai_impact: dict | None = None) -> str:
+def build_html_report(user_data: dict, summary: dict, raw_scores: list, ai: dict, careers: list, ai_impact: dict | None = None, locale: str = 'en') -> str:
+    T = UI_TEXT.get(locale, UI_TEXT['en'])
+    riasec_meta_src    = RIASEC_META_AR    if locale == 'ar' else RIASEC_META
+    values_meta_src    = VALUES_META_AR    if locale == 'ar' else VALUES_META
+    strengths_meta_src = STRENGTHS_META_AR if locale == 'ar' else STRENGTHS_META
+    big_five_labels_src = BIG_FIVE_LABELS_AR if locale == 'ar' else BIG_FIVE_LABELS
+    border_side = 'right' if locale == 'ar' else 'left'
+
     scores = {r['dimension']: r['normalized_score'] for r in raw_scores}
     name = user_data['full_name']
-    date_str = datetime.now().strftime("%B %d, %Y")
+    date_str = _format_date(locale)
     riasec_types = summary.get('riasec', {}).get('top_types', [])
     top_values    = summary.get('values',    {}).get('top_values',   [])
     top_strengths = summary.get('strengths', {}).get('top_strengths',[])
@@ -252,23 +405,24 @@ def build_html_report(user_data: dict, summary: dict, raw_scores: list, ai: dict
     entrepreneurship = summary.get('entrepreneurship', {})
 
     primary_type = riasec_types[0] if riasec_types else 'realistic'
-    primary_meta = RIASEC_META.get(primary_type, RIASEC_META['realistic'])
+    primary_meta = riasec_meta_src.get(primary_type, riasec_meta_src['realistic'])
     riasec_code  = ''.join(t[0].upper() for t in riasec_types[:3])
 
     # ── RIASEC cards ──────────────────────────────────────────────────────────
     narr_keys   = ['riasec_primary_narrative', 'riasec_secondary_narrative', 'riasec_tertiary_narrative']
-    rank_labels = ['Primary Type', 'Secondary Type', 'Tertiary Type']
+    rank_labels = T['rank_labels']
     riasec_cards = ""
     for i, rt in enumerate(riasec_types[:3]):
-        meta = RIASEC_META.get(rt, {})
+        meta = riasec_meta_src.get(rt, {})
         sc   = scores.get(rt, 0)
         narr = ai.get(narr_keys[i], '')
+        type_heading = meta.get('label','') if locale == 'ar' else f'{rt.title()} — {meta.get("label","")}'
         riasec_cards += (
             f'<div class="card">'
             f'<div class="card-row">'
             f'<div>'
             f'<span class="mini-badge">{rank_labels[i]}</span>'
-            f'<h3 class="card-title">{rt.title()} — {meta.get("label","")}</h3>'
+            f'<h3 class="card-title">{type_heading}</h3>'
             f'<p class="muted">{meta.get("tagline","")}</p>'
             f'</div>'
             f'<div class="score-circle">{sc:.0f}</div>'
@@ -280,9 +434,10 @@ def build_html_report(user_data: dict, summary: dict, raw_scores: list, ai: dict
 
     all_riasec_bars = ""
     for rt in ['realistic','investigative','artistic','social','enterprising','conventional']:
+        rt_label = riasec_meta_src.get(rt, {}).get('label', rt.title()) if locale == 'ar' else rt.title()
         all_riasec_bars += (
             f'<div class="bar-row">'
-            f'<span class="bar-label">{rt.title()}</span>'
+            f'<span class="bar-label">{rt_label}</span>'
             f'{_bar(scores.get(rt, 0))}'
             f'</div>'
         )
@@ -298,8 +453,8 @@ def build_html_report(user_data: dict, summary: dict, raw_scores: list, ai: dict
             f'<div class="card" style="margin-bottom:10px;">'
             f'<div class="card-row">'
             f'<div>'
-            f'<h4 class="card-title" style="font-size:10pt;">{BIG_FIVE_LABELS.get(bf, bf.title())}</h4>'
-            f'{_badge(level)}'
+            f'<h4 class="card-title" style="font-size:10pt;">{big_five_labels_src.get(bf, bf.title())}</h4>'
+            f'{_badge(level, locale)}'
             f'</div>'
             f'<span class="score-circle" style="font-size:14pt;">{sc:.0f}</span>'
             f'</div>'
@@ -314,12 +469,13 @@ def build_html_report(user_data: dict, summary: dict, raw_scores: list, ai: dict
     value_cards  = ""
     for i, val in enumerate(top_values[:3]):
         sc   = scores.get(val, 0)
-        desc = VALUES_META.get(val, val.replace('_',' ').title())
+        desc = values_meta_src.get(val, val.replace('_',' ').title())
         narr = val_narr_list[i] if i < len(val_narr_list) else ''
+        val_title = VALUE_NAMES_AR.get(val, val.replace('_',' ').title()) if locale == 'ar' else val.replace('_',' ').title()
         value_cards += (
             f'<div class="value-card">'
             f'<div class="value-rank">#{i+1}</div>'
-            f'<h4 class="card-title">{val.replace("_"," ").title()}</h4>'
+            f'<h4 class="card-title">{val_title}</h4>'
             f'<p class="muted" style="margin-bottom:8px;">{desc}</p>'
             f'<div class="bar-row">{_bar(sc)}</div>'
             f'<p class="body-text" style="margin-top:8px;">{narr}</p>'
@@ -332,16 +488,17 @@ def build_html_report(user_data: dict, summary: dict, raw_scores: list, ai: dict
     strength_cards = ""
     for i, st in enumerate(top_strengths[:3]):
         sc   = scores.get(st, 0)
-        desc = STRENGTHS_META.get(st, st.replace('_',' ').title())
+        desc = strengths_meta_src.get(st, st.replace('_',' ').title())
+        st_title = STRENGTH_NAMES_AR.get(st, st.replace('_',' ').title()) if locale == 'ar' else st.replace('_',' ').title()
         sn   = str_narr_list[i] if i < len(str_narr_list) else {}
         narr = sn.get('narrative', '')
         tip  = sn.get('development_tip', '')
-        dev_tip_html = f'<div class="dev-tip"><strong>Development tip:</strong> {tip}</div>' if tip else ''
+        dev_tip_html = f'<div class="dev-tip"><strong>{T["development_tip"]}</strong> {tip}</div>' if tip else ''
         strength_cards += (
             f'<div class="card strength-card">'
             f'<div class="card-row">'
             f'<div>'
-            f'<h4 class="card-title">{st.replace("_"," ").title()}</h4>'
+            f'<h4 class="card-title">{st_title}</h4>'
             f'<p class="muted">{desc}</p>'
             f'</div>'
             f'<span class="score-circle" style="background:#0d3d26;color:#40916c;">{sc:.0f}</span>'
@@ -354,7 +511,7 @@ def build_html_report(user_data: dict, summary: dict, raw_scores: list, ai: dict
 
     # ── Resilience bars ───────────────────────────────────────────────────────
     res_bars = ""
-    for key, lbl in [('long_term_focus','Long-Term Focus'),('workplace_resilience','Workplace Resilience')]:
+    for key, lbl in [('long_term_focus',T['long_term_focus']),('workplace_resilience',T['workplace_resilience'])]:
         res_bars += (
             f'<div class="bar-row">'
             f'<span class="bar-label">{lbl}</span>'
@@ -365,10 +522,10 @@ def build_html_report(user_data: dict, summary: dict, raw_scores: list, ai: dict
     # ── Work style bars ───────────────────────────────────────────────────────
     ws_bars = ""
     for key, lbl, lo, hi in [
-        ('pace',        'Work Pace',   'Steady',    'Fast-paced'),
-        ('environment', 'Environment', 'Large Org', 'Startup'),
-        ('sector',      'Sector',      'Public',    'Private'),
-        ('mobility',    'Mobility',    'Local',     'International'),
+        ('pace',        T['work_pace'],   T['pace_lo'],    T['pace_hi']),
+        ('environment', T['environment'], T['env_lo'],     T['env_hi']),
+        ('sector',      T['sector'],      T['sector_lo'],  T['sector_hi']),
+        ('mobility',    T['mobility'],    T['mobility_lo'],T['mobility_hi']),
     ]:
         ws_bars += (
             f'<div class="bar-row">'
@@ -380,9 +537,9 @@ def build_html_report(user_data: dict, summary: dict, raw_scores: list, ai: dict
     # ── Entrepreneurship bars ─────────────────────────────────────────────────
     entre_bars = ""
     for key, lbl in [
-        ('prior_experience',  'Prior Experience'),
-        ('risk_tolerance',    'Risk Tolerance'),
-        ('portfolio_interest','Portfolio Interest'),
+        ('prior_experience',  T['prior_experience']),
+        ('risk_tolerance',    T['risk_tolerance']),
+        ('portfolio_interest',T['portfolio_interest']),
     ]:
         entre_bars += (
             f'<div class="bar-row">'
@@ -404,7 +561,7 @@ def build_html_report(user_data: dict, summary: dict, raw_scores: list, ai: dict
             f'</div>'
             f'<div style="text-align:center;flex-shrink:0;">'
             f'<div style="font-size:20pt;font-weight:900;color:#457b9d;line-height:1;">{ms}%</div>'
-            f'<div class="muted" style="font-size:7pt;letter-spacing:1px;">MATCH</div>'
+            f'<div class="muted" style="font-size:7pt;letter-spacing:1px;">{T["match"]}</div>'
             f'</div>'
             f'</div>'
             f'<p class="body-text" style="margin-top:8px;">{rec.get("fit_summary","")}</p>'
@@ -415,19 +572,20 @@ def build_html_report(user_data: dict, summary: dict, raw_scores: list, ai: dict
     # ── AI impact cards ───────────────────────────────────────────────────────
     ai_impact_cards = ""
     for c in (ai_impact or {}).get('careers', [])[:5]:
+        pill_margin = 'margin:2px 0 2px 4px;' if locale == 'ar' else 'margin:2px 4px 2px 0;'
         protected_pills = "".join(
-            f'<span class="pill" style="margin:2px 4px 2px 0;">{s}</span>'
+            f'<span class="pill" style="{pill_margin}">{s}</span>'
             for s in c.get('protected_skills', [])
         )
         upskilling_items = "".join(
-            f'<li class="action-item" style="border-left-color:#457b9d;">{tip}</li>'
+            f'<li class="action-item" style="border-{border_side}-color:#457b9d;">{tip}</li>'
             for tip in c.get('upskilling', [])
         )
         ai_impact_cards += (
             f'<div class="card" style="margin-bottom:10px;">'
             f'<div class="card-row">'
             f'<h4 class="card-title">{c.get("title","")}</h4>'
-            f'{_risk_badge(c.get("ai_risk_level",""))}'
+            f'{_risk_badge(c.get("ai_risk_level",""), locale)}'
             f'</div>'
             f'<p class="body-text" style="margin-top:6px;">{c.get("gcc_outlook","")}</p>'
             f'<div style="margin-top:8px;">{protected_pills}</div>'
@@ -441,7 +599,7 @@ def build_html_report(user_data: dict, summary: dict, raw_scores: list, ai: dict
 
     def render_phase(items: list, color: str, title: str) -> str:
         lis = "".join(
-            f'<li class="action-item" style="border-left-color:{color};">{item}</li>'
+            f'<li class="action-item" style="border-{border_side}-color:{color};">{item}</li>'
             for item in items
         )
         return (
@@ -452,18 +610,22 @@ def build_html_report(user_data: dict, summary: dict, raw_scores: list, ai: dict
         )
 
     action_html = (
-        render_phase(ap.get('month_1',    []), '#2a9d5c', 'Month 1 — Launch') +
-        render_phase(ap.get('months_2_3', []), '#c9a84c', 'Months 2–3 — Build') +
-        render_phase(ap.get('months_4_6', []), '#457b9d', 'Months 4–6 — Grow')
+        render_phase(ap.get('month_1',    []), '#2a9d5c', T['action_month1']) +
+        render_phase(ap.get('months_2_3', []), '#c9a84c', T['action_months23']) +
+        render_phase(ap.get('months_4_6', []), '#457b9d', T['action_months46'])
     )
 
-    top_value_label    = top_values[0].replace('_',' ').title()    if top_values    else '—'
-    top_strength_label = top_strengths[0].replace('_',' ').title() if top_strengths else '—'
+    if locale == 'ar':
+        top_value_label    = VALUE_NAMES_AR.get(top_values[0], top_values[0].replace('_',' ').title())       if top_values    else '—'
+        top_strength_label = STRENGTH_NAMES_AR.get(top_strengths[0], top_strengths[0].replace('_',' ').title()) if top_strengths else '—'
+    else:
+        top_value_label    = top_values[0].replace('_',' ').title()    if top_values    else '—'
+        top_strength_label = top_strengths[0].replace('_',' ').title() if top_strengths else '—'
 
     # ── CSS ───────────────────────────────────────────────────────────────────
     css = """
   * { margin:0; padding:0; box-sizing:border-box; }
-  body { font-family: Arial, 'Helvetica Neue', sans-serif; color:#1a1a2e; line-height:1.6; font-size:10pt; }
+  body { font-family: 'Noto Naskh Arabic', 'Noto Sans Arabic', Arial, 'Helvetica Neue', sans-serif; color:#1a1a2e; line-height:1.6; font-size:10pt; }
   @page { size:A4; margin:0; }
 
   /* Cover */
@@ -571,8 +733,26 @@ def build_html_report(user_data: dict, summary: dict, raw_scores: list, ai: dict
   .back-tagline  { font-size:8pt; color:rgba(255,255,255,.35); letter-spacing:2px; }
   """
 
+    if locale == 'ar':
+        css += """
+  html { direction: rtl; }
+  body { direction: rtl; text-align: right; }
+  .page-ftr { left:16mm; right:16mm; }
+  .intro-box   { border-left:none; border-right:3px solid #c9a84c; border-radius:6px 0 0 6px; }
+  .strength-card { border-left:none !important; border-right:4px solid #40916c !important; border-radius:8px 0 0 8px !important; }
+  .action-item { border-left:none; border-right:3px solid #c9a84c; border-radius:6px 0 0 6px; }
+  .value-rank  { text-align: right; }
+  .bar-num     { text-align: left; }
+  .cover-eyebrow, .mini-badge, .stat-lbl, .sec-num, .all-bars-label, .page-hdr-brand, .cover-brand, .back-brand, .back-tagline { letter-spacing: 0; }
+  /* WeasyPrint mis-positions column-flex + align-items:center under direction:rtl,
+     pushing centered content off-page — force ltr on these containers and restore
+     rtl on their text children so glyph shaping/bidi still reads correctly. */
+  .cover-body, .back-cover { direction: ltr; }
+  .cover-body > *, .back-cover > * { direction: rtl; }
+  """
+
     return f"""<!DOCTYPE html>
-  <html lang="en">
+  <html lang="{T['lang']}" dir="{T['dir']}">
   <head><meta charset="UTF-8"><style>{css}</style></head>
   <body>
 
@@ -580,62 +760,62 @@ def build_html_report(user_data: dict, summary: dict, raw_scores: list, ai: dict
   <div class="cover">
     <div class="cover-accent"></div>
     <div class="cover-body">
-      <div class="cover-eyebrow">Career Compass · Personal Report</div>
-      <div class="cover-headline">Your Career<br>Identity Report</div>
-      <div class="cover-sub">Powered by Career Compass Assessment</div>
+      <div class="cover-eyebrow">{T['cover_eyebrow']}</div>
+      <div class="cover-headline">{T['cover_headline1']}<br>{T['cover_headline2']}</div>
+      <div class="cover-sub">{T['cover_sub']}</div>
       <div class="cover-rule"></div>
       <div class="cover-name">{name}</div>
       <div class="cover-code">{riasec_code}</div>
-      <div class="cover-code-label">RIASEC Code</div>
+      <div class="cover-code-label">{T['riasec_code_label']}</div>
       <div class="cover-type">{primary_meta.get('label','')}</div>
       <div class="cover-tagline">{primary_meta.get('tagline','')}</div>
     </div>
     <div class="cover-footer">
-      <span class="cover-brand">Etijah Coaching</span>
-      <span class="cover-date">Generated {date_str}</span>
-      <span class="cover-conf">Confidential</span>
+      <span class="cover-brand">{T['brand']}</span>
+      <span class="cover-date">{T['generated']} {date_str}</span>
+      <span class="cover-conf">{T['confidential']}</span>
     </div>
   </div>
 
   <!-- PAGE 1 — CAREER PROFILE -->
   <div class="page">
     <div class="page-hdr">
-      <span class="page-hdr-brand">Career Compass · Etijah Coaching</span>
+      <span class="page-hdr-brand">{T['brand_header']}</span>
       <span class="page-hdr-name">{name}</span>
     </div>
     <div class="sec-heading">
       <div class="sec-accent"></div>
-      <div><div class="sec-num">01</div><div class="sec-title">Your Career Profile</div></div>
+      <div><div class="sec-num">01</div><div class="sec-title">{T['sec01']}</div></div>
     </div>
     <div class="summary-hero">
-      <div class="summary-hero-label">Executive Summary</div>
+      <div class="summary-hero-label">{T['exec_summary']}</div>
       <div class="summary-hero-text">{ai.get('executive_summary','')}</div>
     </div>
     <div class="stat-grid">
-      <div class="stat-cell"><div class="stat-lbl">RIASEC Code</div><div class="stat-val">{riasec_code}</div></div>
-      <div class="stat-cell"><div class="stat-lbl">Primary Type</div><div class="stat-val">{primary_meta.get('label','')}</div></div>
-      <div class="stat-cell"><div class="stat-lbl">Top Value</div><div class="stat-val">{top_value_label}</div></div>
-      <div class="stat-cell"><div class="stat-lbl">Top Strength</div><div class="stat-val">{top_strength_label}</div></div>
+      <div class="stat-cell"><div class="stat-lbl">{T['riasec_code_stat']}</div><div class="stat-val">{riasec_code}</div></div>
+      <div class="stat-cell"><div class="stat-lbl">{T['primary_type_stat']}</div><div class="stat-val">{primary_meta.get('label','')}</div></div>
+      <div class="stat-cell"><div class="stat-lbl">{T['top_value_stat']}</div><div class="stat-val">{top_value_label}</div></div>
+      <div class="stat-cell"><div class="stat-lbl">{T['top_strength_stat']}</div><div class="stat-val">{top_strength_label}</div></div>
     </div>
     <div class="all-bars-box">
-      <div class="all-bars-label">Full RIASEC Score Overview</div>
+      <div class="all-bars-label">{T['full_riasec_overview']}</div>
       {all_riasec_bars}
     </div>
     <div class="page-ftr">
-      <span>Career Compass Report · Confidential · {date_str}</span>
-      <span>Page 1</span>
+      <span>{T['report_confidential_footer']} · {date_str}</span>
+      <span>{T['page']} 1</span>
     </div>
   </div>
 
   <!-- PAGE 2 — RIASEC CAREER PERSONALITY -->
   <div class="page">
     <div class="page-hdr">
-      <span class="page-hdr-brand">Career Compass · Etijah Coaching</span>
+      <span class="page-hdr-brand">{T['brand_header']}</span>
       <span class="page-hdr-name">{name}</span>
     </div>
     <div class="sec-heading">
       <div class="sec-accent"></div>
-      <div><div class="sec-num">02</div><div class="sec-title">Career Personality</div></div>
+      <div><div class="sec-num">02</div><div class="sec-title">{T['sec02']}</div></div>
     </div>
     <div class="riasec-overview">
       <div class="riasec-combo-title">{ai.get('riasec_combination_title','')}</div>
@@ -643,161 +823,161 @@ def build_html_report(user_data: dict, summary: dict, raw_scores: list, ai: dict
     </div>
     {riasec_cards}
     <div class="page-ftr">
-      <span>Career Compass Report · Confidential · {date_str}</span>
-      <span>Page 2</span>
+      <span>{T['report_confidential_footer']} · {date_str}</span>
+      <span>{T['page']} 2</span>
     </div>
   </div>
 
   <!-- PAGE 3 — BIG FIVE PERSONALITY -->
   <div class="page">
     <div class="page-hdr">
-      <span class="page-hdr-brand">Career Compass · Etijah Coaching</span>
+      <span class="page-hdr-brand">{T['brand_header']}</span>
       <span class="page-hdr-name">{name}</span>
     </div>
     <div class="sec-heading">
       <div class="sec-accent"></div>
-      <div><div class="sec-num">03</div><div class="sec-title">Personality Traits</div></div>
+      <div><div class="sec-num">03</div><div class="sec-title">{T['sec03']}</div></div>
     </div>
     <div class="intro-box">{ai.get('big_five_overview','')}</div>
     {bf_cards}
     <div class="page-ftr">
-      <span>Career Compass Report · Confidential · {date_str}</span>
-      <span>Page 3</span>
+      <span>{T['report_confidential_footer']} · {date_str}</span>
+      <span>{T['page']} 3</span>
     </div>
   </div>
 
   <!-- PAGE 4 — CORE VALUES -->
   <div class="page">
     <div class="page-hdr">
-      <span class="page-hdr-brand">Career Compass · Etijah Coaching</span>
+      <span class="page-hdr-brand">{T['brand_header']}</span>
       <span class="page-hdr-name">{name}</span>
     </div>
     <div class="sec-heading">
       <div class="sec-accent"></div>
-      <div><div class="sec-num">04</div><div class="sec-title">Core Values</div></div>
+      <div><div class="sec-num">04</div><div class="sec-title">{T['sec04']}</div></div>
     </div>
     <div class="intro-box">{ai.get('values_overview','')}</div>
     <div class="values-grid">{value_cards}</div>
     <div class="page-ftr">
-      <span>Career Compass Report · Confidential · {date_str}</span>
-      <span>Page 4</span>
+      <span>{T['report_confidential_footer']} · {date_str}</span>
+      <span>{T['page']} 4</span>
     </div>
   </div>
 
   <!-- PAGE 5 — STRENGTHS PROFILE -->
   <div class="page">
     <div class="page-hdr">
-      <span class="page-hdr-brand">Career Compass · Etijah Coaching</span>
+      <span class="page-hdr-brand">{T['brand_header']}</span>
       <span class="page-hdr-name">{name}</span>
     </div>
     <div class="sec-heading">
       <div class="sec-accent"></div>
-      <div><div class="sec-num">05</div><div class="sec-title">Strengths Profile</div></div>
+      <div><div class="sec-num">05</div><div class="sec-title">{T['sec05']}</div></div>
     </div>
     <div class="intro-box">{ai.get('strengths_overview','')}</div>
     {strength_cards}
     <div class="page-ftr">
-      <span>Career Compass Report · Confidential · {date_str}</span>
-      <span>Page 5</span>
+      <span>{T['report_confidential_footer']} · {date_str}</span>
+      <span>{T['page']} 5</span>
     </div>
   </div>
 
   <!-- PAGE 6 — WORK STYLE, RESILIENCE & ENTREPRENEURSHIP -->
   <div class="page">
     <div class="page-hdr">
-      <span class="page-hdr-brand">Career Compass · Etijah Coaching</span>
+      <span class="page-hdr-brand">{T['brand_header']}</span>
       <span class="page-hdr-name">{name}</span>
     </div>
     <div class="sec-heading">
       <div class="sec-accent"></div>
-      <div><div class="sec-num">06</div><div class="sec-title">Work Style &amp; Resilience</div></div>
+      <div><div class="sec-num">06</div><div class="sec-title">{T['sec06']}</div></div>
     </div>
     <div class="two-col">
       <div class="col-box">
-        <div class="col-title">Resilience Scores</div>
+        <div class="col-title">{T['resilience_scores']}</div>
         {res_bars}
       </div>
       <div class="col-box">
-        <div class="col-title">Work Style Preferences</div>
+        <div class="col-title">{T['work_style_prefs']}</div>
         {ws_bars}
       </div>
     </div>
     <div class="narr-box">{ai.get('resilience_narrative','')} {ai.get('work_style_narrative','')}</div>
     <div class="sec-heading" style="margin-top:20px;">
       <div class="sec-accent"></div>
-      <div><div class="sec-num">07</div><div class="sec-title">Entrepreneurial Profile</div></div>
+      <div><div class="sec-num">07</div><div class="sec-title">{T['sec07']}</div></div>
     </div>
     <div class="col-box">
-      <div class="col-title">Entrepreneurship Scores</div>
+      <div class="col-title">{T['entrepreneurship_scores']}</div>
       {entre_bars}
     </div>
     <div class="narr-box">{ai.get('entrepreneurship_narrative','')}</div>
     <div class="page-ftr">
-      <span>Career Compass Report · Confidential · {date_str}</span>
-      <span>Page 6</span>
+      <span>{T['report_confidential_footer']} · {date_str}</span>
+      <span>{T['page']} 6</span>
     </div>
   </div>
 
   <!-- PAGE 7 — CAREER PATHWAYS -->
   <div class="page">
     <div class="page-hdr">
-      <span class="page-hdr-brand">Career Compass · Etijah Coaching</span>
+      <span class="page-hdr-brand">{T['brand_header']}</span>
       <span class="page-hdr-name">{name}</span>
     </div>
     <div class="sec-heading">
       <div class="sec-accent"></div>
-      <div><div class="sec-num">08</div><div class="sec-title">Career Pathways</div></div>
+      <div><div class="sec-num">08</div><div class="sec-title">{T['sec08']}</div></div>
     </div>
     {career_cards}
     <div class="page-ftr">
-      <span>Career Compass Report · Confidential · {date_str}</span>
-      <span>Page 7</span>
+      <span>{T['report_confidential_footer']} · {date_str}</span>
+      <span>{T['page']} 7</span>
     </div>
   </div>
 
   <!-- PAGE 8 — AI IMPACT & FUTURE-PROOFING -->
   <div class="page">
     <div class="page-hdr">
-      <span class="page-hdr-brand">Career Compass · Etijah Coaching</span>
+      <span class="page-hdr-brand">{T['brand_header']}</span>
       <span class="page-hdr-name">{name}</span>
     </div>
     <div class="sec-heading">
       <div class="sec-accent"></div>
-      <div><div class="sec-num">09</div><div class="sec-title">AI Impact &amp; Future-Proofing</div></div>
+      <div><div class="sec-num">09</div><div class="sec-title">{T['sec09']}</div></div>
     </div>
     <div class="intro-box">{ai_impact_summary}</div>
     {ai_impact_cards}
     <div class="page-ftr">
-      <span>Career Compass Report · Confidential · {date_str}</span>
-      <span>Page 8</span>
+      <span>{T['report_confidential_footer']} · {date_str}</span>
+      <span>{T['page']} 8</span>
     </div>
   </div>
 
   <!-- PAGE 9 — 90-DAY ACTION PLAN -->
   <div class="page">
     <div class="page-hdr">
-      <span class="page-hdr-brand">Career Compass · Etijah Coaching</span>
+      <span class="page-hdr-brand">{T['brand_header']}</span>
       <span class="page-hdr-name">{name}</span>
     </div>
     <div class="sec-heading">
       <div class="sec-accent"></div>
-      <div><div class="sec-num">10</div><div class="sec-title">Your 90-Day Action Plan</div></div>
+      <div><div class="sec-num">10</div><div class="sec-title">{T['sec10']}</div></div>
     </div>
     {action_html}
     <div class="page-ftr">
-      <span>Career Compass Report · Confidential · {date_str}</span>
-      <span>Page 9</span>
+      <span>{T['report_confidential_footer']} · {date_str}</span>
+      <span>{T['page']} 9</span>
     </div>
   </div>
 
   <!-- BACK COVER -->
   <div class="back-cover">
     <div class="back-top"></div>
-    <div class="back-headline">Your Journey Starts Here</div>
+    <div class="back-headline">{T['back_headline']}</div>
     <div class="back-message">{ai.get('closing_message','')}</div>
     <div class="back-rule"></div>
-    <div class="back-brand">Etijah Coaching</div>
-    <div class="back-tagline">Career Compass Assessment · {date_str}</div>
+    <div class="back-brand">{T['brand']}</div>
+    <div class="back-tagline">{T['back_tagline_suffix']} · {date_str}</div>
   </div>
 
   </body>
@@ -805,7 +985,7 @@ def build_html_report(user_data: dict, summary: dict, raw_scores: list, ai: dict
 
 # ─── AI Impact Analysis ────────────────────────────────────────────────────────
 
-def generate_ai_impact(user_data: dict, summary: dict, careers: list) -> dict:
+def generate_ai_impact(user_data: dict, summary: dict, careers: list, locale: str = 'en') -> dict:
   genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
   model = genai.GenerativeModel(
     "gemini-2.5-flash",
@@ -822,7 +1002,8 @@ def generate_ai_impact(user_data: dict, summary: dict, careers: list) -> dict:
     "Analyze how AI and automation will affect this specific person's top career matches.\n"                                                                                                         
     "Be honest about risks but focus on what protects them and how to future-proof.\n\n"
     f"{CULTURAL_GUARDRAIL}\n\n"
-    "=== USER PROFILE ===\n"
+    + (ARABIC_LANGUAGE_INSTRUCTION if locale == 'ar' else "")
+    + "=== USER PROFILE ===\n"
     f"RIASEC top types: {', '.join(riasec_types)}\n"
     f"Top strengths: {', '.join(top_strengths)}\n"                                                                                                                                                   
     f"Top values: {', '.join(top_values)}\n"                                                                                                                                                                   f"Current stage: {user_data.get('current_stage', 'N/A')}\n"
@@ -870,7 +1051,7 @@ def create_report(response_id: str, supabase_client) -> bytes:
 
     profile = supabase_client.table('assessment_responses') \
         .select('full_name,email,age_bracket,current_stage,education_field,'
-                'sectors_of_interest,geographic_openness,why_here,country,ai_impact_cache') \
+                'sectors_of_interest,geographic_openness,why_here,country,ai_impact_cache,locale') \
         .eq('id', response_id).single().execute()
     if not profile.data:
         raise ValueError(f"No assessment found for {response_id}")
@@ -912,13 +1093,16 @@ def create_report(response_id: str, supabase_client) -> bytes:
         semantic_scores = {}
     top_careers = score_careers(summary, profile.data, all_careers, semantic_scores)
 
-    ai_impact = profile.data.get('ai_impact_cache')
-    if not ai_impact:
-        ai_impact = generate_ai_impact(profile.data, summary, top_careers[:5])
-        supabase_client.table('assessment_responses') \
-            .update({'ai_impact_cache': ai_impact}) \
-            .eq('id', response_id).execute()
+    locale = profile.data.get('locale') or 'en'
 
-    ai_content  = generate_ai_content(profile.data, summary, raw_scores, top_careers, country_profile, coaching_matches)
-    html       = build_html_report(profile.data, summary, raw_scores, ai_content, top_careers, ai_impact)
+    ai_impact = profile.data.get('ai_impact_cache') if locale == 'en' else None
+    if not ai_impact:
+        ai_impact = generate_ai_impact(profile.data, summary, top_careers[:5], locale)
+        if locale == 'en':
+            supabase_client.table('assessment_responses') \
+                .update({'ai_impact_cache': ai_impact}) \
+                .eq('id', response_id).execute()
+
+    ai_content  = generate_ai_content(profile.data, summary, raw_scores, top_careers, country_profile, coaching_matches, locale)
+    html       = build_html_report(profile.data, summary, raw_scores, ai_content, top_careers, ai_impact, locale)
     return generate_pdf(html)
