@@ -81,6 +81,10 @@ def require_admin(user=Depends(get_current_user)):
         raise HTTPException(status_code=403, detail="Admin access required")
     return user
 
+def _assert_can_view(owner_user_id: str | None, user):
+    if owner_user_id and (not user or (user.id != owner_user_id and (user.app_metadata or {}).get("role") != "admin")):
+        raise HTTPException(status_code=404, detail="No results found for this response")
+
 
 class OnetLinkRequest(BaseModel):
     email: str
@@ -90,10 +94,6 @@ class OnetLinkRequest(BaseModel):
 class CheckExistingRequest(BaseModel):
     email: str
     phone: str
-
-class LinkByEmailRequest(BaseModel):
-    user_id: str
-    email: EmailStr
 
 class SubmitRequest(BaseModel):
     full_name: str
@@ -210,9 +210,14 @@ def check_existing(body: CheckExistingRequest):
         'p_phone': body.phone,
     }).execute()
 
-    if result.data:
-        return {"id": result.data}
-    return None
+    if not result.data:
+        return None
+
+    row = supabase.table('assessment_responses').select('user_id').eq('id', result.data).single().execute()
+    if row.data and row.data.get('user_id'):
+        return {"id": None, "claimed": True}
+
+    return {"id": result.data}
 
 
 @app.post("/assessment/submit")
@@ -319,7 +324,14 @@ def delete_onet_link(onet_id: str, _=Depends(require_admin)):
 
 
 @app.get("/assessment/{response_id}/results")
-def get_results(response_id: str):
+def get_results(response_id: str, user=Depends(get_optional_user)):
+    profile = supabase.table('assessment_responses') \
+        .select('email, user_id') \
+        .eq('id', response_id).single().execute()
+    if not profile.data:
+        raise HTTPException(status_code=404, detail="No results found for this response")
+    _assert_can_view(profile.data.get('user_id'), user)
+
     rows = supabase.table('assessment_results') \
         .select('*') \
         .eq('response_id', response_id) \
@@ -327,12 +339,8 @@ def get_results(response_id: str):
     if not rows.data:
         raise HTTPException(status_code=404, detail="No results found for this response")
 
-    profile = supabase.table('assessment_responses') \
-        .select('email') \
-        .eq('id', response_id).single().execute()
-
     summary = build_framework_output(rows.data)
-    return {'results': rows.data, 'summary': summary, 'email': profile.data.get('email') if profile.data else None}
+    return {'results': rows.data, 'summary': summary, 'email': profile.data.get('email')}
 
 @app.post("/feedback")
 def submit_feedback(body: FeedbackRequest):
@@ -370,16 +378,19 @@ def get_waitlist(_=Depends(require_admin)):
     return data.data or []
 
 @app.get("/assessment/{response_id}/career-suggestions")
-def get_career_suggestions(response_id: str):
+def get_career_suggestions(response_id: str, user=Depends(get_optional_user)):
     rows = supabase.table('assessment_results') \
         .select('*').eq('response_id', response_id).execute()
     if not rows.data:
         raise HTTPException(status_code=404, detail="No results found")
 
     profile = supabase.table('assessment_responses') \
-        .select('education_field, sectors_of_interest') \
+        .select('education_field, sectors_of_interest, user_id') \
         .eq('id', response_id).single().execute()
-  
+    if not profile.data:
+        raise HTTPException(status_code=404, detail="No results found")
+    _assert_can_view(profile.data.get('user_id'), user)
+
     summary = build_framework_output(rows.data)
     careers = supabase.table('careers').select('*').execute().data or []
     semantic_scores = get_career_semantic_scores(supabase, summary, profile.data or {})
@@ -398,12 +409,13 @@ def get_career_suggestions(response_id: str):
     }
 
 @app.get("/assessment/{response_id}/ai-impact")
-def get_ai_impact(response_id: str, force: bool = False):
+def get_ai_impact(response_id: str, force: bool = False, user=Depends(get_optional_user)):
     profile_row = supabase.table('assessment_responses') \
-        .select('full_name,current_stage,country,education_field,sectors_of_interest,ai_impact_cache') \
+        .select('full_name,current_stage,country,education_field,sectors_of_interest,ai_impact_cache,user_id') \
         .eq('id', response_id).single().execute()
     if not profile_row.data:
         raise HTTPException(status_code=404, detail="No results found")
+    _assert_can_view(profile_row.data.get('user_id'), user)
 
     if profile_row.data.get('ai_impact_cache') and not force:
         return profile_row.data['ai_impact_cache']
@@ -428,7 +440,12 @@ def get_ai_impact(response_id: str, force: bool = False):
     return result
 
 @app.get("/assessment/{response_id}/report")
-def get_report(response_id: str):
+def get_report(response_id: str, user=Depends(get_optional_user)):
+    owner_row = supabase.table('assessment_responses').select('user_id').eq('id', response_id).single().execute()
+    if not owner_row.data:
+        raise HTTPException(status_code=404, detail="No results found for this response")
+    _assert_can_view(owner_row.data.get('user_id'), user)
+
     try:
         pdf_bytes = create_report(response_id, supabase)
     except ValueError as e:
@@ -507,13 +524,14 @@ def delete_course(course_id: str, _=Depends(require_admin)):
     return {"deleted": course_id}
 
 @app.get("/assessment/{response_id}/courses")
-def get_course_recommendations(response_id: str):
+def get_course_recommendations(response_id: str, user=Depends(get_optional_user)):
     rows = supabase.table('assessment_results').select('*').eq('response_id', response_id).execute()
     profile = supabase.table('assessment_responses') \
-        .select('country, education_field, sectors_of_interest') \
+        .select('country, education_field, sectors_of_interest, user_id') \
         .eq('id', response_id).single().execute()
     if not rows.data or not profile.data:
         raise HTTPException(status_code=404, detail="No results found")
+    _assert_can_view(profile.data.get('user_id'), user)
     summary = build_framework_output(rows.data)
     careers = supabase.table('careers').select('*').execute().data or []
     semantic_scores = get_career_semantic_scores(supabase, summary, profile.data)
@@ -719,7 +737,12 @@ def get_market_trends(_=Depends(require_admin)):
     }
 
 @app.get("/assessment/{response_id}/job-listings")
-def get_job_listings(response_id: str, force: bool = False):
+def get_job_listings(response_id: str, force: bool = False, user=Depends(get_optional_user)):
+    owner_row = supabase.table('assessment_responses').select('user_id').eq('id', response_id).single().execute()
+    if not owner_row.data:
+        raise HTTPException(status_code=404, detail="No results found")
+    _assert_can_view(owner_row.data.get('user_id'), user)
+
     cached = supabase.table('job_listings_cache').select('*').eq('response_id', response_id).execute()
     if cached.data and not force:
         fetched_at = datetime.fromisoformat(cached.data[0]['fetched_at'])
@@ -856,15 +879,16 @@ def delete_application(application_id: str, user=Depends(get_current_user)):
     return {"deleted": application_id}
 
 @app.get("/assessment/{response_id}/companies")
-def get_companies_suggestions(response_id: str):
+def get_companies_suggestions(response_id: str, user=Depends(get_optional_user)):
     profile = supabase.table('assessment_responses') \
-        .select('country, education_field, sectors_of_interest') \
+        .select('country, education_field, sectors_of_interest, user_id') \
         .eq('id', response_id).single().execute()
     rows = supabase.table('assessment_results') \
         .select('*') \
         .eq('response_id', response_id).execute()
     if not rows.data or not profile.data:
         raise HTTPException(status_code=404, detail="No data found")
+    _assert_can_view(profile.data.get('user_id'), user)
 
     summary = build_framework_output(rows.data)
     careers = supabase.table('careers').select('*').execute().data or []
@@ -886,18 +910,10 @@ def get_companies_suggestions(response_id: str):
     return [c for c in (result.data or []) if is_appropriate(c.get('name_en'), c.get('sector'))]
 
 @app.post("/assessment/link-by-email")
-def link_by_email(body: LinkByEmailRequest):
-    try:
-        admin_user = supabase.auth.admin.get_user_by_id(body.user_id)
-    except Exception:
-        raise HTTPException(status_code=400, detail="invalid user_id")
-
-    if not admin_user.user or (admin_user.user.email or "").lower() != body.email.lower():
-        raise HTTPException(status_code=403, detail="user_id does not match the email")
-
+def link_by_email(user=Depends(get_current_user)):
     result = supabase.table('assessment_responses') \
-        .update({"user_id": body.user_id}) \
-        .ilike('email', body.email) \
+        .update({"user_id": user.id}) \
+        .ilike('email', user.email) \
         .is_('user_id', 'null') \
         .execute()
     return {"linked": len(result.data or [])}
