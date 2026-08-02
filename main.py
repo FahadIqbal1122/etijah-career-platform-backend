@@ -222,6 +222,14 @@ def check_existing(body: CheckExistingRequest):
 
 @app.post("/assessment/submit")
 def submit_assessment(body: SubmitRequest, user=Depends(get_optional_user)):
+    # Score it first, before writing anything — a payload with no recognizable
+    # question answers can't be scored, so reject cleanly instead of leaving
+    # an orphaned response row with no results.
+    results = compute_scores(body.answers)
+    if not results:
+        raise HTTPException(status_code=422, detail="No scoreable answers found in payload")
+    summary = build_framework_output(results)
+
     # Save to DB
     result = supabase.rpc('insert_assessment_response', {
         'payload': body.model_dump()
@@ -236,9 +244,6 @@ def submit_assessment(body: SubmitRequest, user=Depends(get_optional_user)):
             .update({'user_id': user.id}) \
             .eq('id', response_id).execute()
 
-    # Score it
-    results = compute_scores(body.answers)
-    summary = build_framework_output(results)
     rows = [{**r, "response_id": response_id} for r in results]
     # Insert results
     supabase.table('assessment_results').upsert(rows, on_conflict='response_id,framework,dimension').execute()
