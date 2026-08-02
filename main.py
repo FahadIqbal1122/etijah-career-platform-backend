@@ -150,6 +150,8 @@ class WaitlistRequest(BaseModel):
     email: EmailStr
     name: str | None = None
     country: str | None = None
+    nationality: str | None = None
+    phone: str | None = None
     status: str | None = None
     age: str | None = None
     locale: str | None = None
