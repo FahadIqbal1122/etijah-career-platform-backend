@@ -52,7 +52,14 @@ supabase: Client = create_client(
 HUB_API_KEY = os.getenv("HUB_API_KEY")
 SHOP_BASE_URL = os.getenv("SHOP_BASE_URL", "https://shop.etijahcoaching.com")
 BILLING_RETURN_URL = "https://myetijahi.com/account/billing"
-PLAN_EXTENSTION_DAYS = 30
+
+INTERNAL_JOBS_KEY = os.getenv("INTERNAL_JOBS_KEY")
+
+PLAN_CATALOG = {
+    "pathfinder":        {"name": "Pathfinder",        "amount": 149, "currency": "SAR", "interval": "lifetime", "extension_days": None},
+    "launchpad_monthly": {"name": "Launchpad Monthly",  "amount": 99,  "currency": "SAR", "interval": "month",    "extension_days": 30},
+    "launchpad_yearly":  {"name": "Launchpad Yearly",   "amount": 799, "currency": "SAR", "interval": "year",     "extension_days": 365},
+}
 
 _bearer = HTTPBearer()
 _bearer_optional = HTTPBearer(auto_error=False)
@@ -84,6 +91,50 @@ def require_admin(user=Depends(get_current_user)):
 def _assert_can_view(owner_user_id: str | None, user):
     if owner_user_id and (not user or (user.id != owner_user_id and (user.app_metadata or {}).get("role") != "admin")):
         raise HTTPException(status_code=404, detail="No results found for this response")
+
+TEST_MODE_KEY = "test_mode_all_plans_unlocked"
+_test_mode_cache: dict[str, Any] = {"value": False, "checked_at": None}
+_TEST_MODE_CACHE_TTL = timedelta(seconds=10)
+
+def _is_test_mode_enabled() -> bool:
+    """Admin-togglable flag (app_settings.test_mode_all_plans_unlocked) that
+    makes every user's effective tier resolve to 'launchpad', for QA/demo
+    walkthroughs without a real purchase. Cached briefly so the per-request
+    tier check in get_effective_tier doesn't add a DB round trip to every
+    gated endpoint."""
+    now = datetime.now(timezone.utc)
+    if _test_mode_cache["checked_at"] and now - _test_mode_cache["checked_at"] < _TEST_MODE_CACHE_TTL:
+        return _test_mode_cache["value"]
+    try:
+        row = supabase.table('app_settings').select('value').eq('key', TEST_MODE_KEY).execute()
+        enabled = bool(row.data[0]['value']) if row.data else False
+    except Exception as e:
+        # app_settings may not exist yet (migration not applied) — fail safe to
+        # "disabled" rather than taking down every gated endpoint that calls
+        # get_effective_tier.
+        print("Test mode lookup failed, defaulting to disabled:", e)
+        enabled = False
+    _test_mode_cache["value"] = enabled
+    _test_mode_cache["checked_at"] = now
+    return enabled
+
+def get_effective_tier(user_id: str | None) -> str:
+    """free | pathfinder | launchpad, computed from user_plans (not stored directly)."""
+    if _is_test_mode_enabled():
+        return "launchpad"
+    if not user_id:
+        return "free"
+    row = supabase.table('user_plans').select('*').eq('user_id', user_id).execute()
+    if not row.data:
+        return "free"
+    plan = row.data[0]
+    sub_end = plan.get('subscription_current_period_end')
+    subscription_active = bool(sub_end) and datetime.fromisoformat(sub_end) > datetime.now(timezone.utc)
+    if subscription_active:
+        return "launchpad"
+    if plan.get('pathfinder_unlocked'):
+        return "pathfinder"
+    return "free"
 
 
 class OnetLinkRequest(BaseModel):
@@ -169,9 +220,6 @@ class CoachRequest(BaseModel):
 
 class CheckoutRequest(BaseModel):
     plan_code: str
-    plan_name: str
-    amount: float
-    currency: str = "BHD"
 
 class HubTransactionBody(BaseModel):
     external_user_id: str
@@ -347,7 +395,8 @@ def get_results(response_id: str, user=Depends(get_optional_user)):
         raise HTTPException(status_code=404, detail="No results found for this response")
 
     summary = build_framework_output(rows.data)
-    return {'results': rows.data, 'summary': summary, 'email': profile.data.get('email')}
+    tier = get_effective_tier(profile.data.get('user_id'))
+    return {'results': rows.data, 'summary': summary, 'email': profile.data.get('email'), 'tier': tier}
 
 @app.post("/feedback")
 def submit_feedback(body: FeedbackRequest):
@@ -422,10 +471,14 @@ def get_ai_impact(response_id: str, force: bool = False, user=Depends(get_option
         .eq('id', response_id).single().execute()
     if not profile_row.data:
         raise HTTPException(status_code=404, detail="No results found")
-    _assert_can_view(profile_row.data.get('user_id'), user)
+    owner_user_id = profile_row.data.get('user_id')
+    _assert_can_view(owner_user_id, user)
+    tier = get_effective_tier(owner_user_id)
+    careers_cap = 2 if tier == "free" else 5
 
     if profile_row.data.get('ai_impact_cache') and not force:
-        return profile_row.data['ai_impact_cache']
+        cached = profile_row.data['ai_impact_cache']
+        return {**cached, "careers": (cached.get("careers") or [])[:careers_cap]}
 
     rows = supabase.table('assessment_results') \
         .select('*').eq('response_id', response_id).execute()
@@ -444,17 +497,19 @@ def get_ai_impact(response_id: str, force: bool = False, user=Depends(get_option
         .update({'ai_impact_cache': result}) \
         .eq('id', response_id).execute()
 
-    return result
+    return {**result, "careers": (result.get("careers") or [])[:careers_cap]}
 
 @app.get("/assessment/{response_id}/report")
 def get_report(response_id: str, user=Depends(get_optional_user)):
     owner_row = supabase.table('assessment_responses').select('user_id').eq('id', response_id).single().execute()
     if not owner_row.data:
         raise HTTPException(status_code=404, detail="No results found for this response")
-    _assert_can_view(owner_row.data.get('user_id'), user)
+    owner_user_id = owner_row.data.get('user_id')
+    _assert_can_view(owner_user_id, user)
+    tier = get_effective_tier(owner_user_id)
 
     try:
-        pdf_bytes = create_report(response_id, supabase)
+        pdf_bytes = create_report(response_id, supabase, tier=tier)
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
@@ -466,6 +521,24 @@ def get_report(response_id: str, user=Depends(get_optional_user)):
         media_type="application/pdf",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
+
+class TestModeRequest(BaseModel):
+    enabled: bool
+
+@app.get("/admin/test-mode")
+def get_test_mode(_=Depends(require_admin)):
+    return {"enabled": _is_test_mode_enabled()}
+
+@app.post("/admin/test-mode")
+def set_test_mode(body: TestModeRequest, _=Depends(require_admin)):
+    supabase.table('app_settings').upsert({
+        'key': TEST_MODE_KEY,
+        'value': body.enabled,
+        'updated_at': datetime.now(timezone.utc).isoformat(),
+    }, on_conflict='key').execute()
+    _test_mode_cache["value"] = body.enabled
+    _test_mode_cache["checked_at"] = datetime.now(timezone.utc)
+    return {"enabled": body.enabled}
 
 @app.get("/admin/country-profiles")
 def get_country_profiles(_=Depends(require_admin)):
@@ -538,7 +611,10 @@ def get_course_recommendations(response_id: str, user=Depends(get_optional_user)
         .eq('id', response_id).single().execute()
     if not rows.data or not profile.data:
         raise HTTPException(status_code=404, detail="No results found")
-    _assert_can_view(profile.data.get('user_id'), user)
+    owner_user_id = profile.data.get('user_id')
+    _assert_can_view(owner_user_id, user)
+    if get_effective_tier(owner_user_id) == "free":
+        return []
     summary = build_framework_output(rows.data)
     careers = supabase.table('careers').select('*').execute().data or []
     semantic_scores = get_career_semantic_scores(supabase, summary, profile.data)
@@ -743,19 +819,11 @@ def get_market_trends(_=Depends(require_admin)):
         "total_companies": len(company_count),
     }
 
-@app.get("/assessment/{response_id}/job-listings")
-def get_job_listings(response_id: str, force: bool = False, user=Depends(get_optional_user)):
-    owner_row = supabase.table('assessment_responses').select('user_id').eq('id', response_id).single().execute()
-    if not owner_row.data:
-        raise HTTPException(status_code=404, detail="No results found")
-    _assert_can_view(owner_row.data.get('user_id'), user)
-
-    cached = supabase.table('job_listings_cache').select('*').eq('response_id', response_id).execute()
-    if cached.data and not force:
-        fetched_at = datetime.fromisoformat(cached.data[0]['fetched_at'])
-        if datetime.now(timezone.utc) - fetched_at < JOB_LISTINGS_CACHE_TTL:
-            return {"jobs": cached.data[0]['jobs']}
-
+def _search_matching_jobs(response_id: str) -> list[dict] | None:
+    """Runs the JSearch/RapidAPI query for a response's top-3 matched careers.
+    Shared by the on-demand /job-listings endpoint and the Launchpad daily
+    job-matching refresh job. Returns None (not []) if the response has no
+    scored assessment data to match against."""
     profile = supabase.table('assessment_responses') \
         .select('country, education_field, sectors_of_interest') \
         .eq('id', response_id).single().execute()
@@ -763,7 +831,7 @@ def get_job_listings(response_id: str, force: bool = False, user=Depends(get_opt
         .select('*') \
         .eq('response_id', response_id).execute()
     if not rows.data or not profile.data:
-        raise HTTPException(status_code=404, detail="No results found")
+        return None
 
     summary = build_framework_output(rows.data)
     careers = supabase.table('careers').select('*').execute().data or []
@@ -797,11 +865,11 @@ def get_job_listings(response_id: str, force: bool = False, user=Depends(get_opt
                 if job_id and job_id not in seen_ids:
                     seen_ids.add(job_id)
                     all_jobs.append({
+                        "job_id": job_id,
                         "title": job_title,
                         "company": employer_name,
                         "location": f"{job.get('job_city', '')} {job.get('job_country', '')}".strip(),
                         "source": job.get("job_publisher"),
-
                         "url": job.get("job_apply_link"),
                         "matched_career": career['title'],
                     })
@@ -809,7 +877,25 @@ def get_job_listings(response_id: str, force: bool = False, user=Depends(get_opt
             print("JSearch error:", e)
             continue
 
-    result_jobs = all_jobs[:12]
+    return all_jobs[:12]
+
+
+@app.get("/assessment/{response_id}/job-listings")
+def get_job_listings(response_id: str, force: bool = False, user=Depends(get_optional_user)):
+    owner_row = supabase.table('assessment_responses').select('user_id').eq('id', response_id).single().execute()
+    if not owner_row.data:
+        raise HTTPException(status_code=404, detail="No results found")
+    _assert_can_view(owner_row.data.get('user_id'), user)
+
+    cached = supabase.table('job_listings_cache').select('*').eq('response_id', response_id).execute()
+    if cached.data and not force:
+        fetched_at = datetime.fromisoformat(cached.data[0]['fetched_at'])
+        if datetime.now(timezone.utc) - fetched_at < JOB_LISTINGS_CACHE_TTL:
+            return {"jobs": cached.data[0]['jobs']}
+
+    result_jobs = _search_matching_jobs(response_id)
+    if result_jobs is None:
+        raise HTTPException(status_code=404, detail="No results found")
 
     supabase.table('job_listings_cache').upsert({
         'response_id': response_id,
@@ -818,6 +904,114 @@ def get_job_listings(response_id: str, force: bool = False, user=Depends(get_opt
     }).execute()
 
     return {"jobs": result_jobs}
+
+
+@app.post("/internal/jobs/refresh-matches")
+def refresh_job_matches(request: Request):
+    """Daily job-matching refresh for Launchpad subscribers. Called by a VPS
+    crontab entry (not a browser), authenticated with a shared secret rather
+    than a user session — see the manual-deployment note for the cron entry."""
+    if not INTERNAL_JOBS_KEY or request.headers.get("X-Internal-Key") != INTERNAL_JOBS_KEY:
+        raise HTTPException(status_code=401, detail="Invalid internal key")
+
+    plans = supabase.table('user_plans') \
+        .select('user_id, subscription_current_period_end') \
+        .not_.is_('subscription_current_period_end', 'null') \
+        .execute()
+    now = datetime.now(timezone.utc)
+    launchpad_user_ids = [
+        p['user_id'] for p in (plans.data or [])
+        if datetime.fromisoformat(p['subscription_current_period_end']) > now
+    ]
+
+    inserted = 0
+    for user_id in launchpad_user_ids:
+        latest = supabase.table('assessment_responses') \
+            .select('id') \
+            .eq('user_id', user_id) \
+            .eq('completed', True) \
+            .order('created_at', desc=True) \
+            .limit(1).execute()
+        if not latest.data:
+            continue
+        response_id = latest.data[0]['id']
+
+        jobs = _search_matching_jobs(response_id) or []
+        existing_ids = {
+            row['job_data'].get('job_id')
+            for row in (supabase.table('job_matches').select('job_data').eq('user_id', user_id).execute().data or [])
+        }
+        new_jobs = [j for j in jobs if j.get('job_id') not in existing_ids]
+        for job in new_jobs:
+            supabase.table('job_matches').insert({
+                'user_id': user_id,
+                'response_id': response_id,
+                'job_data': job,
+            }).execute()
+        inserted += len(new_jobs)
+
+    return {"users_checked": len(launchpad_user_ids), "jobs_inserted": inserted}
+
+
+JOB_MATCHES_RETRY_TTL = timedelta(hours=6)
+
+@app.get("/jobs/my-matches")
+def get_my_job_matches(user=Depends(get_current_user)):
+    if get_effective_tier(user.id) != "launchpad":
+        return []
+
+    data = supabase.table('job_matches') \
+        .select('*') \
+        .eq('user_id', user.id) \
+        .order('matched_at', desc=True) \
+        .execute()
+    rows = data.data or []
+    real_rows = [r for r in rows if not r['job_data'].get('_no_results')]
+    if real_rows:
+        return real_rows
+
+    # No real matches yet — either the daily cron hasn't run for this user yet
+    # (fresh Launchpad subscriber) or tier access came from test mode rather
+    # than a real subscription (test mode never appears in the cron's
+    # subscriber list). Fetch on demand instead of making them wait.
+    #
+    # If the last attempt (real or empty) was recent, don't retry — every
+    # dashboard reload calls this endpoint, and test-mode walkthroughs in
+    # particular reload far more often than a real subscriber would, which
+    # would otherwise burn the JSearch/RapidAPI quota on repeat empty results.
+    if rows:
+        last_attempt = datetime.fromisoformat(rows[0]['matched_at'])
+        if datetime.now(timezone.utc) - last_attempt < JOB_MATCHES_RETRY_TTL:
+            return []
+
+    latest = supabase.table('assessment_responses') \
+        .select('id') \
+        .eq('user_id', user.id) \
+        .eq('completed', True) \
+        .order('created_at', desc=True) \
+        .limit(1).execute()
+    if not latest.data:
+        return []
+
+    jobs = _search_matching_jobs(latest.data[0]['id']) or []
+    if not jobs:
+        supabase.table('job_matches').insert({
+            'user_id': user.id,
+            'response_id': latest.data[0]['id'],
+            'job_data': {'_no_results': True},
+        }).execute()
+        return []
+
+    inserted = []
+    for job in jobs:
+        row = supabase.table('job_matches').insert({
+            'user_id': user.id,
+            'response_id': latest.data[0]['id'],
+            'job_data': job,
+        }).execute()
+        if row.data:
+            inserted.append(row.data[0])
+    return inserted
 
 
 @app.get("/assessment/my-assessments")
@@ -895,7 +1089,12 @@ def get_companies_suggestions(response_id: str, user=Depends(get_optional_user))
         .eq('response_id', response_id).execute()
     if not rows.data or not profile.data:
         raise HTTPException(status_code=404, detail="No data found")
-    _assert_can_view(profile.data.get('user_id'), user)
+    owner_user_id = profile.data.get('user_id')
+    _assert_can_view(owner_user_id, user)
+    tier = get_effective_tier(owner_user_id)
+    if tier == "free":
+        return []
+    company_limit = 50 if tier == "launchpad" else 20
 
     summary = build_framework_output(rows.data)
     careers = supabase.table('careers').select('*').execute().data or []
@@ -907,13 +1106,13 @@ def get_companies_suggestions(response_id: str, user=Depends(get_optional_user))
 
     query = supabase.table('companies').select(
         'id, name_en, sector, size, is_government, career_page_url, logo_url, country_code'
-    )    
+    )
     if country_code:
         query = query.eq('country_code', country_code)
     if sectors:
         query = query.in_('sector', sectors)
 
-    result = query.order('name_en').limit(15).execute()
+    result = query.order('name_en').limit(company_limit).execute()
     return [c for c in (result.data or []) if is_appropriate(c.get('name_en'), c.get('sector'))]
 
 @app.post("/assessment/link-by-email")
@@ -994,6 +1193,10 @@ def coach(payload: CoachRequest, user=Depends(get_current_user)):
 
 @app.post("/billing/checkout")
 def create_checkout(body: CheckoutRequest, user=Depends(get_current_user)):
+    plan = PLAN_CATALOG.get(body.plan_code)
+    if not plan:
+        raise HTTPException(status_code=400, detail=f"Unknown plan_code: {body.plan_code}")
+
     full_name = (user.user_metadata or {}).get("full_name", "") or ""
     first_name, _, last_name = full_name.strip().partition(" ")
 
@@ -1003,9 +1206,9 @@ def create_checkout(body: CheckoutRequest, user=Depends(get_current_user)):
         "last_name": last_name or "Account",
         "email": user.email,
         "plan_code": body.plan_code,
-        "plan_name": body.plan_name,
-        "amount": body.amount,
-        "currency": body.currency,
+        "plan_name": plan["name"],
+        "amount": plan["amount"],
+        "currency": plan["currency"],
         "return_url": BILLING_RETURN_URL,
     }
 
@@ -1042,28 +1245,47 @@ def get_my_transaction(user=Depends(get_current_user)):
 @app.get("/billing/plan")
 def get_my_plan(user=Depends(get_current_user)):
     row = supabase.table('user_plans').select('*').eq('user_id', user.id).execute()
-    if not row.data:
-        return {"plan_code": None, "status": "free", "current_period_end": None}
-    plan = row.data[0]
-    is_active = plan['status'] == 'active' and datetime.fromisoformat(plan['current_period_end']) > datetime.now(timezone.utc)
-    return {**plan, "status": "active" if is_active else "expired"}
+    plan = row.data[0] if row.data else {}
+    tier = get_effective_tier(user.id)
+    return {
+        "tier": tier,
+        "pathfinder_unlocked": bool(plan.get('pathfinder_unlocked')),
+        "pathfinder_unlocked_at": plan.get('pathfinder_unlocked_at'),
+        "subscription_plan_code": plan.get('subscription_plan_code'),
+        "subscription_status": "active" if tier == "launchpad" else ("expired" if plan.get('subscription_current_period_end') else None),
+        "subscription_current_period_end": plan.get('subscription_current_period_end'),
+    }
 
-def _active_plan(user_id: str, plan_code: str):
+def _activate_plan(user_id: str, plan_code: str):
+    """Applies a paid plan_code to user_plans. Pathfinder is a permanent, one-time
+    unlock; launchpad_* extends a rolling subscription window independently of it."""
+    catalog_entry = PLAN_CATALOG.get(plan_code)
+    if not catalog_entry:
+        return
+
+    if plan_code == "pathfinder":
+        supabase.table('user_plans').upsert({
+            'user_id': user_id,
+            'pathfinder_unlocked': True,
+            'pathfinder_unlocked_at': datetime.now(timezone.utc).isoformat(),
+        }, on_conflict='user_id').execute()
+        return
+
     now = datetime.now(timezone.utc)
-    existing = supabase.table('user_plans').select('current_period_end').eq('user_id', user_id).execute()
+    existing = supabase.table('user_plans').select('subscription_current_period_end').eq('user_id', user_id).execute()
     base = now
     if existing.data:
-        current_end = existing.data[0].get('current_period_end')
+        current_end = existing.data[0].get('subscription_current_period_end')
         if current_end:
             current_end_dt = datetime.fromisoformat(current_end)
             if current_end_dt > now:
                 base = current_end_dt
-    new_end = base + timedelta(days=PLAN_EXTENSTION_DAYS)
+    new_end = base + timedelta(days=catalog_entry["extension_days"])
     supabase.table('user_plans').upsert({
         'user_id': user_id,
-        'plan_code': plan_code,
-        'status': 'active',
-        'current_period_end': new_end.isoformat(),
+        'subscription_plan_code': plan_code,
+        'subscription_status': 'active',
+        'subscription_current_period_end': new_end.isoformat(),
     }, on_conflict='user_id').execute()
 
 
@@ -1095,6 +1317,6 @@ async def receive_hub_transaction(request: Request):
     }, on_conflict='order_ref').execute()
 
     if body.status == 'paid' and not already_paid:
-        _active_plan(body.external_user_id, body.plan_code)
+        _activate_plan(body.external_user_id, body.plan_code)
     
     return {"received": True}

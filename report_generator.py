@@ -385,7 +385,9 @@ def _badge(level: str, locale: str = 'en') -> str:
 
 # ─── HTML report builder ───────────────────────────────────────────────────────
 
-def build_html_report(user_data: dict, summary: dict, raw_scores: list, ai: dict, careers: list, ai_impact: dict | None = None, locale: str = 'en') -> str:
+def build_html_report(user_data: dict, summary: dict, raw_scores: list, ai: dict, careers: list, ai_impact: dict | None = None, locale: str = 'en', tier: str = 'launchpad') -> str:
+    career_rec_cap = 5 if tier == 'free' else 8
+    ai_impact_cap  = 2 if tier == 'free' else 5
     T = UI_TEXT.get(locale, UI_TEXT['en'])
     riasec_meta_src    = RIASEC_META_AR    if locale == 'ar' else RIASEC_META
     values_meta_src    = VALUES_META_AR    if locale == 'ar' else VALUES_META
@@ -550,7 +552,7 @@ def build_html_report(user_data: dict, summary: dict, raw_scores: list, ai: dict
 
     # ── Career recommendation cards ───────────────────────────────────────────
     career_cards = ""
-    for rec in ai.get('career_recommendations', [])[:8]:
+    for rec in ai.get('career_recommendations', [])[:career_rec_cap]:
         ms = rec.get('match_score', 0)
         career_cards += (
             f'<div class="card" style="margin-bottom:10px;">'
@@ -571,7 +573,7 @@ def build_html_report(user_data: dict, summary: dict, raw_scores: list, ai: dict
 
     # ── AI impact cards ───────────────────────────────────────────────────────
     ai_impact_cards = ""
-    for c in (ai_impact or {}).get('careers', [])[:5]:
+    for c in (ai_impact or {}).get('careers', [])[:ai_impact_cap]:
         pill_margin = 'margin:2px 0 2px 4px;' if locale == 'ar' else 'margin:2px 4px 2px 0;'
         protected_pills = "".join(
             f'<span class="pill" style="{pill_margin}">{s}</span>'
@@ -1047,7 +1049,7 @@ def generate_pdf(
 
 # ─── Main orchestrator ─────────────────────────────────────────────────────────
 
-def create_report(response_id: str, supabase_client) -> bytes:
+def create_report(response_id: str, supabase_client, tier: str = "launchpad") -> bytes:
 
     profile = supabase_client.table('assessment_responses') \
         .select('full_name,email,age_bracket,current_stage,education_field,'
@@ -1104,5 +1106,5 @@ def create_report(response_id: str, supabase_client) -> bytes:
                 .eq('id', response_id).execute()
 
     ai_content  = generate_ai_content(profile.data, summary, raw_scores, top_careers, country_profile, coaching_matches, locale)
-    html       = build_html_report(profile.data, summary, raw_scores, ai_content, top_careers, ai_impact, locale)
+    html       = build_html_report(profile.data, summary, raw_scores, ai_content, top_careers, ai_impact, locale, tier=tier)
     return generate_pdf(html)
