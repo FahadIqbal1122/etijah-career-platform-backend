@@ -378,6 +378,17 @@ def delete_onet_link(onet_id: str, _=Depends(require_admin)):
     return {"deleted": onet_id}
 
 
+@app.get("/stats/recent-completions")
+def get_recent_completions():
+    one_hour_ago = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
+    result = supabase.table('assessment_responses') \
+        .select('id', count='exact') \
+        .eq('completed', True) \
+        .gte('created_at', one_hour_ago) \
+        .execute()
+    return {"count": result.count or 0}
+
+
 @app.get("/assessment/{response_id}/results")
 def get_results(response_id: str, user=Depends(get_optional_user)):
     profile = supabase.table('assessment_responses') \
