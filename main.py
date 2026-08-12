@@ -1,7 +1,7 @@
 from http import HTTPStatus
 import os
 from threading import _profile_hook
-from fastapi import FastAPI, HTTPException, Depends, Security
+from fastapi import FastAPI, HTTPException, Depends, Security, BackgroundTasks
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.middleware.cors import CORSMiddleware
 from supabase import create_client, Client
@@ -657,8 +657,12 @@ MARKET_ROLE_CATEGORIES = [
 ]
 
 MARKET_COUNTRIES = [
-    {"code": "SA", "name": "Saudi Arabia", "query_suffix": "Saudi Arabia"},
-    {"code": "BH", "name": "Bahrain", "query_suffix": "Bahrain"},
+    {"code": "SA", "name": "Saudi Arabia", "query_suffix": "Saudi Arabia", "jooble_location": "Saudi Arabia"},
+    {"code": "BH", "name": "Bahrain",      "query_suffix": "Bahrain",      "jooble_location": "Bahrain"},
+    {"code": "AE", "name": "UAE",          "query_suffix": "United Arab Emirates", "jooble_location": "United Arab Emirates"},
+    {"code": "QA", "name": "Qatar",        "query_suffix": "Qatar",        "jooble_location": "Qatar"},
+    {"code": "KW", "name": "Kuwait",       "query_suffix": "Kuwait",       "jooble_location": "Kuwait"},
+    {"code": "OM", "name": "Oman",         "query_suffix": "Oman",         "jooble_location": "Oman"},
 ]
 
 def _get_week_start() -> str:
@@ -667,29 +671,45 @@ def _get_week_start() -> str:
     return monday.isoformat()
 
 @app.post("/admin/market-analysis/fetch")
-async def fetch_market_analysis(_=Depends(require_admin)):
+async def fetch_market_analysis(background_tasks: BackgroundTasks, _=Depends(require_admin)):
+    week_start = _get_week_start()
+    existing = supabase.table("market_fetch_status").select("status").eq("week", week_start).execute()
+    if existing.data and existing.data[0]["status"] == "running":
+        return {"week": week_start, "status": "running"}
+
+    supabase.table("market_fetch_status").upsert({
+        "week": week_start, "status": "running", "inserted": 0, "errors": 0,
+        "insert_error": None, "started_at": datetime.now(timezone.utc).isoformat(), "finished_at": None,
+    }).execute()
+
+    background_tasks.add_task(_run_market_fetch, week_start)
+    return {"week": week_start, "status": "started"}
+
+
+async def _run_market_fetch(week_start: str):
     import asyncio
     mega_key = os.getenv("JSEARCH_MEGA_KEY")
-    if not mega_key:
-        return {"week": _get_week_start(), "inserted": 0, "errors": 0, "insert_error": "JSEARCH_MEGA_KEY is not set on the backend"}
-    week_start = _get_week_start()
+    jooble_key = os.getenv("JOOBLE_API_KEY")
 
-    existing = supabase.table("job_market_snapshots") \
-        .select("job_id") \
-        .eq("fetched_week", week_start) \
-        .execute()
+    def finish(inserted=0, errors=0, insert_error=None):
+        supabase.table("market_fetch_status").update({
+            "status": "done", "inserted": inserted, "errors": errors,
+            "insert_error": insert_error, "finished_at": datetime.now(timezone.utc).isoformat(),
+        }).eq("week", week_start).execute()
+
+    if not mega_key and not jooble_key:
+        return finish(insert_error="No job source API keys configured (JSEARCH_MEGA_KEY / JOOBLE_API_KEY)")
+
+    existing = supabase.table("job_market_snapshots").select("job_id").eq("fetched_week", week_start).execute()
     seen_ids = {r["job_id"] for r in (existing.data or [])}
 
-    tasks = [
-        (country, role)
-        for country in MARKET_COUNTRIES
-        for role in MARKET_ROLE_CATEGORIES
-    ]
-
-    all_rows = []
+    tasks = [(country, role) for country in MARKET_COUNTRIES for role in MARKET_ROLE_CATEGORIES]
+    all_rows: list = []
     errors = 0
 
-    async def fetch_one(client: httpx.AsyncClient, country: dict, role: str):
+    async def fetch_jsearch(client: httpx.AsyncClient, country: dict, role: str):
+        if not mega_key:
+            return []
         for attempt in range(3):
             try:
                 resp = await client.get(
@@ -705,44 +725,79 @@ async def fetch_market_analysis(_=Depends(require_admin)):
                     await asyncio.sleep(3 * (attempt + 1))
                     continue
                 resp.raise_for_status()
-                return country, role, resp.json().get("data") or []
+                return [
+                    {
+                        "job_id": f"jsearch:{j.get('job_id')}",
+                        "job_title": j.get("job_title"),
+                        "company": j.get("employer_name"),
+                        "location": f"{j.get('job_city', '')} {j.get('job_country', '')}".strip(),
+                        "salary_min": j.get("job_min_salary"),
+                        "salary_max": j.get("job_max_salary"),
+                        "salary_currency": j.get("job_salary_currency"),
+                        "url": j.get("job_apply_link"),
+                    }
+                    for j in (resp.json().get("data") or [])[:8] if j.get("job_id")
+                ]
             except Exception as e:
                 if attempt < 2 and isinstance(e, httpx.HTTPStatusError) and e.response.status_code == 429:
                     await asyncio.sleep(3 * (attempt + 1))
                     continue
-                print(f"Market fetch error [{country['code']}][{role}]: {type(e).__name__}: {e!r}")
-                return country, role, None
+                print(f"JSearch error [{country['code']}][{role}]: {type(e).__name__}: {e!r}")
+                return None
+
+    async def fetch_jooble(client: httpx.AsyncClient, country: dict, role: str):
+        if not jooble_key:
+            return []
+        try:
+            resp = await client.post(
+                f"https://jooble.org/api/{jooble_key}",
+                json={"keywords": role, "location": country["jooble_location"]},
+                timeout=12.0,
+            )
+            resp.raise_for_status()
+            return [
+                {
+                    "job_id": f"jooble:{j.get('id')}",
+                    "job_title": j.get("title"),
+                    "company": j.get("company"),
+                    "location": j.get("location"),
+                    "salary_min": None,
+                    "salary_max": None,
+                    "salary_currency": None,
+                    "url": j.get("link"),
+                }
+                for j in (resp.json().get("jobs") or [])[:8] if j.get("id")
+            ]
+        except Exception as e:
+            print(f"Jooble error [{country['code']}][{role}]: {type(e).__name__}: {e!r}")
+            return None
 
     async with httpx.AsyncClient() as client:
-        # Small batches with a pause between them to stay under the RapidAPI rate limit
+        # Small batches with a pause between them to stay under free-tier rate limits
         for i in range(0, len(tasks), 3):
-            batch = tasks[i:i+3]
-            results = await asyncio.gather(*[fetch_one(client, c, r) for c, r in batch])
+            batch = tasks[i:i + 3]
+            results = await asyncio.gather(*[
+                asyncio.gather(fetch_jsearch(client, c, r), fetch_jooble(client, c, r))
+                for c, r in batch
+            ])
             if i + 3 < len(tasks):
                 await asyncio.sleep(1)
-            for country, role, jobs in results:
-                if jobs is None:
-                    errors += 1
-                    continue
-                for job in jobs[:8]:
-                    job_id = job.get("job_id")
-                    if not job_id or job_id in seen_ids:
+            for (country, role), (jsearch_jobs, jooble_jobs) in zip(batch, results):
+                for jobs in (jsearch_jobs, jooble_jobs):
+                    if jobs is None:
+                        errors += 1
                         continue
-                    seen_ids.add(job_id)
-                    all_rows.append({
-                        "fetched_week": week_start,
-                        "country_code": country["code"],
-                        "country_name": country["name"],
-                        "role_category": role,
-                        "job_id": job_id,
-                        "job_title": job.get("job_title"),
-                        "company": job.get("employer_name"),
-                        "location": f"{job.get('job_city', '')} {job.get('job_country', '')}".strip(),
-                        "salary_min": job.get("job_min_salary"),
-                        "salary_max": job.get("job_max_salary"),
-                        "salary_currency": job.get("job_salary_currency"),
-                        "url": job.get("job_apply_link"),
-                    })
+                    for job in jobs:
+                        if job["job_id"] in seen_ids:
+                            continue
+                        seen_ids.add(job["job_id"])
+                        all_rows.append({
+                            "fetched_week": week_start,
+                            "country_code": country["code"],
+                            "country_name": country["name"],
+                            "role_category": role,
+                            **job,
+                        })
 
     inserted = 0
     insert_error = None
@@ -754,10 +809,14 @@ async def fetch_market_analysis(_=Depends(require_admin)):
             print(f"Market snapshot insert failed: {e}")
             insert_error = str(e)
 
-    result = {"week": week_start, "inserted": inserted, "errors": errors}
-    if insert_error:
-        result["insert_error"] = insert_error
-    return result
+    finish(inserted=inserted, errors=errors, insert_error=insert_error)
+
+
+@app.get("/admin/market-analysis/fetch-status")
+def get_market_fetch_status(_=Depends(require_admin)):
+    week_start = _get_week_start()
+    rows = supabase.table("market_fetch_status").select("*").eq("week", week_start).execute().data
+    return rows[0] if rows else {"week": week_start, "status": "none"}
 
 @app.get("/admin/market-analysis/trends")
 def get_market_trends(_=Depends(require_admin)):
