@@ -1083,7 +1083,8 @@ def create_report(response_id: str, supabase_client, tier: str = "launchpad") ->
 
     profile = supabase_client.table('assessment_responses') \
         .select('full_name,email,age_bracket,current_stage,education_field,'
-                'sectors_of_interest,geographic_openness,why_here,country,ai_impact_cache,ai_content_cache,locale') \
+                'sectors_of_interest,geographic_openness,why_here,country,'
+                'ai_impact_cache,ai_content_cache,ai_impact_cache_ar,ai_content_cache_ar,locale') \
         .eq('id', response_id).single().execute()
     if not profile.data:
         raise ValueError(f"No assessment found for {response_id}")
@@ -1142,8 +1143,21 @@ def create_report(response_id: str, supabase_client, tier: str = "launchpad") ->
             .eq('id', response_id).execute()
 
     if locale == 'ar':
-        ai_impact  = translate_report_json(ai_impact, 'ar')
-        ai_content = translate_report_json(ai_content, 'ar')
+        ai_impact_ar = profile.data.get('ai_impact_cache_ar')
+        if not ai_impact_ar:
+            ai_impact_ar = translate_report_json(ai_impact, 'ar')
+            supabase_client.table('assessment_responses') \
+                .update({'ai_impact_cache_ar': ai_impact_ar}) \
+                .eq('id', response_id).execute()
+
+        ai_content_ar = profile.data.get('ai_content_cache_ar')
+        if not ai_content_ar:
+            ai_content_ar = translate_report_json(ai_content, 'ar')
+            supabase_client.table('assessment_responses') \
+                .update({'ai_content_cache_ar': ai_content_ar}) \
+                .eq('id', response_id).execute()
+
+        ai_impact, ai_content = ai_impact_ar, ai_content_ar
 
     html       = build_html_report(profile.data, summary, raw_scores, ai_content, top_careers, ai_impact, locale, tier=tier)
     return generate_pdf(html)
