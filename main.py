@@ -7,7 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from supabase import create_client, Client
 from dotenv import load_dotenv
 from scoring_engine import compute_scores, build_framework_output, score_careers, get_career_semantic_scores
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr, Field
 from typing import Any
 import io
 from datetime import datetime, timezone, timedelta
@@ -42,7 +42,7 @@ from fastapi import Request
 @app.exception_handler(Exception)
 async def unhandled_exception_handler(request: Request, exc: Exception):
     traceback.print_exc()
-    return JSONResponse(status_code=500, content={"error": str(exc)})
+    return JSONResponse(status_code=500, content={"error": "Internal server error"})
 
 supabase: Client = create_client(
     os.getenv("SUPABASE_URL"),
@@ -91,6 +91,13 @@ def require_admin(user=Depends(get_current_user)):
 def _assert_can_view(owner_user_id: str | None, user):
     if owner_user_id and (not user or (user.id != owner_user_id and (user.app_metadata or {}).get("role") != "admin")):
         raise HTTPException(status_code=404, detail="No results found for this response")
+
+def _assert_can_force_refresh(owner_user_id: str | None, user):
+    """force=true bypasses the cache and pays for a live LLM/API call — unlike a plain view,
+    this must require the caller to be authenticated as the assessment's owner (or an admin),
+    otherwise anyone who knows a public response_id could loop it to run up API costs."""
+    if not user or (owner_user_id and user.id != owner_user_id and (user.app_metadata or {}).get("role") != "admin"):
+        raise HTTPException(status_code=403, detail="Sign in as the report owner to refresh this data")
 
 TEST_MODE_KEY = "test_mode_all_plans_unlocked"
 _test_mode_cache: dict[str, Any] = {"value": False, "checked_at": None}
@@ -147,19 +154,19 @@ class CheckExistingRequest(BaseModel):
     phone: str
 
 class SubmitRequest(BaseModel):
-    full_name: str
+    full_name: str = Field(max_length=200)
     email: EmailStr
-    phone: str
-    country: str
-    nationality: str
-    age_bracket: str
-    current_stage: str
-    education_field: str
-    sectors_of_interest: list[str]
-    career_structure: str
-    languages: list[str]
-    geographic_openness: str
-    why_here: str
+    phone: str = Field(max_length=40)
+    country: str = Field(max_length=100)
+    nationality: str = Field(max_length=100)
+    age_bracket: str = Field(max_length=50)
+    current_stage: str = Field(max_length=100)
+    education_field: str = Field(max_length=200)
+    sectors_of_interest: list[str] = Field(max_length=50)
+    career_structure: str = Field(max_length=200)
+    languages: list[str] = Field(max_length=50)
+    geographic_openness: str = Field(max_length=200)
+    why_here: str = Field(max_length=2000)
     answers: dict[str, Any]
     completed: bool
     locale: str | None = 'en'
@@ -215,8 +222,8 @@ class coachingSessionRequest(BaseModel):
     raw_transcript: str
 
 class CoachRequest(BaseModel):
-    message: str
-    conversation_history: list[dict] = []
+    message: str = Field(max_length=4000)
+    conversation_history: list[dict] = Field(default_factory=list, max_length=50)
 
 class CheckoutRequest(BaseModel):
     plan_code: str
@@ -347,7 +354,7 @@ def delete_assessment(response_id: str, _=Depends(require_admin)):
     
 
 @app.get("/onet")
-def get_onet_links():
+def get_onet_links(_=Depends(require_admin)):
     links = supabase.table('onet_links').select('*').order('created_at', desc=True).execute()
     emails = [l['email'] for l in links.data] if links.data else []
     assessment_emails = []
@@ -361,7 +368,7 @@ def get_onet_links():
 
 
 @app.post("/onet")
-def add_onet_link(body: OnetLinkRequest):
+def add_onet_link(body: OnetLinkRequest, _=Depends(require_admin)):
     data = supabase.table('onet_links').insert({
         'email': body.email.lower().strip(),
         'onet_url': body.onet_url,
@@ -392,7 +399,7 @@ def get_recent_completions():
 @app.get("/assessment/{response_id}/results")
 def get_results(response_id: str, user=Depends(get_optional_user)):
     profile = supabase.table('assessment_responses') \
-        .select('email, user_id') \
+        .select('email, user_id, locale') \
         .eq('id', response_id).single().execute()
     if not profile.data:
         raise HTTPException(status_code=404, detail="No results found for this response")
@@ -407,7 +414,7 @@ def get_results(response_id: str, user=Depends(get_optional_user)):
 
     summary = build_framework_output(rows.data)
     tier = get_effective_tier(profile.data.get('user_id'))
-    return {'results': rows.data, 'summary': summary, 'email': profile.data.get('email'), 'tier': tier}
+    return {'results': rows.data, 'summary': summary, 'email': profile.data.get('email'), 'tier': tier, 'locale': profile.data.get('locale') or 'en'}
 
 @app.post("/feedback")
 def submit_feedback(body: FeedbackRequest):
@@ -449,13 +456,13 @@ def get_career_suggestions(response_id: str, user=Depends(get_optional_user)):
     rows = supabase.table('assessment_results') \
         .select('*').eq('response_id', response_id).execute()
     if not rows.data:
-        raise HTTPException(status_code=404, detail="No results found")
+        raise HTTPException(status_code=404, detail="No results found for this response")
 
     profile = supabase.table('assessment_responses') \
         .select('education_field, sectors_of_interest, user_id') \
         .eq('id', response_id).single().execute()
     if not profile.data:
-        raise HTTPException(status_code=404, detail="No results found")
+        raise HTTPException(status_code=404, detail="No results found for this response")
     _assert_can_view(profile.data.get('user_id'), user)
 
     summary = build_framework_output(rows.data)
@@ -481,9 +488,11 @@ def get_ai_impact(response_id: str, force: bool = False, user=Depends(get_option
         .select('full_name,current_stage,country,education_field,sectors_of_interest,ai_impact_cache,user_id') \
         .eq('id', response_id).single().execute()
     if not profile_row.data:
-        raise HTTPException(status_code=404, detail="No results found")
+        raise HTTPException(status_code=404, detail="No results found for this response")
     owner_user_id = profile_row.data.get('user_id')
     _assert_can_view(owner_user_id, user)
+    if force:
+        _assert_can_force_refresh(owner_user_id, user)
     tier = get_effective_tier(owner_user_id)
     careers_cap = 2 if tier == "free" else 5
 
@@ -494,7 +503,7 @@ def get_ai_impact(response_id: str, force: bool = False, user=Depends(get_option
     rows = supabase.table('assessment_results') \
         .select('*').eq('response_id', response_id).execute()
     if not rows.data:
-        raise HTTPException(status_code=404, detail="No results found")
+        raise HTTPException(status_code=404, detail="No results found for this response")
 
     summary = build_framework_output(rows.data)
     careers = supabase.table('careers').select('*').execute().data or []
@@ -511,7 +520,7 @@ def get_ai_impact(response_id: str, force: bool = False, user=Depends(get_option
     return {**result, "careers": (result.get("careers") or [])[:careers_cap]}
 
 @app.get("/assessment/{response_id}/report")
-def get_report(response_id: str, user=Depends(get_optional_user)):
+def get_report(response_id: str, locale: str | None = None, user=Depends(get_optional_user)):
     owner_row = supabase.table('assessment_responses').select('user_id').eq('id', response_id).single().execute()
     if not owner_row.data:
         raise HTTPException(status_code=404, detail="No results found for this response")
@@ -519,14 +528,17 @@ def get_report(response_id: str, user=Depends(get_optional_user)):
     _assert_can_view(owner_user_id, user)
     tier = get_effective_tier(owner_user_id)
 
+    if locale not in (None, 'en', 'ar'):
+        raise HTTPException(status_code=400, detail="locale must be 'en' or 'ar'")
+
     try:
-        pdf_bytes = create_report(response_id, supabase, tier=tier)
+        pdf_bytes = create_report(response_id, supabase, tier=tier, locale_override=locale)
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Report generation failed: {str(e)}")
 
-    filename = f"career-report-{response_id[:8]}.pdf"
+    filename = f"career-report-{response_id[:8]}{'-' + locale if locale else ''}.pdf"
     return StreamingResponse(
         io.BytesIO(pdf_bytes),
         media_type="application/pdf",
@@ -621,7 +633,7 @@ def get_course_recommendations(response_id: str, user=Depends(get_optional_user)
         .select('country, education_field, sectors_of_interest, user_id') \
         .eq('id', response_id).single().execute()
     if not rows.data or not profile.data:
-        raise HTTPException(status_code=404, detail="No results found")
+        raise HTTPException(status_code=404, detail="No results found for this response")
     owner_user_id = profile.data.get('user_id')
     _assert_can_view(owner_user_id, user)
     if get_effective_tier(owner_user_id) == "free":
@@ -980,8 +992,10 @@ def _search_matching_jobs(response_id: str) -> list[dict] | None:
 def get_job_listings(response_id: str, force: bool = False, user=Depends(get_optional_user)):
     owner_row = supabase.table('assessment_responses').select('user_id').eq('id', response_id).single().execute()
     if not owner_row.data:
-        raise HTTPException(status_code=404, detail="No results found")
+        raise HTTPException(status_code=404, detail="No results found for this response")
     _assert_can_view(owner_row.data.get('user_id'), user)
+    if force:
+        _assert_can_force_refresh(owner_row.data.get('user_id'), user)
 
     cached = supabase.table('job_listings_cache').select('*').eq('response_id', response_id).execute()
     if cached.data and not force:
@@ -991,7 +1005,7 @@ def get_job_listings(response_id: str, force: bool = False, user=Depends(get_opt
 
     result_jobs = _search_matching_jobs(response_id)
     if result_jobs is None:
-        raise HTTPException(status_code=404, detail="No results found")
+        raise HTTPException(status_code=404, detail="No results found for this response")
 
     supabase.table('job_listings_cache').upsert({
         'response_id': response_id,
@@ -1007,7 +1021,7 @@ def refresh_job_matches(request: Request):
     """Daily job-matching refresh for Launchpad subscribers. Called by a VPS
     crontab entry (not a browser), authenticated with a shared secret rather
     than a user session — see the manual-deployment note for the cron entry."""
-    if not INTERNAL_JOBS_KEY or request.headers.get("X-Internal-Key") != INTERNAL_JOBS_KEY:
+    if not INTERNAL_JOBS_KEY or not hmac.compare_digest(request.headers.get("X-Internal-Key", ""), INTERNAL_JOBS_KEY):
         raise HTTPException(status_code=401, detail="Invalid internal key")
 
     plans = supabase.table('user_plans') \
@@ -1113,7 +1127,7 @@ def get_my_job_matches(user=Depends(get_current_user)):
 @app.get("/assessment/my-assessments")
 def get_my_assessments(user=Depends(get_current_user)):
     responses = supabase.table('assessment_responses') \
-        .select('id, full_name, country, completed, created_at') \
+        .select('id, full_name, country, completed, created_at, locale') \
         .eq('user_id', user.id) \
         .eq('completed', True) \
         .order('created_at', desc=True) \
@@ -1184,7 +1198,7 @@ def get_companies_suggestions(response_id: str, user=Depends(get_optional_user))
         .select('*') \
         .eq('response_id', response_id).execute()
     if not rows.data or not profile.data:
-        raise HTTPException(status_code=404, detail="No data found")
+        raise HTTPException(status_code=404, detail="No results found for this response")
     owner_user_id = profile.data.get('user_id')
     _assert_can_view(owner_user_id, user)
     tier = get_effective_tier(owner_user_id)

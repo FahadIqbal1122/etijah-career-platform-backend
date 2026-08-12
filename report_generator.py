@@ -6,12 +6,25 @@ WeasyPrint renders the HTML template; Gemini fills in all narrative content.
 import os
 import json
 import re
+import html as _html
 from datetime import datetime
-import google.generativeai as genai 
+import google.generativeai as genai
 from weasyprint import HTML
 from scoring_engine import build_framework_output, score_careers
 from coaching_pipeline import _gemini_embed
 from content_policy import is_appropriate, CULTURAL_GUARDRAIL
+
+def _escape_deep(value):
+    """Recursively HTML-escape every string in a dict/list, so user-supplied text
+    (name, assessment answers) and AI-generated narrative text (which could itself
+    be manipulated via prompt injection) can never inject markup into the report HTML."""
+    if isinstance(value, str):
+        return _html.escape(value)
+    if isinstance(value, dict):
+        return {k: _escape_deep(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_escape_deep(v) for v in value]
+    return value
 
 # ─── Static metadata ──────────────────────────────────────────────────────────
 
@@ -386,6 +399,11 @@ def _badge(level: str, locale: str = 'en') -> str:
 # ─── HTML report builder ───────────────────────────────────────────────────────
 
 def build_html_report(user_data: dict, summary: dict, raw_scores: list, ai: dict, careers: list, ai_impact: dict | None = None, locale: str = 'en', tier: str = 'launchpad') -> str:
+    # user_data/ai/ai_impact all carry user-supplied or AI-generated free text that could
+    # otherwise inject markup (or, via WeasyPrint's URL fetcher, trigger SSRF) into this HTML.
+    user_data  = _escape_deep(user_data)
+    ai         = _escape_deep(ai)
+    ai_impact  = _escape_deep(ai_impact) if ai_impact else ai_impact
     career_rec_cap = 5 if tier == 'free' else 8
     ai_impact_cap  = 2 if tier == 'free' else 5
     T = UI_TEXT.get(locale, UI_TEXT['en'])
@@ -1079,7 +1097,7 @@ def generate_pdf(
 
 # ─── Main orchestrator ─────────────────────────────────────────────────────────
 
-def create_report(response_id: str, supabase_client, tier: str = "launchpad") -> bytes:
+def create_report(response_id: str, supabase_client, tier: str = "launchpad", locale_override: str | None = None) -> bytes:
 
     profile = supabase_client.table('assessment_responses') \
         .select('full_name,email,age_bracket,current_stage,education_field,'
@@ -1094,7 +1112,9 @@ def create_report(response_id: str, supabase_client, tier: str = "launchpad") ->
     if not scores_row.data:
         raise ValueError(f"No scores found for {response_id}")
 
-    user_country = profile.data.get('country', '')
+    # Escape ILIKE wildcards in user-supplied country text so a submitted "%" or "_"
+    # can't widen the match to an arbitrary/wrong country_profiles row.
+    user_country = (profile.data.get('country') or '').replace('\\', '\\\\').replace('%', '\\%').replace('_', '\\_')
     country_row = supabase_client.table('country_profiles') \
         .select('*').ilike('country_name', user_country).limit(1).execute()
     country_profile = country_row.data[0] if country_row.data else None
@@ -1126,7 +1146,7 @@ def create_report(response_id: str, supabase_client, tier: str = "launchpad") ->
         semantic_scores = {}
     top_careers = score_careers(summary, profile.data, all_careers, semantic_scores)
 
-    locale = profile.data.get('locale') or 'en'
+    locale = locale_override or profile.data.get('locale') or 'en'
 
     ai_impact = profile.data.get('ai_impact_cache')
     if not ai_impact:
