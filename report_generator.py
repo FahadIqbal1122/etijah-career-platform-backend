@@ -1041,6 +1041,36 @@ def generate_ai_impact(user_data: dict, summary: dict, careers: list, locale: st
     raise ValueError(f"No JSON found in Gemini response: {text[:200]}")
   return json.loads(text[start:end+1])
 
+def translate_report_json(data: dict, target_locale: str = 'ar') -> dict:
+    """Translate a generated report JSON blob (ai_content or ai_impact output) into target_locale,
+    preserving structure/keys and fixed enums, without re-running the full generation prompt."""
+    genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
+    model = genai.GenerativeModel(
+        "gemini-2.5-flash",
+        generation_config={"response_mime_type": "application/json"}
+    )
+
+    prompt = (
+        "Translate the free-text string values in this JSON object into professional Modern Standard "
+        "Arabic (فصحى), in a register and word choice natural to a Saudi or Bahraini professional — "
+        "the tone a Gulf-based coach or business report would use. No Levantine/Egyptian colloquialisms.\n"
+        "Preserve the JSON structure and every key exactly as-is — translate only string values.\n"
+        "Do NOT translate: numbers, ai_risk_level values (must stay exactly low/medium/high), "
+        "match_score values, or any field that is a fixed code/enum rather than narrative text.\n"
+        "Return ONLY the translated JSON object, no markdown, no code fences.\n\n"
+        f"=== JSON TO TRANSLATE ===\n{json.dumps(data, ensure_ascii=False)}"
+    )
+
+    response = model.generate_content(prompt)
+    text = response.text.strip()
+    text = re.sub(r'^```[a-z]*\n?', '', text)
+    text = re.sub(r'\n?```$', '', text)
+    text = text.strip()
+    start, end = text.find('{'), text.rfind('}')
+    if start == -1 or end == -1:
+        raise ValueError(f"No JSON found in translation response: {text[:200]}")
+    return json.loads(text[start:end+1])
+
 # ─── PDF renderer ──────────────────────────────────────────────────────────────
 
 def generate_pdf(
@@ -1053,7 +1083,7 @@ def create_report(response_id: str, supabase_client, tier: str = "launchpad") ->
 
     profile = supabase_client.table('assessment_responses') \
         .select('full_name,email,age_bracket,current_stage,education_field,'
-                'sectors_of_interest,geographic_openness,why_here,country,ai_impact_cache,locale') \
+                'sectors_of_interest,geographic_openness,why_here,country,ai_impact_cache,ai_content_cache,locale') \
         .eq('id', response_id).single().execute()
     if not profile.data:
         raise ValueError(f"No assessment found for {response_id}")
@@ -1097,14 +1127,23 @@ def create_report(response_id: str, supabase_client, tier: str = "launchpad") ->
 
     locale = profile.data.get('locale') or 'en'
 
-    ai_impact = profile.data.get('ai_impact_cache') if locale == 'en' else None
+    ai_impact = profile.data.get('ai_impact_cache')
     if not ai_impact:
-        ai_impact = generate_ai_impact(profile.data, summary, top_careers[:5], locale)
-        if locale == 'en':
-            supabase_client.table('assessment_responses') \
-                .update({'ai_impact_cache': ai_impact}) \
-                .eq('id', response_id).execute()
+        ai_impact = generate_ai_impact(profile.data, summary, top_careers[:5], 'en')
+        supabase_client.table('assessment_responses') \
+            .update({'ai_impact_cache': ai_impact}) \
+            .eq('id', response_id).execute()
 
-    ai_content  = generate_ai_content(profile.data, summary, raw_scores, top_careers, country_profile, coaching_matches, locale)
+    ai_content = profile.data.get('ai_content_cache')
+    if not ai_content:
+        ai_content = generate_ai_content(profile.data, summary, raw_scores, top_careers, country_profile, coaching_matches, 'en')
+        supabase_client.table('assessment_responses') \
+            .update({'ai_content_cache': ai_content}) \
+            .eq('id', response_id).execute()
+
+    if locale == 'ar':
+        ai_impact  = translate_report_json(ai_impact, 'ar')
+        ai_content = translate_report_json(ai_content, 'ar')
+
     html       = build_html_report(profile.data, summary, raw_scores, ai_content, top_careers, ai_impact, locale, tier=tier)
     return generate_pdf(html)

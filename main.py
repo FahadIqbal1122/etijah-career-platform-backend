@@ -647,6 +647,32 @@ def get_course_recommendations(response_id: str, user=Depends(get_optional_user)
 
 JOB_LISTINGS_CACHE_TTL = timedelta(hours=24)
 
+# GCC currencies are pegged to USD — fixed rates, no live FX API needed
+CURRENCY_TO_USD = {
+    "SAR": 1 / 3.75,
+    "BHD": 1 / 0.376,
+    "AED": 1 / 3.6725,
+    "QAR": 1 / 3.64,
+    "KWD": 1 / 0.3075,
+    "OMR": 1 / 0.3845,
+    "USD": 1.0,
+}
+COUNTRY_DEFAULT_CURRENCY = {
+    "SA": "SAR", "BH": "BHD", "AE": "AED", "QA": "QAR", "KW": "KWD", "OM": "OMR",
+}
+
+def _select_all(query_builder, page_size: int = 1000):
+    """PostgREST caps unbounded selects at ~1000 rows — page through with .range() to get everything."""
+    rows = []
+    offset = 0
+    while True:
+        page = query_builder().range(offset, offset + page_size - 1).execute().data or []
+        rows.extend(page)
+        if len(page) < page_size:
+            break
+        offset += page_size
+    return rows
+
 MARKET_ROLE_CATEGORIES = [
     "software engineer", "data analyst", "project manager", "accountant",
     "financial analyst", "marketing manager", "HR manager", "civil engineer",
@@ -700,8 +726,8 @@ async def _run_market_fetch(week_start: str):
     if not mega_key and not jooble_key:
         return finish(insert_error="No job source API keys configured (JSEARCH_MEGA_KEY / JOOBLE_API_KEY)")
 
-    existing = supabase.table("job_market_snapshots").select("job_id").eq("fetched_week", week_start).execute()
-    seen_ids = {r["job_id"] for r in (existing.data or [])}
+    existing_rows = _select_all(lambda: supabase.table("job_market_snapshots").select("job_id").eq("fetched_week", week_start).order("id"))
+    seen_ids = {r["job_id"] for r in existing_rows}
 
     tasks = [(country, role) for country in MARKET_COUNTRIES for role in MARKET_ROLE_CATEGORIES]
     all_rows: list = []
@@ -820,10 +846,7 @@ def get_market_fetch_status(_=Depends(require_admin)):
 
 @app.get("/admin/market-analysis/trends")
 def get_market_trends(_=Depends(require_admin)):
-    rows = supabase.table("job_market_snapshots") \
-        .select("*") \
-        .order("fetched_week", desc=False) \
-        .execute().data or []
+    rows = _select_all(lambda: supabase.table("job_market_snapshots").select("*").order("fetched_week", desc=False).order("id"))
 
     # Demand per role/week/country
     demand: dict = {}
@@ -840,8 +863,11 @@ def get_market_trends(_=Depends(require_admin)):
         demand[key] = demand.get(key, 0) + 1
 
         if r.get("salary_min") or r.get("salary_max"):
-            salary.setdefault(key, [])
-            salary[key].extend(v for v in [r.get("salary_min"), r.get("salary_max")] if v)
+            currency = r.get("salary_currency") or COUNTRY_DEFAULT_CURRENCY.get(country)
+            rate = CURRENCY_TO_USD.get(currency)
+            if rate:
+                salary.setdefault(key, [])
+                salary[key].extend(v * rate for v in [r.get("salary_min"), r.get("salary_max")] if v)
 
         company = (r.get("company") or "").strip()
         if company:
@@ -881,7 +907,7 @@ def get_market_trends(_=Depends(require_admin)):
         "weeks": weeks,
         "roles": roles,
         "demand": [{"week": k[0], "country": k[1], "role": k[2], "count": v} for k, v in demand.items()],
-        "salary": [{"week": k[0], "country": k[1], "role": k[2], "avg_salary": round(sum(v)/len(v), 0)} for k, v in salary.items()],
+        "salary": [{"week": k[0], "country": k[1], "role": k[2], "avg_salary_usd": round(sum(v)/len(v), 0)} for k, v in salary.items()],
         "top_companies": top_companies,
         "top_titles_by_role": top_titles_by_role,
         "recent_jobs": recent,
