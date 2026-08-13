@@ -14,6 +14,12 @@ from scoring_engine import build_framework_output, score_careers
 from coaching_pipeline import _gemini_embed
 from content_policy import is_appropriate, CULTURAL_GUARDRAIL
 
+# Without a timeout, a bad/corrupted key or network blip on Gemini's side hangs
+# indefinitely instead of failing fast — which then trips a reverse-proxy
+# timeout upstream, surfacing as an opaque "Failed to fetch" on the frontend
+# for whichever report section happened to be waiting on it.
+GEMINI_TIMEOUT_S = 30
+
 def _escape_deep(value):
     """Recursively HTML-escape every string in a dict/list, so user-supplied text
     (name, assessment answers) and AI-generated narrative text (which could itself
@@ -343,7 +349,7 @@ def generate_ai_content(user_data: dict, summary: dict, raw_scores: list, career
         "Provide 6-8 career recommendations. Be specific, insightful, and empowering throughout."
     )
 
-    response = model.generate_content(prompt)
+    response = model.generate_content(prompt, request_options={"timeout": GEMINI_TIMEOUT_S})
     text = response.text.strip()
 
     # Strip markdown code fences if present
@@ -1048,7 +1054,7 @@ def generate_ai_impact(user_data: dict, summary: dict, careers: list, locale: st
     "Cover all 5 careers. Be specific and GCC-aware throughout."
   )
 
-  response = model.generate_content(prompt)
+  response = model.generate_content(prompt, request_options={"timeout": GEMINI_TIMEOUT_S})
   text     = response.text.strip()
   text     = re.sub(r'^```[a-z]*\n?', '', text)
   text     = re.sub(r'\n?```$', '', text)
@@ -1079,7 +1085,7 @@ def translate_report_json(data: dict, target_locale: str = 'ar') -> dict:
         f"=== JSON TO TRANSLATE ===\n{json.dumps(data, ensure_ascii=False)}"
     )
 
-    response = model.generate_content(prompt)
+    response = model.generate_content(prompt, request_options={"timeout": GEMINI_TIMEOUT_S})
     text = response.text.strip()
     text = re.sub(r'^```[a-z]*\n?', '', text)
     text = re.sub(r'\n?```$', '', text)
