@@ -125,6 +125,27 @@ def _is_test_mode_enabled() -> bool:
     _test_mode_cache["checked_at"] = now
     return enabled
 
+HOMEPAGE_MODE_KEY = "homepage_mode"
+_homepage_mode_cache: dict[str, Any] = {"value": "landing", "checked_at": None}
+_HOMEPAGE_MODE_CACHE_TTL = timedelta(seconds=10)
+
+def _get_homepage_mode() -> str:
+    """Admin-togglable flag (app_settings.homepage_mode) deciding which page
+    serves as the site root: the marketing landing page or the pre-launch
+    waitlist page. Cached briefly since it's read on every homepage request."""
+    now = datetime.now(timezone.utc)
+    if _homepage_mode_cache["checked_at"] and now - _homepage_mode_cache["checked_at"] < _HOMEPAGE_MODE_CACHE_TTL:
+        return _homepage_mode_cache["value"]
+    try:
+        row = supabase.table('app_settings').select('value').eq('key', HOMEPAGE_MODE_KEY).execute()
+        mode = row.data[0]['value'] if row.data and row.data[0]['value'] in ('landing', 'waitlist') else 'landing'
+    except Exception as e:
+        print("Homepage mode lookup failed, defaulting to landing:", e)
+        mode = 'landing'
+    _homepage_mode_cache["value"] = mode
+    _homepage_mode_cache["checked_at"] = now
+    return mode
+
 def get_effective_tier(user_id: str | None) -> str:
     """free | pathfinder | launchpad, computed from user_plans (not stored directly)."""
     if _is_test_mode_enabled():
@@ -562,6 +583,36 @@ def set_test_mode(body: TestModeRequest, _=Depends(require_admin)):
     _test_mode_cache["value"] = body.enabled
     _test_mode_cache["checked_at"] = datetime.now(timezone.utc)
     return {"enabled": body.enabled}
+
+class HomepageModeRequest(BaseModel):
+    mode: str
+
+    @property
+    def is_valid(self) -> bool:
+        return self.mode in ("landing", "waitlist")
+
+@app.get("/homepage-mode")
+def get_homepage_mode_public():
+    """Unauthenticated — read by the frontend root page on every request to decide
+    whether to render the marketing landing page or the pre-launch waitlist page."""
+    return {"mode": _get_homepage_mode()}
+
+@app.get("/admin/homepage-mode")
+def get_homepage_mode_admin(_=Depends(require_admin)):
+    return {"mode": _get_homepage_mode()}
+
+@app.post("/admin/homepage-mode")
+def set_homepage_mode(body: HomepageModeRequest, _=Depends(require_admin)):
+    if not body.is_valid:
+        raise HTTPException(status_code=400, detail="mode must be 'landing' or 'waitlist'")
+    supabase.table('app_settings').upsert({
+        'key': HOMEPAGE_MODE_KEY,
+        'value': body.mode,
+        'updated_at': datetime.now(timezone.utc).isoformat(),
+    }, on_conflict='key').execute()
+    _homepage_mode_cache["value"] = body.mode
+    _homepage_mode_cache["checked_at"] = datetime.now(timezone.utc)
+    return {"mode": body.mode}
 
 @app.get("/admin/country-profiles")
 def get_country_profiles(_=Depends(require_admin)):

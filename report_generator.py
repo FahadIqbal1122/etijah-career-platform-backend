@@ -1148,19 +1148,22 @@ def create_report(response_id: str, supabase_client, tier: str = "launchpad", lo
 
     locale = locale_override or profile.data.get('locale') or 'en'
 
+    # Each write below is conditioned on the column still being null, so if two requests
+    # race for the same response_id and both generate a value, the second write can't
+    # clobber whatever the first one already committed — it just no-ops instead.
     ai_impact = profile.data.get('ai_impact_cache')
     if not ai_impact:
         ai_impact = generate_ai_impact(profile.data, summary, top_careers[:5], 'en')
         supabase_client.table('assessment_responses') \
             .update({'ai_impact_cache': ai_impact}) \
-            .eq('id', response_id).execute()
+            .eq('id', response_id).is_('ai_impact_cache', 'null').execute()
 
     ai_content = profile.data.get('ai_content_cache')
     if not ai_content:
         ai_content = generate_ai_content(profile.data, summary, raw_scores, top_careers, country_profile, coaching_matches, 'en')
         supabase_client.table('assessment_responses') \
             .update({'ai_content_cache': ai_content}) \
-            .eq('id', response_id).execute()
+            .eq('id', response_id).is_('ai_content_cache', 'null').execute()
 
     if locale == 'ar':
         ai_impact_ar = profile.data.get('ai_impact_cache_ar')
@@ -1168,14 +1171,14 @@ def create_report(response_id: str, supabase_client, tier: str = "launchpad", lo
             ai_impact_ar = translate_report_json(ai_impact, 'ar')
             supabase_client.table('assessment_responses') \
                 .update({'ai_impact_cache_ar': ai_impact_ar}) \
-                .eq('id', response_id).execute()
+                .eq('id', response_id).is_('ai_impact_cache_ar', 'null').execute()
 
         ai_content_ar = profile.data.get('ai_content_cache_ar')
         if not ai_content_ar:
             ai_content_ar = translate_report_json(ai_content, 'ar')
             supabase_client.table('assessment_responses') \
                 .update({'ai_content_cache_ar': ai_content_ar}) \
-                .eq('id', response_id).execute()
+                .eq('id', response_id).is_('ai_content_cache_ar', 'null').execute()
 
         ai_impact, ai_content = ai_impact_ar, ai_content_ar
 
