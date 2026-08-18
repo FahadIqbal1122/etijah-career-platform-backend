@@ -11,6 +11,7 @@ from pydantic import BaseModel, EmailStr, Field
 from typing import Any
 import io
 from datetime import datetime, timezone, timedelta
+from collections import Counter
 from fastapi.responses import StreamingResponse
 from report_generator import create_report
 from smtp_service import send_report_email
@@ -234,6 +235,14 @@ class WaitlistRequest(BaseModel):
     phone: str | None = None
     status: str | None = None
     age: str | None = None
+    locale: str | None = None
+    source: str | None = None
+
+WAITLIST_EVENT_TYPES = {"page_view", "click"}
+
+class WaitlistEventRequest(BaseModel):
+    event_type: str
+    label: str | None = None
     locale: str | None = None
     source: str | None = None
 
@@ -473,6 +482,18 @@ def get_waitlist(_=Depends(require_admin)):
         .execute()
     return data.data or []
 
+@app.post("/waitlist/events")
+def track_waitlist_event(body: WaitlistEventRequest):
+    """Best-effort page-view/click tracking for the waitlist page — never
+    fails the caller, since a dropped analytics event shouldn't break the page."""
+    if body.event_type not in WAITLIST_EVENT_TYPES:
+        raise HTTPException(status_code=400, detail="Invalid event_type")
+    try:
+        supabase.table('waitlist_events').insert(body.model_dump()).execute()
+    except Exception as e:
+        print("Failed to record waitlist event:", e)
+    return {"status": "ok"}
+
 def _count(table: str, **filters) -> int:
     query = supabase.table(table).select('id', count='exact')
     for field, value in filters.items():
@@ -503,6 +524,23 @@ def get_dashboard_stats(_=Depends(require_admin)):
         "paid_plans": supabase.table('user_plans').select('user_id', count='exact').execute().count or 0,
         "courses": _count('courses'),
         "country_profiles": supabase.table('country_profiles').select('country_code', count='exact').execute().count or 0,
+        "waitlist_page": _get_waitlist_page_stats(),
+    }
+
+def _get_waitlist_page_stats() -> dict:
+    try:
+        page_views = _count('waitlist_events', event_type='page_view')
+        click_rows = supabase.table('waitlist_events').select('label').eq('event_type', 'click').execute().data or []
+    except Exception as e:
+        # waitlist_events migration may not be applied yet — don't take down the
+        # whole dashboard over one optional widget.
+        print("waitlist_events lookup failed:", e)
+        return {"page_views": 0, "clicks": 0, "top_clicks": []}
+    click_counts = Counter((r.get('label') or 'unknown') for r in click_rows)
+    return {
+        "page_views": page_views,
+        "clicks": len(click_rows),
+        "top_clicks": [{"label": label, "count": count} for label, count in click_counts.most_common(10)],
     }
 
 @app.get("/assessment/{response_id}/career-suggestions")
@@ -829,9 +867,15 @@ def _get_week_start() -> str:
 @app.post("/admin/market-analysis/fetch")
 async def fetch_market_analysis(background_tasks: BackgroundTasks, _=Depends(require_admin)):
     week_start = _get_week_start()
-    existing = supabase.table("market_fetch_status").select("status").eq("week", week_start).execute()
+    existing = supabase.table("market_fetch_status").select("status,started_at").eq("week", week_start).execute()
     if existing.data and existing.data[0]["status"] == "running":
-        return {"week": week_start, "status": "running"}
+        started_at = existing.data[0].get("started_at")
+        stale = True
+        if started_at:
+            started_dt = datetime.fromisoformat(started_at.replace("Z", "+00:00"))
+            stale = (datetime.now(timezone.utc) - started_dt) > timedelta(minutes=20)
+        if not stale:
+            return {"week": week_start, "status": "running"}
 
     supabase.table("market_fetch_status").upsert({
         "week": week_start, "status": "running", "inserted": 0, "errors": 0,
@@ -856,7 +900,11 @@ async def _run_market_fetch(week_start: str):
     if not mega_key and not jooble_key:
         return finish(insert_error="No job source API keys configured (JSEARCH_MEGA_KEY / JOOBLE_API_KEY)")
 
-    existing_rows = _select_all(lambda: supabase.table("job_market_snapshots").select("job_id").eq("fetched_week", week_start).order("id"))
+    try:
+        existing_rows = _select_all(lambda: supabase.table("job_market_snapshots").select("job_id").eq("fetched_week", week_start).order("id"))
+    except Exception as e:
+        print(f"Market fetch aborted before start: {type(e).__name__}: {e!r}")
+        return finish(insert_error=f"{type(e).__name__}: {e}")
     seen_ids = {r["job_id"] for r in existing_rows}
 
     tasks = [(country, role) for country in MARKET_COUNTRIES for role in MARKET_ROLE_CATEGORIES]
@@ -928,42 +976,47 @@ async def _run_market_fetch(week_start: str):
             print(f"Jooble error [{country['code']}][{role}]: {type(e).__name__}: {e!r}")
             return None
 
-    async with httpx.AsyncClient() as client:
-        # Small batches with a pause between them to stay under free-tier rate limits
-        for i in range(0, len(tasks), 3):
-            batch = tasks[i:i + 3]
-            results = await asyncio.gather(*[
-                asyncio.gather(fetch_jsearch(client, c, r), fetch_jooble(client, c, r))
-                for c, r in batch
-            ])
-            if i + 3 < len(tasks):
-                await asyncio.sleep(1)
-            for (country, role), (jsearch_jobs, jooble_jobs) in zip(batch, results):
-                for jobs in (jsearch_jobs, jooble_jobs):
-                    if jobs is None:
-                        errors += 1
-                        continue
-                    for job in jobs:
-                        if job["job_id"] in seen_ids:
+    fatal_error = None
+    try:
+        async with httpx.AsyncClient() as client:
+            # Small batches with a pause between them to stay under free-tier rate limits
+            for i in range(0, len(tasks), 3):
+                batch = tasks[i:i + 3]
+                results = await asyncio.gather(*[
+                    asyncio.gather(fetch_jsearch(client, c, r), fetch_jooble(client, c, r))
+                    for c, r in batch
+                ])
+                if i + 3 < len(tasks):
+                    await asyncio.sleep(1)
+                for (country, role), (jsearch_jobs, jooble_jobs) in zip(batch, results):
+                    for jobs in (jsearch_jobs, jooble_jobs):
+                        if jobs is None:
+                            errors += 1
                             continue
-                        seen_ids.add(job["job_id"])
-                        all_rows.append({
-                            "fetched_week": week_start,
-                            "country_code": country["code"],
-                            "country_name": country["name"],
-                            "role_category": role,
-                            **job,
-                        })
+                        for job in jobs:
+                            if job["job_id"] in seen_ids:
+                                continue
+                            seen_ids.add(job["job_id"])
+                            all_rows.append({
+                                "fetched_week": week_start,
+                                "country_code": country["code"],
+                                "country_name": country["name"],
+                                "role_category": role,
+                                **job,
+                            })
+    except Exception as e:
+        print(f"Market fetch loop crashed: {type(e).__name__}: {e!r}")
+        fatal_error = f"{type(e).__name__}: {e}"
 
     inserted = 0
-    insert_error = None
+    insert_error = fatal_error
     if all_rows:
         try:
             supabase.table("job_market_snapshots").upsert(all_rows, on_conflict="fetched_week,job_id").execute()
             inserted = len(all_rows)
         except Exception as e:
             print(f"Market snapshot insert failed: {e}")
-            insert_error = str(e)
+            insert_error = insert_error or str(e)
 
     finish(inserted=inserted, errors=errors, insert_error=insert_error)
 
