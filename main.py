@@ -13,6 +13,7 @@ import io
 from datetime import datetime, timezone, timedelta
 from fastapi.responses import StreamingResponse
 from report_generator import create_report
+from smtp_service import send_report_email
 import httpx, hmac, hashlib, json
 from coaching_methodology import METHODOLOGY_DOC
 from coaching_pipeline import chunk_transcript, embed_and_store_chunks, client, embed_country_profile, sync_country_profile_embedding, sync_career_embedding, _gemini_embed
@@ -472,6 +473,38 @@ def get_waitlist(_=Depends(require_admin)):
         .execute()
     return data.data or []
 
+def _count(table: str, **filters) -> int:
+    query = supabase.table(table).select('id', count='exact')
+    for field, value in filters.items():
+        query = query.eq(field, value)
+    return query.execute().count or 0
+
+def _count_since(table: str, since: str) -> int:
+    return supabase.table(table).select('id', count='exact').gte('created_at', since).execute().count or 0
+
+@app.get("/admin/dashboard-stats")
+def get_dashboard_stats(_=Depends(require_admin)):
+    now = datetime.now(timezone.utc)
+    today_start = now.replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
+    week_start = (now - timedelta(days=7)).isoformat()
+
+    return {
+        "waitlist_signups": {
+            "total": _count('waitlist_signups'),
+            "today": _count_since('waitlist_signups', today_start),
+            "this_week": _count_since('waitlist_signups', week_start),
+        },
+        "assessment_responses": {
+            "total": _count('assessment_responses'),
+            "completed": _count('assessment_responses', completed=True),
+        },
+        "feedback_responses": _count('feedback_responses'),
+        "applications": _count('applications'),
+        "paid_plans": _count('user_plans'),
+        "courses": _count('courses'),
+        "country_profiles": supabase.table('country_profiles').select('country_code', count='exact').execute().count or 0,
+    }
+
 @app.get("/assessment/{response_id}/career-suggestions")
 def get_career_suggestions(response_id: str, user=Depends(get_optional_user)):
     rows = supabase.table('assessment_results') \
@@ -565,6 +598,40 @@ def get_report(response_id: str, locale: str | None = None, user=Depends(get_opt
         media_type="application/pdf",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
+
+@app.post("/assessment/{response_id}/report/email")
+def email_report(response_id: str, background_tasks: BackgroundTasks, locale: str | None = None, user=Depends(get_optional_user)):
+    owner_row = supabase.table('assessment_responses').select('user_id, email, full_name').eq('id', response_id).single().execute()
+    if not owner_row.data:
+        raise HTTPException(status_code=404, detail="No results found for this response")
+    owner_user_id = owner_row.data.get('user_id')
+    _assert_can_view(owner_user_id, user)
+    tier = get_effective_tier(owner_user_id)
+
+    if locale not in (None, 'en', 'ar'):
+        raise HTTPException(status_code=400, detail="locale must be 'en' or 'ar'")
+
+    to_email = owner_row.data.get('email')
+    if not to_email:
+        raise HTTPException(status_code=400, detail="No email address on file for this response")
+
+    try:
+        pdf_bytes = create_report(response_id, supabase, tier=tier, locale_override=locale)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Report generation failed: {str(e)}")
+
+    filename = f"career-report-{response_id[:8]}{'-' + locale if locale else ''}.pdf"
+    background_tasks.add_task(
+        send_report_email,
+        to_email,
+        owner_row.data.get('full_name'),
+        pdf_bytes,
+        filename,
+        locale or 'en',
+    )
+    return {"status": "queued", "email": to_email}
 
 class TestModeRequest(BaseModel):
     enabled: bool
