@@ -500,7 +500,7 @@ def get_dashboard_stats(_=Depends(require_admin)):
         },
         "feedback_responses": _count('feedback_responses'),
         "applications": _count('applications'),
-        "paid_plans": _count('user_plans'),
+        "paid_plans": supabase.table('user_plans').select('user_id', count='exact').execute().count or 0,
         "courses": _count('courses'),
         "country_profiles": supabase.table('country_profiles').select('country_code', count='exact').execute().count or 0,
     }
