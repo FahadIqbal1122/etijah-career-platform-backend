@@ -56,6 +56,7 @@ SHOP_BASE_URL = os.getenv("SHOP_BASE_URL", "https://shop.etijahcoaching.com")
 BILLING_RETURN_URL = "https://myetijahi.com/account/billing"
 
 INTERNAL_JOBS_KEY = os.getenv("INTERNAL_JOBS_KEY")
+DASHBOARD_SHARE_TOKEN = os.getenv("DASHBOARD_SHARE_TOKEN")
 
 PLAN_CATALOG = {
     "pathfinder":        {"name": "Pathfinder",        "amount": 149, "currency": "SAR", "interval": "lifetime", "extension_days": None},
@@ -503,8 +504,7 @@ def _count(table: str, **filters) -> int:
 def _count_since(table: str, since: str) -> int:
     return supabase.table(table).select('id', count='exact').gte('created_at', since).execute().count or 0
 
-@app.get("/admin/dashboard-stats")
-def get_dashboard_stats(_=Depends(require_admin)):
+def _build_dashboard_stats() -> dict:
     now = datetime.now(timezone.utc)
     today_start = now.replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
     week_start = (now - timedelta(days=7)).isoformat()
@@ -526,6 +526,26 @@ def get_dashboard_stats(_=Depends(require_admin)):
         "country_profiles": supabase.table('country_profiles').select('country_code', count='exact').execute().count or 0,
         "waitlist_page": _get_waitlist_page_stats(),
     }
+
+@app.get("/admin/dashboard-stats")
+def get_dashboard_stats(_=Depends(require_admin)):
+    return _build_dashboard_stats()
+
+@app.get("/admin/dashboard-share-link")
+def get_dashboard_share_link(_=Depends(require_admin)):
+    if not DASHBOARD_SHARE_TOKEN:
+        raise HTTPException(status_code=404, detail="Share link not configured")
+    return {"token": DASHBOARD_SHARE_TOKEN}
+
+@app.get("/public/dashboard-stats")
+def get_public_dashboard_stats(token: str):
+    """Unauthenticated read-only dashboard for sharing via a long, unguessable
+    link — no login, gated only by DASHBOARD_SHARE_TOKEN matching the URL token.
+    404s (not 401/403) on a bad token so a wrong guess doesn't confirm the
+    endpoint exists."""
+    if not DASHBOARD_SHARE_TOKEN or not hmac.compare_digest(token, DASHBOARD_SHARE_TOKEN):
+        raise HTTPException(status_code=404, detail="Not found")
+    return _build_dashboard_stats()
 
 def _get_waitlist_page_stats() -> dict:
     try:
