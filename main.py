@@ -239,6 +239,15 @@ class WaitlistRequest(BaseModel):
     locale: str | None = None
     source: str | None = None
 
+class PartnerRequest(BaseModel):
+    company_name: str
+    contact_name: str
+    email: EmailStr
+    phone: str | None = None
+    message: str | None = None
+    locale: str | None = None
+    source: str | None = None
+
 WAITLIST_EVENT_TYPES = {"page_view", "click"}
 
 class WaitlistEventRequest(BaseModel):
@@ -478,6 +487,21 @@ def join_waitlist(body: WaitlistRequest):
 @app.get("/admin/waitlist")
 def get_waitlist(_=Depends(require_admin)):
     data = supabase.table('waitlist_signups') \
+        .select('*') \
+        .order('created_at', desc=True) \
+        .execute()
+    return data.data or []
+
+@app.post("/partners")
+def submit_partner_inquiry(body: PartnerRequest):
+    result = supabase.table('partner_inquiries').insert(body.model_dump()).execute()
+    if not result.data:
+        raise HTTPException(status_code=500, detail="Failed to submit partner inquiry")
+    return {"status": "submitted", "id": result.data[0]["id"]}
+
+@app.get("/admin/partners")
+def get_partner_inquiries(_=Depends(require_admin)):
+    data = supabase.table('partner_inquiries') \
         .select('*') \
         .order('created_at', desc=True) \
         .execute()
