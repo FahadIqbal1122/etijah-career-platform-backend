@@ -549,7 +549,8 @@ def _build_dashboard_stats() -> dict:
         "courses": _count('courses'),
         "country_profiles": supabase.table('country_profiles').select('country_code', count='exact').execute().count or 0,
         "waitlist_page": _get_waitlist_page_stats(),
-        "waitlist_age_breakdown": _get_waitlist_age_breakdown(),
+        "waitlist_age_breakdown": _get_waitlist_breakdown('age'),
+        "waitlist_country_breakdown": _get_waitlist_breakdown('country'),
     }
 
 @app.get("/admin/dashboard-stats")
@@ -572,12 +573,12 @@ def get_public_dashboard_stats(token: str):
         raise HTTPException(status_code=404, detail="Not found")
     return _build_dashboard_stats()
 
-def _get_waitlist_age_breakdown() -> list[dict]:
-    rows = _select_all(lambda: supabase.table('waitlist_signups').select('age'))
+def _get_waitlist_breakdown(column: str) -> list[dict]:
+    rows = _select_all(lambda: supabase.table('waitlist_signups').select(column))
     total = len(rows)
     if total == 0:
         return []
-    counts = Counter((r.get('age') or 'Unknown') for r in rows)
+    counts = Counter((r.get(column) or 'Unknown') for r in rows)
     return [
         {"label": label, "count": count, "pct": round(count / total * 100, 1)}
         for label, count in counts.most_common()
