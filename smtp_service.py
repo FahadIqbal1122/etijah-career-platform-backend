@@ -53,23 +53,41 @@ def send_email(to, subject, html_body, text_body=None, attachments=None, reply_t
             server.send_message(msg)
 
 
-def send_report_email(to_email, to_name, pdf_bytes, filename, locale="en"):
+DEFAULT_REPORT_TEMPLATE = {
+    "subject_en": "Your Career Report is Ready",
+    "subject_ar": "تقريرك المهني جاهز",
+    "body_html_en": (
+        '<div style="font-family: Arial, sans-serif; font-size: 15px; color: #1f2937; line-height: 1.6;">'
+        "<p>Hi {{full_name}},</p>"
+        "<p>Your full career report is ready and attached to this email as a PDF.</p>"
+        '<p style="margin-top: 24px; color: #6b7280; font-size: 13px;">Etijah Career Platform</p>'
+        "</div>"
+    ),
+    "body_html_ar": (
+        '<div dir="rtl" style="font-family: Arial, sans-serif; font-size: 15px; color: #1f2937; line-height: 1.6;">'
+        "<p>مرحباً {{full_name}}،</p>"
+        "<p>تقريرك المهني الكامل جاهز الآن ومرفق بهذه الرسالة بصيغة PDF.</p>"
+        '<p style="margin-top: 24px; color: #6b7280; font-size: 13px;">Etijah Career Platform</p>'
+        "</div>"
+    ),
+}
+
+
+def render_template(template_row, variables=None, locale="en"):
+    """Fills {{var}} placeholders in a template row's subject/body for the given locale."""
     is_ar = locale == "ar"
-    greeting = f"مرحباً {to_name}،" if (is_ar and to_name) else (f"Hi {to_name}," if to_name else "Hi,")
-    subject = "تقريرك المهني جاهز" if is_ar else "Your Career Report is Ready"
-    body_line = (
-        "تقريرك المهني الكامل جاهز الآن ومرفق بهذه الرسالة بصيغة PDF."
-        if is_ar else
-        "Your full career report is ready and attached to this email as a PDF."
-    )
-    dir_attr = 'dir="rtl"' if is_ar else ""
-    html_body = f"""
-    <div {dir_attr} style="font-family: Arial, sans-serif; font-size: 15px; color: #1f2937; line-height: 1.6;">
-      <p>{greeting}</p>
-      <p>{body_line}</p>
-      <p style="margin-top: 24px; color: #6b7280; font-size: 13px;">Etijah Career Platform</p>
-    </div>
-    """
+    subject = (template_row.get("subject_ar") if is_ar else template_row.get("subject_en")) or template_row.get("subject_en") or ""
+    html_body = (template_row.get("body_html_ar") if is_ar else template_row.get("body_html_en")) or template_row.get("body_html_en") or ""
+    for key, value in (variables or {}).items():
+        token = "{{" + key + "}}"
+        text = "" if value is None else str(value)
+        subject = subject.replace(token, text)
+        html_body = html_body.replace(token, text)
+    return subject, html_body
+
+
+def send_report_email(to_email, to_name, pdf_bytes, filename, locale="en", template_row=None):
+    subject, html_body = render_template(template_row or DEFAULT_REPORT_TEMPLATE, {"full_name": to_name}, locale)
     send_email(
         to=to_email,
         subject=subject,

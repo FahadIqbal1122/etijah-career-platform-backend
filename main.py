@@ -717,6 +717,7 @@ def email_report(response_id: str, background_tasks: BackgroundTasks, locale: st
         raise HTTPException(status_code=500, detail=f"Report generation failed: {str(e)}")
 
     filename = f"career-report-{response_id[:8]}{'-' + locale if locale else ''}.pdf"
+    template_row = supabase.table('email_templates').select('*').eq('key', 'report_email').limit(1).execute()
     background_tasks.add_task(
         send_report_email,
         to_email,
@@ -724,8 +725,21 @@ def email_report(response_id: str, background_tasks: BackgroundTasks, locale: st
         pdf_bytes,
         filename,
         locale or 'en',
+        template_row.data[0] if template_row.data else None,
     )
     return {"status": "queued", "email": to_email}
+
+@app.get("/admin/email-templates")
+def get_email_templates(_=Depends(require_admin)):
+    data = supabase.table('email_templates').select('*').order('name').execute()
+    return data.data or []
+
+@app.put("/admin/email-templates/{key}")
+def update_email_template(key: str, body: dict, _=Depends(require_admin)):
+    result = supabase.table('email_templates').update(body).eq('key', key).execute()
+    if not result.data:
+        raise HTTPException(status_code=404, detail="Template not found")
+    return result.data[0]
 
 class TestModeRequest(BaseModel):
     enabled: bool
