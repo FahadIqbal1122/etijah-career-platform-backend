@@ -212,6 +212,28 @@ ARABIC_LANGUAGE_INSTRUCTION = (
     "free-text narrative fields.\n\n"
 )
 
+def _generate_json(model, prompt: str, retries: int = 1) -> dict:
+    """Gemini's strict JSON mode is reliable but not perfect — an occasional stray
+    unescaped character or truncated response yields invalid JSON. Regenerating is
+    far more likely to fix it than any repair heuristic, so retry once before
+    letting json.JSONDecodeError bubble up."""
+    last_err: Exception | None = None
+    for _ in range(retries + 1):
+        response = model.generate_content(prompt, request_options={"timeout": GEMINI_TIMEOUT_S})
+        text = response.text.strip()
+        text = re.sub(r'^```[a-z]*\n?', '', text)
+        text = re.sub(r'\n?```$', '', text)
+        text = text.strip()
+        start, end = text.find('{'), text.rfind('}')
+        if start == -1 or end == -1:
+            last_err = ValueError(f"No JSON object found in Gemini response: {text[:200]}")
+            continue
+        try:
+            return json.loads(text[start:end + 1])
+        except json.JSONDecodeError as e:
+            last_err = e
+    raise last_err
+
 def generate_ai_content(user_data: dict, summary: dict, raw_scores: list, careers: list, country_profile: dict | None = None, coaching_chunks: list[dict] | None = None, locale: str = 'en') -> dict:
     genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
     model = genai.GenerativeModel(
@@ -349,22 +371,7 @@ def generate_ai_content(user_data: dict, summary: dict, raw_scores: list, career
         "Provide 6-8 career recommendations. Be specific, insightful, and empowering throughout."
     )
 
-    response = model.generate_content(prompt, request_options={"timeout": GEMINI_TIMEOUT_S})
-    text = response.text.strip()
-
-    # Strip markdown code fences if present
-    text = re.sub(r'^```[a-z]*\n?', '', text)
-    text = re.sub(r'\n?```$', '', text)
-    text = text.strip() 
-
-    # Extract just the JSON object in case there's surrounding text
-    start = text.find('{')
-    end   = text.rfind('}')
-    if start == -1 or end == -1:  
-      raise ValueError(f"No JSON object found in Gemini response: {text[:200]}")
-    text = text[start:end+1]
-  
-    return json.loads(text)
+    return _generate_json(model, prompt)
 
 # ─── HTML helpers ──────────────────────────────────────────────────────────────
 
@@ -1054,16 +1061,7 @@ def generate_ai_impact(user_data: dict, summary: dict, careers: list, locale: st
     "Cover all 5 careers. Be specific and GCC-aware throughout."
   )
 
-  response = model.generate_content(prompt, request_options={"timeout": GEMINI_TIMEOUT_S})
-  text     = response.text.strip()
-  text     = re.sub(r'^```[a-z]*\n?', '', text)
-  text     = re.sub(r'\n?```$', '', text)
-  text     = text.strip()
-  start    = text.find('{')
-  end      = text.rfind('}')
-  if start == -1 or end == -1:
-    raise ValueError(f"No JSON found in Gemini response: {text[:200]}")
-  return json.loads(text[start:end+1])
+  return _generate_json(model, prompt)
 
 def translate_report_json(data: dict, target_locale: str = 'ar') -> dict:
     """Translate a generated report JSON blob (ai_content or ai_impact output) into target_locale,
@@ -1085,15 +1083,7 @@ def translate_report_json(data: dict, target_locale: str = 'ar') -> dict:
         f"=== JSON TO TRANSLATE ===\n{json.dumps(data, ensure_ascii=False)}"
     )
 
-    response = model.generate_content(prompt, request_options={"timeout": GEMINI_TIMEOUT_S})
-    text = response.text.strip()
-    text = re.sub(r'^```[a-z]*\n?', '', text)
-    text = re.sub(r'\n?```$', '', text)
-    text = text.strip()
-    start, end = text.find('{'), text.rfind('}')
-    if start == -1 or end == -1:
-        raise ValueError(f"No JSON found in translation response: {text[:200]}")
-    return json.loads(text[start:end+1])
+    return _generate_json(model, prompt)
 
 # ─── PDF renderer ──────────────────────────────────────────────────────────────
 

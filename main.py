@@ -691,6 +691,10 @@ def get_report(response_id: str, locale: str | None = None, user=Depends(get_opt
 
     try:
         pdf_bytes = create_report(response_id, supabase, tier=tier, locale_override=locale)
+    except json.JSONDecodeError:
+        # json.JSONDecodeError subclasses ValueError — must be caught before it so an
+        # occasional malformed Gemini response isn't mistaken for the "not found" case below.
+        raise HTTPException(status_code=502, detail="AI report generation failed, please try again")
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
@@ -721,6 +725,10 @@ def email_report(response_id: str, background_tasks: BackgroundTasks, locale: st
 
     try:
         pdf_bytes = create_report(response_id, supabase, tier=tier, locale_override=locale)
+    except json.JSONDecodeError:
+        # json.JSONDecodeError subclasses ValueError — must be caught before it so an
+        # occasional malformed Gemini response isn't mistaken for the "not found" case below.
+        raise HTTPException(status_code=502, detail="AI report generation failed, please try again")
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
