@@ -92,7 +92,16 @@ def require_admin(user=Depends(get_current_user)):
     return user
 
 def _assert_can_view(owner_user_id: str | None, user):
-    if owner_user_id and (not user or (user.id != owner_user_id and (user.app_metadata or {}).get("role") != "admin")):
+    if not owner_user_id:
+        return
+    if not user:
+        # No credentials at all — most commonly the frontend firing this call
+        # before Supabase has finished hydrating a fresh session (right after
+        # a redirect from submit/login). 401 lets the frontend's existing
+        # retry-on-401 logic recover once the token is attached, unlike 404
+        # which it treats as a genuine "doesn't exist" and never retries.
+        raise HTTPException(status_code=401, detail="Sign in to view this response")
+    if user.id != owner_user_id and (user.app_metadata or {}).get("role") != "admin":
         raise HTTPException(status_code=404, detail="No results found for this response")
 
 def _assert_can_force_refresh(owner_user_id: str | None, user):
