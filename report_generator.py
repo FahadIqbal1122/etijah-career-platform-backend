@@ -10,7 +10,7 @@ import html as _html
 from datetime import datetime
 import google.generativeai as genai
 from weasyprint import HTML
-from scoring_engine import build_framework_output, score_careers
+from scoring_engine import build_framework_output, score_careers, COUNTRY_CODE_MAP
 from coaching_pipeline import _gemini_embed
 from content_policy import is_appropriate, CULTURAL_GUARDRAIL
 
@@ -137,7 +137,10 @@ UI_TEXT = {
         'sec01': 'Your Career Profile', 'sec02': 'Career Personality', 'sec03': 'Personality Traits',
         'sec04': 'Core Values', 'sec05': 'Strengths Profile', 'sec06': 'Work Style & Resilience',
         'sec07': 'Entrepreneurial Profile', 'sec08': 'Career Pathways',
-        'sec09': 'AI Impact & Future-Proofing', 'sec10': 'Your 90-Day Action Plan',
+        'sec09': 'AI Impact & Future-Proofing',
+        'sec_jobs': 'Job Listings', 'sec_companies': 'Companies to Target', 'sec_courses': 'Recommended Courses',
+        'sec_action_plan': 'Your 90-Day Action Plan',
+        'matched_to': 'Matched to', 'government': 'Government',
         'exec_summary': 'Executive Summary',
         'riasec_code_stat': 'RIASEC Code', 'primary_type_stat': 'Primary Type',
         'top_value_stat': 'Top Value', 'top_strength_stat': 'Top Strength',
@@ -169,7 +172,10 @@ UI_TEXT = {
         'sec01': 'ملفك المهني', 'sec02': 'شخصيتك المهنية', 'sec03': 'سمات الشخصية',
         'sec04': 'القيم الجوهرية', 'sec05': 'ملف نقاط القوة', 'sec06': 'أسلوب العمل والمرونة',
         'sec07': 'الملف الريادي', 'sec08': 'المسارات المهنية',
-        'sec09': 'تأثير الذكاء الاصطناعي واستشراف المستقبل', 'sec10': 'خطة عملك لمدة 90 يوماً',
+        'sec09': 'تأثير الذكاء الاصطناعي واستشراف المستقبل',
+        'sec_jobs': 'فرص وظيفية', 'sec_companies': 'شركات مستهدفة', 'sec_courses': 'دورات موصى بها',
+        'sec_action_plan': 'خطة عملك لمدة 90 يوماً',
+        'matched_to': 'مطابقة لـ', 'government': 'حكومي',
         'exec_summary': 'الملخص التنفيذي',
         'riasec_code_stat': 'رمز RIASEC', 'primary_type_stat': 'النمط الأساسي',
         'top_value_stat': 'القيمة الأولى', 'top_strength_stat': 'أبرز نقاط القوة',
@@ -375,7 +381,7 @@ def generate_ai_content(user_data: dict, summary: dict, raw_scores: list, career
 
 # ─── HTML helpers ──────────────────────────────────────────────────────────────
 
-def _bar(score: float, color: str = "#c9a84c") -> str:
+def _bar(score: float, color: str = "#00c9a7") -> str:
     pct = min(100, max(0, float(score)))
     return (
         f'<div class="bar-track">'
@@ -411,12 +417,18 @@ def _badge(level: str, locale: str = 'en') -> str:
 
 # ─── HTML report builder ───────────────────────────────────────────────────────
 
-def build_html_report(user_data: dict, summary: dict, raw_scores: list, ai: dict, careers: list, ai_impact: dict | None = None, locale: str = 'en', tier: str = 'launchpad') -> str:
+def build_html_report(user_data: dict, summary: dict, raw_scores: list, ai: dict, careers: list, ai_impact: dict | None = None, locale: str = 'en', tier: str = 'launchpad', jobs: list | None = None, companies: list | None = None, courses: list | None = None) -> str:
     # user_data/ai/ai_impact all carry user-supplied or AI-generated free text that could
     # otherwise inject markup (or, via WeasyPrint's URL fetcher, trigger SSRF) into this HTML.
+    # jobs additionally comes from a third-party API (JSearch) — external content is the
+    # textbook case for this, so it gets the same treatment as companies/courses (admin-
+    # curated, lower risk, but escaped anyway for consistency).
     user_data  = _escape_deep(user_data)
     ai         = _escape_deep(ai)
     ai_impact  = _escape_deep(ai_impact) if ai_impact else ai_impact
+    jobs       = _escape_deep(jobs or [])
+    companies  = _escape_deep(companies or [])
+    courses    = _escape_deep(courses or [])
     career_rec_cap = 5 if tier == 'free' else 8
     ai_impact_cap  = 2 if tier == 'free' else 5
     T = UI_TEXT.get(locale, UI_TEXT['en'])
@@ -491,7 +503,7 @@ def build_html_report(user_data: dict, summary: dict, raw_scores: list, ai: dict
             f'</div>'
             f'<span class="score-circle" style="font-size:14pt;">{sc:.0f}</span>'
             f'</div>'
-            f'<div class="bar-row" style="margin-top:8px;">{_bar(sc, "#457b9d")}</div>'
+            f'<div class="bar-row" style="margin-top:8px;">{_bar(sc, "#0770ba")}</div>'
             f'<p class="body-text" style="margin-top:6px;">{narr}</p>'
             f'</div>'
         )
@@ -548,7 +560,7 @@ def build_html_report(user_data: dict, summary: dict, raw_scores: list, ai: dict
         res_bars += (
             f'<div class="bar-row">'
             f'<span class="bar-label">{lbl}</span>'
-            f'{_bar(resilience.get(key, 0), "#457b9d")}'
+            f'{_bar(resilience.get(key, 0), "#0770ba")}'
             f'</div>'
         )
 
@@ -593,12 +605,47 @@ def build_html_report(user_data: dict, summary: dict, raw_scores: list, ai: dict
             f'<span class="pill">{rec.get("sector","")}</span>'
             f'</div>'
             f'<div style="text-align:center;flex-shrink:0;">'
-            f'<div style="font-size:20pt;font-weight:900;color:#457b9d;line-height:1;">{ms}%</div>'
+            f'<div style="font-size:20pt;font-weight:900;color:#0770ba;line-height:1;">{ms}%</div>'
             f'<div class="muted" style="font-size:7pt;letter-spacing:1px;">{T["match"]}</div>'
             f'</div>'
             f'</div>'
             f'<p class="body-text" style="margin-top:8px;">{rec.get("fit_summary","")}</p>'
             f'<p class="muted" style="margin-top:4px;font-style:italic;">{rec.get("growth_note","")}</p>'
+            f'</div>'
+        )
+
+    # ── Job listing cards ──────────────────────────────────────────────────────
+    job_cards = ""
+    for job in jobs:
+        location = job.get("location", "").strip()
+        job_cards += (
+            f'<div class="card" style="margin-bottom:10px;">'
+            f'<h4 class="card-title">{job.get("title","")}</h4>'
+            f'<p class="muted">{job.get("company","")}{" · " + location if location else ""}</p>'
+            f'<p class="muted" style="margin-top:6px;">{T["matched_to"]}: {job.get("matched_career","")}</p>'
+            f'</div>'
+        )
+
+    # ── Company cards ──────────────────────────────────────────────────────────
+    company_cards = ""
+    for c in companies:
+        gov_pill = f'<span class="pill" style="margin-left:4px;">{T["government"]}</span>' if c.get("is_government") else ""
+        company_cards += (
+            f'<div class="card" style="margin-bottom:10px;">'
+            f'<h4 class="card-title">{c.get("name_en","")}</h4>'
+            f'<span class="pill">{c.get("sector","")}</span>{gov_pill}'
+            f'</div>'
+        )
+
+    # ── Course cards ───────────────────────────────────────────────────────────
+    course_cards = ""
+    for course in courses:
+        level = course.get("level", "")
+        course_cards += (
+            f'<div class="card" style="margin-bottom:10px;">'
+            f'<h4 class="card-title">{course.get("title","")}</h4>'
+            f'<p class="muted">{course.get("provider","")}{" · " + level if level else ""}</p>'
+            f'<p class="body-text" style="margin-top:6px;">{course.get("description","")}</p>'
             f'</div>'
         )
 
@@ -611,7 +658,7 @@ def build_html_report(user_data: dict, summary: dict, raw_scores: list, ai: dict
             for s in c.get('protected_skills', [])
         )
         upskilling_items = "".join(
-            f'<li class="action-item" style="border-{border_side}-color:#457b9d;">{tip}</li>'
+            f'<li class="action-item" style="border-{border_side}-color:#0770ba;">{tip}</li>'
             for tip in c.get('upskilling', [])
         )
         ai_impact_cards += (
@@ -644,8 +691,8 @@ def build_html_report(user_data: dict, summary: dict, raw_scores: list, ai: dict
 
     action_html = (
         render_phase(ap.get('month_1',    []), '#2a9d5c', T['action_month1']) +
-        render_phase(ap.get('months_2_3', []), '#c9a84c', T['action_months23']) +
-        render_phase(ap.get('months_4_6', []), '#457b9d', T['action_months46'])
+        render_phase(ap.get('months_2_3', []), '#00c9a7', T['action_months23']) +
+        render_phase(ap.get('months_4_6', []), '#0770ba', T['action_months46'])
     )
 
     if locale == 'ar':
@@ -662,51 +709,51 @@ def build_html_report(user_data: dict, summary: dict, raw_scores: list, ai: dict
   @page { size:A4; margin:0; }
 
   /* Cover */
-  .cover { width:100%; height:297mm; background:linear-gradient(145deg,#0d1b2a 0%,#1b3a5c 60%,#0d1b2a 100%); display:flex; flex-direction:column; justify-content:space-between; page-break-after:always; }
-  .cover-accent { height:6px; background:linear-gradient(90deg,#c9a84c,#f0d080,#c9a84c); }
+  .cover { width:100%; height:297mm; background:linear-gradient(145deg,#075288 0%,#0770ba 60%,#075288 100%); display:flex; flex-direction:column; justify-content:space-between; page-break-after:always; }
+  .cover-accent { height:6px; background:linear-gradient(90deg,#00c9a7,#5eead4,#00c9a7); }
   .cover-body { flex:1; display:flex; flex-direction:column; justify-content:center; align-items:center; text-align:center; padding:40mm 20mm; }
-  .cover-eyebrow { display:inline-block; background:rgba(201,168,76,.15); border:1px solid rgba(201,168,76,.4); color:#c9a84c; font-size:8pt; letter-spacing:3px; text-transform:uppercase; padding:6px    
+  .cover-eyebrow { display:inline-block; background:rgba(0,201,167,.15); border:1px solid rgba(0,201,167,.4); color:#00c9a7; font-size:8pt; letter-spacing:3px; text-transform:uppercase; padding:6px    
   18px; border-radius:20px; margin-bottom:24px; }
   .cover-headline { font-size:36pt; font-weight:900; color:#fff; line-height:1.1; margin-bottom:8px; }
   .cover-sub { font-size:13pt; color:rgba(255,255,255,.55); margin-bottom:44px; letter-spacing:1px; }
-  .cover-rule { width:56px; height:3px; background:#c9a84c; margin:0 auto 30px; }
+  .cover-rule { width:56px; height:3px; background:#00c9a7; margin:0 auto 30px; }
   .cover-name { font-size:21pt; font-weight:700; color:#fff; margin-bottom:8px; }
-  .cover-code { font-size:30pt; font-weight:900; color:#c9a84c; letter-spacing:8px; margin-bottom:6px; }
+  .cover-code { font-size:30pt; font-weight:900; color:#00c9a7; letter-spacing:8px; margin-bottom:6px; }
   .cover-code-label { font-size:8pt; color:rgba(255,255,255,.45); letter-spacing:2px; text-transform:uppercase; margin-bottom:44px; }
   .cover-type { display:inline-block; background:rgba(255,255,255,.08); border:1px solid rgba(255,255,255,.18); color:rgba(255,255,255,.88); font-size:13pt; font-weight:600; padding:10px 30px;
   border-radius:40px; margin-bottom:10px; }
   .cover-tagline { font-size:9.5pt; color:rgba(255,255,255,.45); }
   .cover-footer { display:flex; justify-content:space-between; align-items:center; padding:14px 40px; border-top:1px solid rgba(255,255,255,.08); background:rgba(0,0,0,.2); }
-  .cover-brand { color:#c9a84c; font-size:9pt; font-weight:700; letter-spacing:2px; text-transform:uppercase; }
+  .cover-brand { color:#00c9a7; font-size:9pt; font-weight:700; letter-spacing:2px; text-transform:uppercase; }
   .cover-date  { color:rgba(255,255,255,.35); font-size:8pt; }
   .cover-conf  { color:rgba(255,255,255,.25); font-size:7pt; letter-spacing:1px; text-transform:uppercase; }
 
   /* Content pages */
   .page { padding:12mm 16mm 20mm; page-break-after:always; min-height:270mm; position:relative; }
   .page:last-child { page-break-after:avoid; }
-  .page-hdr { display:flex; justify-content:space-between; align-items:center; padding-bottom:7px; border-bottom:2px solid #0d1b2a; margin-bottom:18px; }
-  .page-hdr-brand { font-size:7pt; font-weight:700; color:#c9a84c; letter-spacing:2px; text-transform:uppercase; }
+  .page-hdr { display:flex; justify-content:space-between; align-items:center; padding-bottom:7px; border-bottom:2px solid #075288; margin-bottom:18px; }
+  .page-hdr-brand { font-size:7pt; font-weight:700; color:#00c9a7; letter-spacing:2px; text-transform:uppercase; }
   .page-hdr-name  { font-size:7pt; color:#aaa; }
   .page-ftr { position:absolute; bottom:10mm; left:16mm; right:16mm; display:flex; justify-content:space-between; border-top:1px solid #eee; padding-top:5px; }
   .page-ftr span { font-size:7pt; color:#ccc; }
 
   /* Section headings */
   .sec-heading { display:flex; align-items:center; gap:12px; margin-bottom:16px; }
-  .sec-accent  { width:4px; height:34px; background:linear-gradient(180deg,#c9a84c,#f0d080); border-radius:2px; flex-shrink:0; }
-  .sec-num     { font-size:7.5pt; font-weight:700; color:#c9a84c; letter-spacing:2px; text-transform:uppercase; line-height:1; }
-  .sec-title   { font-size:15pt; font-weight:800; color:#0d1b2a; line-height:1.2; }
-  .intro-box   { background:#f7f8fc; border-left:3px solid #c9a84c; padding:11px 15px; border-radius:0 6px 6px 0; font-size:9.5pt; color:#555; font-style:italic; line-height:1.7; margin-bottom:18px; }   
+  .sec-accent  { width:4px; height:34px; background:linear-gradient(180deg,#00c9a7,#5eead4); border-radius:2px; flex-shrink:0; }
+  .sec-num     { font-size:7.5pt; font-weight:700; color:#00c9a7; letter-spacing:2px; text-transform:uppercase; line-height:1; }
+  .sec-title   { font-size:15pt; font-weight:800; color:#075288; line-height:1.2; }
+  .intro-box   { background:#f7f8fc; border-left:3px solid #00c9a7; padding:11px 15px; border-radius:0 6px 6px 0; font-size:9.5pt; color:#555; font-style:italic; line-height:1.7; margin-bottom:18px; }   
 
   /* Summary hero */
-  .summary-hero { background:linear-gradient(135deg,#0d1b2a,#1b3a5c); color:#fff; padding:22px 26px; border-radius:8px; margin-bottom:20px; }
-  .summary-hero-label { font-size:8pt; font-weight:700; color:#c9a84c; letter-spacing:2px; text-transform:uppercase; margin-bottom:10px; }
+  .summary-hero { background:linear-gradient(135deg,#075288,#0770ba); color:#fff; padding:22px 26px; border-radius:8px; margin-bottom:20px; }
+  .summary-hero-label { font-size:8pt; font-weight:700; color:#00c9a7; letter-spacing:2px; text-transform:uppercase; margin-bottom:10px; }
   .summary-hero-text  { font-size:10.5pt; line-height:1.85; color:rgba(255,255,255,.9); }
 
   /* Stat grid */
   .stat-grid { display:flex; gap:10px; margin-bottom:18px; }
-  .stat-cell { flex:1; background:#f7f8fc; border:1px solid #e0e3ea; border-radius:6px; padding:11px 12px; text-align:center; }
+  .stat-cell { flex:1; background:#f7f8fc; border:1px solid #e0e3ea; border-radius:6px; padding:11px 12px; text-align:center; page-break-inside:avoid; break-inside:avoid; }
   .stat-lbl  { font-size:7pt; color:#aaa; text-transform:uppercase; letter-spacing:1px; margin-bottom:4px; }
-  .stat-val  { font-size:9.5pt; font-weight:700; color:#0d1b2a; }
+  .stat-val  { font-size:9.5pt; font-weight:700; color:#075288; }
 
   /* Score bars */
   .bar-row   { display:flex; align-items:center; gap:10px; margin-bottom:9px; }
@@ -717,20 +764,20 @@ def build_html_report(user_data: dict, summary: dict, raw_scores: list, ai: dict
   .bar-num   { font-size:8pt; font-weight:700; color:#666; width:26px; text-align:right; flex-shrink:0; }
 
   /* Cards */
-  .card       { background:#f7f8fc; border:1px solid #e0e3ea; border-radius:8px; padding:14px 16px; margin-bottom:12px; }
+  .card       { background:#f7f8fc; border:1px solid #e0e3ea; border-radius:8px; padding:14px 16px; margin-bottom:12px; page-break-inside:avoid; break-inside:avoid; }
   .card-row   { display:flex; justify-content:space-between; align-items:flex-start; }
-  .card-title { font-size:11pt; font-weight:700; color:#0d1b2a; margin-bottom:3px; }
-  .score-circle { width:50px; height:50px; background:#0d1b2a; color:#c9a84c; border-radius:50%; display:flex; align-items:center; justify-content:center; font-size:13pt; font-weight:800; flex-shrink:0; 
+  .card-title { font-size:11pt; font-weight:700; color:#075288; margin-bottom:3px; }
+  .score-circle { width:50px; height:50px; background:#075288; color:#00c9a7; border-radius:50%; display:flex; align-items:center; justify-content:center; font-size:13pt; font-weight:800; flex-shrink:0; 
   }
-  .mini-badge { display:inline-block; background:rgba(201,168,76,.12); color:#c9a84c; font-size:7pt; font-weight:700; letter-spacing:1.5px; text-transform:uppercase; padding:2px 8px; border-radius:10px; 
+  .mini-badge { display:inline-block; background:rgba(0,201,167,.12); color:#00c9a7; font-size:7pt; font-weight:700; letter-spacing:1.5px; text-transform:uppercase; padding:2px 8px; border-radius:10px; 
   margin-bottom:4px; }
   .muted      { font-size:8pt; color:#888; line-height:1.5; }
   .body-text  { font-size:9pt; color:#444; line-height:1.7; }
   .pill       { display:inline-block; background:#e8eaf0; color:#666; font-size:7.5pt; padding:2px 9px; border-radius:10px; margin-top:4px; }
 
   /* RIASEC overview */
-  .riasec-overview    { background:rgba(201,168,76,.07); border:1px solid rgba(201,168,76,.3); border-radius:8px; padding:13px 16px; margin-bottom:18px; }
-  .riasec-combo-title { font-size:13pt; font-weight:800; color:#0d1b2a; margin-bottom:6px; }
+  .riasec-overview    { background:rgba(0,201,167,.07); border:1px solid rgba(0,201,167,.3); border-radius:8px; padding:13px 16px; margin-bottom:18px; }
+  .riasec-combo-title { font-size:13pt; font-weight:800; color:#075288; margin-bottom:6px; }
   .all-bars-box   { background:#f7f8fc; border:1px solid #e0e3ea; border-radius:8px; padding:14px 16px; margin-top:14px; }
   .all-bars-label { font-size:7.5pt; font-weight:700; color:#bbb; letter-spacing:1.5px; text-transform:uppercase; margin-bottom:12px; }
 
@@ -740,29 +787,29 @@ def build_html_report(user_data: dict, summary: dict, raw_scores: list, ai: dict
 
   /* Values grid */
   .values-grid { display:flex; gap:12px; }
-  .value-card  { flex:1; background:#f7f8fc; border:1px solid #e0e3ea; border-top:3px solid #c9a84c; border-radius:8px; padding:14px 13px; }
-  .value-rank  { font-size:22pt; font-weight:900; color:rgba(201,168,76,.2); line-height:1; margin-bottom:4px; }
+  .value-card  { flex:1; background:#f7f8fc; border:1px solid #e0e3ea; border-top:3px solid #00c9a7; border-radius:8px; padding:14px 13px; page-break-inside:avoid; break-inside:avoid; }
+  .value-rank  { font-size:22pt; font-weight:900; color:rgba(0,201,167,.2); line-height:1; margin-bottom:4px; }
 
   /* Two-col layout */
   .two-col { display:flex; gap:14px; }
-  .col-box { flex:1; background:#f7f8fc; border:1px solid #e0e3ea; border-radius:8px; padding:14px; }
-  .col-title { font-size:8.5pt; font-weight:700; color:#0d1b2a; margin-bottom:12px; padding-bottom:8px; border-bottom:1.5px solid #e0e3ea; }
+  .col-box { flex:1; background:#f7f8fc; border:1px solid #e0e3ea; border-radius:8px; padding:14px; page-break-inside:avoid; break-inside:avoid; }
+  .col-title { font-size:8.5pt; font-weight:700; color:#075288; margin-bottom:12px; padding-bottom:8px; border-bottom:1.5px solid #e0e3ea; }
   .narr-box { background:#f7f8fc; border:1px solid #e0e3ea; border-radius:8px; padding:12px 15px; margin-top:14px; font-size:9pt; color:#555; line-height:1.7; }
 
   /* Action plan */
   .action-phase { margin-bottom:18px; }
   .phase-title  { font-size:11pt; font-weight:700; margin-bottom:9px; }
   .action-list  { list-style:none; display:flex; flex-direction:column; gap:7px; }
-  .action-item  { background:#f7f8fc; border-left:3px solid #c9a84c; border-radius:0 6px 6px 0; padding:8px 12px; font-size:9pt; color:#333; line-height:1.5; }
+  .action-item  { background:#f7f8fc; border-left:3px solid #00c9a7; border-radius:0 6px 6px 0; padding:8px 12px; font-size:9pt; color:#333; line-height:1.5; page-break-inside:avoid; break-inside:avoid; }
 
   /* Back cover */
-  .back-cover { background:linear-gradient(145deg,#0d1b2a,#1b3a5c); height:297mm; display:flex; flex-direction:column; justify-content:center; align-items:center; text-align:center; padding:20mm;        
+  .back-cover { background:linear-gradient(145deg,#075288,#0770ba); height:297mm; display:flex; flex-direction:column; justify-content:center; align-items:center; text-align:center; padding:20mm;        
   page-break-before:always; position:relative; }
-  .back-top   { position:absolute; top:0; left:0; right:0; height:6px; background:linear-gradient(90deg,#c9a84c,#f0d080,#c9a84c); }
+  .back-top   { position:absolute; top:0; left:0; right:0; height:6px; background:linear-gradient(90deg,#00c9a7,#5eead4,#00c9a7); }
   .back-headline { font-size:22pt; font-weight:800; color:#fff; margin-bottom:18px; }
   .back-message  { font-size:11pt; color:rgba(255,255,255,.7); line-height:1.85; max-width:130mm; margin-bottom:36px; }
-  .back-rule     { width:48px; height:2px; background:#c9a84c; margin:0 auto 22px; }
-  .back-brand    { font-size:10pt; font-weight:700; color:#c9a84c; letter-spacing:3px; text-transform:uppercase; margin-bottom:7px; }
+  .back-rule     { width:48px; height:2px; background:#00c9a7; margin:0 auto 22px; }
+  .back-brand    { font-size:10pt; font-weight:700; color:#00c9a7; letter-spacing:3px; text-transform:uppercase; margin-bottom:7px; }
   .back-tagline  { font-size:8pt; color:rgba(255,255,255,.35); letter-spacing:2px; }
   """
 
@@ -771,9 +818,9 @@ def build_html_report(user_data: dict, summary: dict, raw_scores: list, ai: dict
   html { direction: rtl; }
   body { direction: rtl; text-align: right; }
   .page-ftr { left:16mm; right:16mm; }
-  .intro-box   { border-left:none; border-right:3px solid #c9a84c; border-radius:6px 0 0 6px; }
+  .intro-box   { border-left:none; border-right:3px solid #00c9a7; border-radius:6px 0 0 6px; }
   .strength-card { border-left:none !important; border-right:4px solid #40916c !important; border-radius:8px 0 0 8px !important; }
-  .action-item { border-left:none; border-right:3px solid #c9a84c; border-radius:6px 0 0 6px; }
+  .action-item { border-left:none; border-right:3px solid #00c9a7; border-radius:6px 0 0 6px; }
   .value-rank  { text-align: right; }
   .bar-num     { text-align: left; }
   .cover-eyebrow, .mini-badge, .stat-lbl, .sec-num, .all-bars-label, .page-hdr-brand, .cover-brand, .back-brand, .back-tagline { letter-spacing: 0; }
@@ -783,6 +830,39 @@ def build_html_report(user_data: dict, summary: dict, raw_scores: list, ai: dict
   .cover-body, .back-cover { direction: ltr; }
   .cover-body > *, .back-cover > * { direction: rtl; }
   """
+
+    # Jobs/companies/courses are optional (empty on the free tier, or if a section has
+    # no matches) — numbered dynamically so an absent section never leaves a numbering
+    # gap or a blank page, and the Action Plan's own number/page shift to follow.
+    extra_section_pages = ""
+    next_sec_num, next_page_num = 10, 9
+    for title, cards_html in [
+        (T['sec_jobs'], job_cards),
+        (T['sec_companies'], company_cards),
+        (T['sec_courses'], course_cards),
+    ]:
+        if not cards_html:
+            continue
+        extra_section_pages += f"""
+  <div class="page">
+    <div class="page-hdr">
+      <span class="page-hdr-brand">{T['brand_header']}</span>
+      <span class="page-hdr-name">{name}</span>
+    </div>
+    <div class="sec-heading">
+      <div class="sec-accent"></div>
+      <div><div class="sec-num">{next_sec_num:02d}</div><div class="sec-title">{title}</div></div>
+    </div>
+    {cards_html}
+    <div class="page-ftr">
+      <span>{T['report_confidential_footer']} · {date_str}</span>
+      <span>{T['page']} {next_page_num}</span>
+    </div>
+  </div>
+"""
+        next_sec_num += 1
+        next_page_num += 1
+    action_plan_sec_num, action_plan_page_num = next_sec_num, next_page_num
 
     return f"""<!DOCTYPE html>
   <html lang="{T['lang']}" dir="{T['dir']}">
@@ -985,8 +1065,8 @@ def build_html_report(user_data: dict, summary: dict, raw_scores: list, ai: dict
       <span>{T['page']} 8</span>
     </div>
   </div>
-
-  <!-- PAGE 9 — 90-DAY ACTION PLAN -->
+  {extra_section_pages}
+  <!-- 90-DAY ACTION PLAN -->
   <div class="page">
     <div class="page-hdr">
       <span class="page-hdr-brand">{T['brand_header']}</span>
@@ -994,12 +1074,12 @@ def build_html_report(user_data: dict, summary: dict, raw_scores: list, ai: dict
     </div>
     <div class="sec-heading">
       <div class="sec-accent"></div>
-      <div><div class="sec-num">10</div><div class="sec-title">{T['sec10']}</div></div>
+      <div><div class="sec-num">{action_plan_sec_num:02d}</div><div class="sec-title">{T['sec_action_plan']}</div></div>
     </div>
     {action_html}
     <div class="page-ftr">
       <span>{T['report_confidential_footer']} · {date_str}</span>
-      <span>{T['page']} 9</span>
+      <span>{T['page']} {action_plan_page_num}</span>
     </div>
   </div>
 
@@ -1178,5 +1258,45 @@ def create_report(response_id: str, supabase_client, tier: str = "launchpad", lo
 
         ai_impact, ai_content = ai_impact_ar, ai_content_ar
 
-    html       = build_html_report(profile.data, summary, raw_scores, ai_content, top_careers, ai_impact, locale, tier=tier)
+    # Job listings have no free-tier gate on the live site (unlike companies/courses
+    # below) — matching that here, so read the cache regardless of tier. Reads the
+    # cache directly rather than calling the live JSearch API: PDF generation already
+    # makes several Gemini calls, and a third-party call here would just be another
+    # way for report generation to fail or stall.
+    jobs = []
+    cached_jobs = supabase_client.table('job_listings_cache').select('jobs').eq('response_id', response_id).execute()
+    if cached_jobs.data:
+        jobs = (cached_jobs.data[0].get('jobs') or [])[:8]
+
+    companies, courses = [], []
+    if tier != 'free':
+        top5 = top_careers[:5]
+
+        company_sectors = list(dict.fromkeys(c['sector'] for c in top5))
+        country_code = COUNTRY_CODE_MAP.get(profile.data.get('country', ''))
+        company_query = supabase_client.table('companies').select(
+            'id, name_en, sector, size, is_government, career_page_url, logo_url, country_code'
+        )
+        if country_code:
+            company_query = company_query.eq('country_code', country_code)
+        if company_sectors:
+            company_query = company_query.in_('sector', company_sectors)
+        company_limit = 50 if tier == 'launchpad' else 20
+        companies_raw = company_query.order('name_en').limit(company_limit).execute().data or []
+        companies = [c for c in companies_raw if is_appropriate(c.get('name_en'), c.get('sector'))][:12]
+
+        user_riasec = set(summary.get('riasec', {}).get('top_types', []))
+        course_sectors = set(c['sector'] for c in top5)
+        all_courses = supabase_client.table('courses').select('*').execute().data or []
+
+        def _score_course(course):
+            riasec_overlap = len(set(course.get('riasec_tags') or []) & user_riasec)
+            sector_overlap = len(set(course.get('career_tags') or []) & course_sectors)
+            return sector_overlap * 3 + riasec_overlap * 2
+
+        scored_courses = sorted(all_courses, key=_score_course, reverse=True)
+        matched_courses = [c for c in scored_courses if _score_course(c) > 0][:8]
+        courses = matched_courses if matched_courses else scored_courses[:8]
+
+    html = build_html_report(profile.data, summary, raw_scores, ai_content, top_careers, ai_impact, locale, tier=tier, jobs=jobs, companies=companies, courses=courses)
     return generate_pdf(html)

@@ -294,3 +294,11 @@ def score_careers(summary: dict, user_data: dict, careers: list, semantic_scores
         return score
 
     return sorted(careers, key=_score, reverse=True)[:10]
+
+COUNTRY_CODE_MAP = {
+    'saudi_arabia': 'SA',
+    'bahrain': 'BH',
+    'kuwait': 'KW',
+    'oman': 'OM',
+    'qatar': 'QA',
+}

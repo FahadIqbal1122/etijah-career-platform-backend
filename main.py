@@ -6,7 +6,7 @@ from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.middleware.cors import CORSMiddleware
 from supabase import create_client, Client
 from dotenv import load_dotenv
-from scoring_engine import compute_scores, build_framework_output, score_careers, get_career_semantic_scores
+from scoring_engine import compute_scores, build_framework_output, score_careers, get_career_semantic_scores, COUNTRY_CODE_MAP
 from pydantic import BaseModel, EmailStr, Field
 from typing import Any
 import io
@@ -287,14 +287,6 @@ class HubTransactionBody(BaseModel):
     status: str
     tap_charge_id: str | None = None
     paid_at: str | None = None
-
-COUNTRY_CODE_MAP = {
-    'saudi_arabia': 'SA',
-    'bahrain': 'BH',
-    'kuwait': 'KW',
-    'oman': 'OM',
-    'qatar': 'QA',
-}
 
 @app.get("/")
 def root():
