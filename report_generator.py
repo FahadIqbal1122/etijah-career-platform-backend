@@ -240,7 +240,7 @@ def _generate_json(model, prompt: str, retries: int = 1) -> dict:
             last_err = e
     raise last_err
 
-def generate_ai_content(user_data: dict, summary: dict, raw_scores: list, careers: list, country_profile: dict | None = None, coaching_chunks: list[dict] | None = None, locale: str = 'en') -> dict:
+def generate_ai_content(user_data: dict, summary: dict, raw_scores: list, careers: list, country_profile: dict | None = None, coaching_chunks: list[dict] | None = None, locale: str = 'en', career_count: int = 8) -> dict:
     genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
     model = genai.GenerativeModel(
       "gemini-2.5-flash",
@@ -263,7 +263,7 @@ def generate_ai_content(user_data: dict, summary: dict, raw_scores: list, career
     bf_data       = {k: {'level': v, 'score': round(scores.get(k, 0))} for k, v in big_five.items()}
     val_lines     = "\n".join(f"  - {v.replace('_',' ').title()}: {scores.get(v,0):.0f}/100" for v in top_values)
     str_lines     = "\n".join(f"  - {s.replace('_',' ').title()}: {scores.get(s,0):.0f}/100" for s in top_strengths)
-    careers_text  = "\n".join(f"  - {c['title']} ({c['sector']})" for c in careers[:8])
+    careers_text  = "\n".join(f"  - {c['title']} ({c['sector']})" for c in careers[:career_count])
 
     prompt = (
         f"You are writing a professional, personalized career development report for {user_data['full_name']}.\n"
@@ -374,7 +374,7 @@ def generate_ai_content(user_data: dict, summary: dict, raw_scores: list, career
         '  },\n\n'
         '  "closing_message": "2-3 warm encouraging sentences tying back to this persons unique profile."\n'
         "}\n\n"
-        "Provide 6-8 career recommendations. Be specific, insightful, and empowering throughout."
+        f"Provide exactly {career_count} career recommendations. Be specific, insightful, and empowering throughout."
     )
 
     return _generate_json(model, prompt)
@@ -1098,7 +1098,7 @@ def build_html_report(user_data: dict, summary: dict, raw_scores: list, ai: dict
 
 # ─── AI Impact Analysis ────────────────────────────────────────────────────────
 
-def generate_ai_impact(user_data: dict, summary: dict, careers: list, locale: str = 'en') -> dict:
+def generate_ai_impact(user_data: dict, summary: dict, careers: list, locale: str = 'en', career_count: int = 5) -> dict:
   genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
   model = genai.GenerativeModel(
     "gemini-2.5-flash",
@@ -1108,7 +1108,7 @@ def generate_ai_impact(user_data: dict, summary: dict, careers: list, locale: st
   riasec_types   = summary.get('riasec',    {}).get('top_types',    [])
   top_strengths  = summary.get('strengths', {}).get('top_strengths', [])
   top_values     = summary.get('values',    {}).get('top_values',   [])
-  careers_text   = "\n".join(f" - {c['title']} ({c['sector']})" for c in careers[:5])
+  careers_text   = "\n".join(f" - {c['title']} ({c['sector']})" for c in careers[:career_count])
 
   prompt = (
     "You are a career futurist specializing in AI's impact on work in the GCC region.\n"
@@ -1138,7 +1138,7 @@ def generate_ai_impact(user_data: dict, summary: dict, careers: list, locale: st
     '    }\n'
     '  ]\n'
     "}\n\n"
-    "Cover all 5 careers. Be specific and GCC-aware throughout."
+    f"Cover all {career_count} careers. Be specific and GCC-aware throughout."
   )
 
   return _generate_json(model, prompt)
@@ -1178,7 +1178,8 @@ def create_report(response_id: str, supabase_client, tier: str = "launchpad", lo
     profile = supabase_client.table('assessment_responses') \
         .select('full_name,email,age_bracket,current_stage,education_field,'
                 'sectors_of_interest,geographic_openness,why_here,country,'
-                'ai_impact_cache,ai_content_cache,ai_impact_cache_ar,ai_content_cache_ar,locale') \
+                'ai_impact_cache,ai_content_cache,ai_impact_cache_ar,ai_content_cache_ar,'
+                'ai_impact_cache_free,ai_content_cache_free,ai_impact_cache_ar_free,ai_content_cache_ar_free,locale') \
         .eq('id', response_id).single().execute()
     if not profile.data:
         raise ValueError(f"No assessment found for {response_id}")
@@ -1224,37 +1225,51 @@ def create_report(response_id: str, supabase_client, tier: str = "launchpad", lo
 
     locale = locale_override or profile.data.get('locale') or 'en'
 
+    # Free tier gets a smaller, separately-cached version (fewer AI-impact careers,
+    # fewer career recommendations) so it doesn't pay the same Gemini cost as a paid
+    # report. Pathfinder and Launchpad generate identically — they only differ in the
+    # non-AI company list further below — so both use the "full" cache. If a free-tier
+    # user upgrades, _activate_plan() nulls out their *_free columns so the next report
+    # request here regenerates at full size instead of reusing the smaller cache.
+    is_free = tier == 'free'
+    impact_count = 2 if is_free else 5
+    content_count = 5 if is_free else 8
+    impact_col = 'ai_impact_cache_free' if is_free else 'ai_impact_cache'
+    content_col = 'ai_content_cache_free' if is_free else 'ai_content_cache'
+    impact_col_ar = 'ai_impact_cache_ar_free' if is_free else 'ai_impact_cache_ar'
+    content_col_ar = 'ai_content_cache_ar_free' if is_free else 'ai_content_cache_ar'
+
     # Each write below is conditioned on the column still being null, so if two requests
     # race for the same response_id and both generate a value, the second write can't
     # clobber whatever the first one already committed — it just no-ops instead.
-    ai_impact = profile.data.get('ai_impact_cache')
+    ai_impact = profile.data.get(impact_col)
     if not ai_impact:
-        ai_impact = generate_ai_impact(profile.data, summary, top_careers[:5], 'en')
+        ai_impact = generate_ai_impact(profile.data, summary, top_careers[:impact_count], 'en', career_count=impact_count)
         supabase_client.table('assessment_responses') \
-            .update({'ai_impact_cache': ai_impact}) \
-            .eq('id', response_id).is_('ai_impact_cache', 'null').execute()
+            .update({impact_col: ai_impact}) \
+            .eq('id', response_id).is_(impact_col, 'null').execute()
 
-    ai_content = profile.data.get('ai_content_cache')
+    ai_content = profile.data.get(content_col)
     if not ai_content:
-        ai_content = generate_ai_content(profile.data, summary, raw_scores, top_careers, country_profile, coaching_matches, 'en')
+        ai_content = generate_ai_content(profile.data, summary, raw_scores, top_careers, country_profile, coaching_matches, 'en', career_count=content_count)
         supabase_client.table('assessment_responses') \
-            .update({'ai_content_cache': ai_content}) \
-            .eq('id', response_id).is_('ai_content_cache', 'null').execute()
+            .update({content_col: ai_content}) \
+            .eq('id', response_id).is_(content_col, 'null').execute()
 
     if locale == 'ar':
-        ai_impact_ar = profile.data.get('ai_impact_cache_ar')
+        ai_impact_ar = profile.data.get(impact_col_ar)
         if not ai_impact_ar:
             ai_impact_ar = translate_report_json(ai_impact, 'ar')
             supabase_client.table('assessment_responses') \
-                .update({'ai_impact_cache_ar': ai_impact_ar}) \
-                .eq('id', response_id).is_('ai_impact_cache_ar', 'null').execute()
+                .update({impact_col_ar: ai_impact_ar}) \
+                .eq('id', response_id).is_(impact_col_ar, 'null').execute()
 
-        ai_content_ar = profile.data.get('ai_content_cache_ar')
+        ai_content_ar = profile.data.get(content_col_ar)
         if not ai_content_ar:
             ai_content_ar = translate_report_json(ai_content, 'ar')
             supabase_client.table('assessment_responses') \
-                .update({'ai_content_cache_ar': ai_content_ar}) \
-                .eq('id', response_id).is_('ai_content_cache_ar', 'null').execute()
+                .update({content_col_ar: ai_content_ar}) \
+                .eq('id', response_id).is_(content_col_ar, 'null').execute()
 
         ai_impact, ai_content = ai_impact_ar, ai_content_ar
 

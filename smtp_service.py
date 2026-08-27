@@ -3,33 +3,66 @@ Generic SMTP mailer for the Etijah career platform backend.
 Sends via Titan Mail (Hostinger) by default; any SMTP host works through the same env vars.
 """
 
+import html as _html
 import os
 import smtplib
 import ssl
+from datetime import datetime, timezone, timedelta
 from email.message import EmailMessage
 from email.utils import formataddr
 
-SMTP_HOST = os.getenv("SMTP_HOST", "smtp.titan.email")
-SMTP_PORT = int(os.getenv("SMTP_PORT", "465"))
-SMTP_USER = os.getenv("SMTP_USER")
-SMTP_PASSWORD = os.getenv("SMTP_PASSWORD")
-SMTP_FROM_EMAIL = os.getenv("SMTP_FROM_EMAIL") or SMTP_USER
-SMTP_FROM_NAME = os.getenv("SMTP_FROM_NAME", "Etijah Career Platform")
+SMTP_SETTINGS_KEY = "smtp_settings"
+_smtp_cache = {"value": None, "checked_at": None}
+_SMTP_CACHE_TTL = timedelta(seconds=10)
+
+_ENV_DEFAULTS = {
+    "host": os.getenv("SMTP_HOST", "smtp.titan.email"),
+    "port": int(os.getenv("SMTP_PORT", "465")),
+    "user": os.getenv("SMTP_USER") or "",
+    "password": os.getenv("SMTP_PASSWORD") or "",
+    "from_email": os.getenv("SMTP_FROM_EMAIL") or os.getenv("SMTP_USER") or "",
+    "from_name": os.getenv("SMTP_FROM_NAME", "Etijah Career Platform"),
+}
 
 
-def send_email(to, subject, html_body, text_body=None, attachments=None, reply_to=None):
+def _get_smtp_config(supabase=None):
+    """Admin-togglable SMTP config (app_settings.smtp_settings), env vars as the
+    fallback/seed so an empty DB row doesn't break sending. Cached briefly since
+    every send_email() call would otherwise cost a DB round trip."""
+    now = datetime.now(timezone.utc)
+    if _smtp_cache["checked_at"] and now - _smtp_cache["checked_at"] < _SMTP_CACHE_TTL:
+        return _smtp_cache["value"]
+    config = dict(_ENV_DEFAULTS)
+    if supabase is not None:
+        try:
+            row = supabase.table("app_settings").select("value").eq("key", SMTP_SETTINGS_KEY).execute()
+            if row.data and row.data[0]["value"]:
+                config.update({k: v for k, v in row.data[0]["value"].items() if v not in (None, "")})
+        except Exception as e:
+            print("SMTP settings lookup failed, using env defaults:", e)
+    _smtp_cache["value"] = config
+    _smtp_cache["checked_at"] = now
+    return config
+
+
+def invalidate_smtp_cache():
+    _smtp_cache["checked_at"] = None
+
+
+def send_email(to, subject, html_body, text_body=None, attachments=None, reply_to=None, supabase=None):
     """
     to: str or list[str]
     attachments: list of (filename, bytes, mime_type) tuples, e.g. ("report.pdf", pdf_bytes, "application/pdf")
     """
-    if not SMTP_USER or not SMTP_PASSWORD:
-        raise RuntimeError("SMTP_USER / SMTP_PASSWORD are not configured")
+    cfg = _get_smtp_config(supabase)
+    if not cfg["user"] or not cfg["password"]:
+        raise RuntimeError("SMTP user/password are not configured")
 
     recipients = [to] if isinstance(to, str) else list(to)
 
     msg = EmailMessage()
     msg["Subject"] = subject
-    msg["From"] = formataddr((SMTP_FROM_NAME, SMTP_FROM_EMAIL))
+    msg["From"] = formataddr((cfg["from_name"], cfg["from_email"] or cfg["user"]))
     msg["To"] = ", ".join(recipients)
     if reply_to:
         msg["Reply-To"] = reply_to
@@ -42,14 +75,14 @@ def send_email(to, subject, html_body, text_body=None, attachments=None, reply_t
         msg.add_attachment(content, maintype=maintype, subtype=subtype or "octet-stream", filename=filename)
 
     context = ssl.create_default_context()
-    if SMTP_PORT == 465:
-        with smtplib.SMTP_SSL(SMTP_HOST, SMTP_PORT, context=context) as server:
-            server.login(SMTP_USER, SMTP_PASSWORD)
+    if cfg["port"] == 465:
+        with smtplib.SMTP_SSL(cfg["host"], cfg["port"], context=context) as server:
+            server.login(cfg["user"], cfg["password"])
             server.send_message(msg)
     else:
-        with smtplib.SMTP(SMTP_HOST, SMTP_PORT) as server:
+        with smtplib.SMTP(cfg["host"], cfg["port"]) as server:
             server.starttls(context=context)
-            server.login(SMTP_USER, SMTP_PASSWORD)
+            server.login(cfg["user"], cfg["password"])
             server.send_message(msg)
 
 
@@ -74,23 +107,41 @@ DEFAULT_REPORT_TEMPLATE = {
 
 
 def render_template(template_row, variables=None, locale="en"):
-    """Fills {{var}} placeholders in a template row's subject/body for the given locale."""
+    """Fills {{var}} placeholders in a template row's subject/body for the given locale.
+    Variable values (full_name, etc.) come from user-supplied assessment data, so they're
+    HTML-escaped before substitution — otherwise a crafted name could inject markup into
+    the HTML body every recipient's mail client renders."""
     is_ar = locale == "ar"
     subject = (template_row.get("subject_ar") if is_ar else template_row.get("subject_en")) or template_row.get("subject_en") or ""
     html_body = (template_row.get("body_html_ar") if is_ar else template_row.get("body_html_en")) or template_row.get("body_html_en") or ""
     for key, value in (variables or {}).items():
         token = "{{" + key + "}}"
-        text = "" if value is None else str(value)
-        subject = subject.replace(token, text)
-        html_body = html_body.replace(token, text)
+        plain_text = "" if value is None else str(value)
+        subject = subject.replace(token, plain_text)
+        html_body = html_body.replace(token, _html.escape(plain_text))
     return subject, html_body
 
 
-def send_report_email(to_email, to_name, pdf_bytes, filename, locale="en", template_row=None):
+def send_report_email(to_email, to_name, pdf_bytes, filename, locale="en", template_row=None, supabase=None):
     subject, html_body = render_template(template_row or DEFAULT_REPORT_TEMPLATE, {"full_name": to_name}, locale)
     send_email(
         to=to_email,
         subject=subject,
         html_body=html_body,
         attachments=[(filename, pdf_bytes, "application/pdf")],
+        supabase=supabase,
     )
+
+
+def send_feedback_email(to_email, to_name, feedback_url, locale="en", template_row=None, supabase=None):
+    if not template_row:
+        return  # template not seeded/found — nothing to send
+    subject, html_body = render_template(template_row, {"full_name": to_name, "feedback_url": feedback_url}, locale)
+    send_email(to=to_email, subject=subject, html_body=html_body, supabase=supabase)
+
+
+def send_results_ready_email(to_email, to_name, results_url, locale="en", template_row=None, supabase=None):
+    if not template_row:
+        return  # template not seeded/found — nothing to send
+    subject, html_body = render_template(template_row, {"full_name": to_name, "results_url": results_url}, locale)
+    send_email(to=to_email, subject=subject, html_body=html_body, supabase=supabase)

@@ -14,7 +14,7 @@ from datetime import datetime, timezone, timedelta
 from collections import Counter
 from fastapi.responses import StreamingResponse
 from report_generator import create_report
-from smtp_service import send_report_email
+from smtp_service import send_report_email, send_feedback_email, send_results_ready_email, invalidate_smtp_cache
 import httpx, hmac, hashlib, json
 from coaching_methodology import METHODOLOGY_DOC
 from coaching_pipeline import chunk_transcript, embed_and_store_chunks, client, embed_country_profile, sync_country_profile_embedding, sync_career_embedding, _gemini_embed
@@ -320,7 +320,7 @@ def check_existing(body: CheckExistingRequest):
 
 
 @app.post("/assessment/submit")
-def submit_assessment(body: SubmitRequest, user=Depends(get_optional_user)):
+def submit_assessment(body: SubmitRequest, background_tasks: BackgroundTasks, user=Depends(get_optional_user)):
     # Score it first, before writing anything — a payload with no recognizable
     # question answers can't be scored, so reject cleanly instead of leaving
     # an orphaned response row with no results.
@@ -346,6 +346,37 @@ def submit_assessment(body: SubmitRequest, user=Depends(get_optional_user)):
     rows = [{**r, "response_id": response_id} for r in results]
     # Insert results
     supabase.table('assessment_results').upsert(rows, on_conflict='response_id,framework,dimension').execute()
+
+    # requestWithRetry on the frontend (src/lib/api.ts) resubmits this exact request on a
+    # dropped connection or a stray 401 — the RPC above has no idempotency key, so a retry
+    # creates a second assessment_responses row. Without this guard that would queue both
+    # post-submit emails a second time; skip them if an earlier row for the same email
+    # already landed in the last few minutes (a genuine retake days later still gets emailed).
+    recent_duplicate = supabase.table('assessment_responses') \
+        .select('id') \
+        .eq('email', body.email) \
+        .neq('id', response_id) \
+        .gte('created_at', (datetime.now(timezone.utc) - timedelta(minutes=5)).isoformat()) \
+        .limit(1).execute()
+
+    if not recent_duplicate.data:
+        # locale is free-text from the client (SubmitRequest.locale) — clamp it before it
+        # becomes part of a URL embedded in an email, rather than trusting it verbatim.
+        locale = body.locale if body.locale in ('en', 'ar') else 'en'
+        frontend_base = os.getenv('FRONTEND_URL', '').rstrip('/')
+
+        results_template = supabase.table('email_templates').select('*').eq('key', 'results_ready').limit(1).execute()
+        results_tmpl = results_template.data[0] if results_template.data else None
+        if results_tmpl and results_tmpl.get('is_active'):
+            results_url = f"{frontend_base}/{locale}/results/{response_id}"
+            background_tasks.add_task(send_results_ready_email, body.email, body.full_name, results_url, locale, results_tmpl, supabase)
+
+        feedback_template = supabase.table('email_templates').select('*').eq('key', 'feedback_request').limit(1).execute()
+        feedback_tmpl = feedback_template.data[0] if feedback_template.data else None
+        if feedback_tmpl and feedback_tmpl.get('is_active'):
+            feedback_url = f"{frontend_base}/{locale}/feedback"
+            background_tasks.add_task(send_feedback_email, body.email, body.full_name, feedback_url, locale, feedback_tmpl, supabase)
+
     # Return summary
     return {"response_id": response_id, "summary": summary}
 
@@ -635,7 +666,7 @@ def get_career_suggestions(response_id: str, user=Depends(get_optional_user)):
 @app.get("/assessment/{response_id}/ai-impact")
 def get_ai_impact(response_id: str, force: bool = False, user=Depends(get_optional_user)):
     profile_row = supabase.table('assessment_responses') \
-        .select('full_name,current_stage,country,education_field,sectors_of_interest,ai_impact_cache,user_id') \
+        .select('full_name,current_stage,country,education_field,sectors_of_interest,ai_impact_cache,ai_impact_cache_free,user_id') \
         .eq('id', response_id).single().execute()
     if not profile_row.data:
         raise HTTPException(status_code=404, detail="No results found for this response")
@@ -644,10 +675,15 @@ def get_ai_impact(response_id: str, force: bool = False, user=Depends(get_option
     if force:
         _assert_can_force_refresh(owner_user_id, user)
     tier = get_effective_tier(owner_user_id)
-    careers_cap = 2 if tier == "free" else 5
+    # Free tier generates (and caches) only the 2 careers it's entitled to see, instead
+    # of paying for a 5-career Gemini call and discarding 3 — see create_report()'s
+    # matching *_free cache columns for why paid tiers share a single "full" cache.
+    is_free = tier == "free"
+    careers_cap = 2 if is_free else 5
+    cache_col = 'ai_impact_cache_free' if is_free else 'ai_impact_cache'
 
-    if profile_row.data.get('ai_impact_cache') and not force:
-        cached = profile_row.data['ai_impact_cache']
+    cached = profile_row.data.get(cache_col)
+    if cached and not force:
         return {**cached, "careers": (cached.get("careers") or [])[:careers_cap]}
 
     rows = supabase.table('assessment_results') \
@@ -658,13 +694,13 @@ def get_ai_impact(response_id: str, force: bool = False, user=Depends(get_option
     summary = build_framework_output(rows.data)
     careers = supabase.table('careers').select('*').execute().data or []
     semantic_scores = get_career_semantic_scores(supabase, summary, profile_row.data or {})
-    top5    = score_careers(summary, profile_row.data or {}, careers, semantic_scores)[:5]
+    top_careers = score_careers(summary, profile_row.data or {}, careers, semantic_scores)[:careers_cap]
 
     from report_generator import generate_ai_impact
-    result = generate_ai_impact(profile_row.data or {}, summary, top5)
+    result = generate_ai_impact(profile_row.data or {}, summary, top_careers, career_count=careers_cap)
 
     supabase.table('assessment_responses') \
-        .update({'ai_impact_cache': result}) \
+        .update({cache_col: result}) \
         .eq('id', response_id).execute()
 
     return {**result, "careers": (result.get("careers") or [])[:careers_cap]}
@@ -736,6 +772,7 @@ def email_report(response_id: str, background_tasks: BackgroundTasks, locale: st
         filename,
         locale or 'en',
         template_row.data[0] if template_row.data else None,
+        supabase,
     )
     return {"status": "queued", "email": to_email}
 
@@ -750,6 +787,35 @@ def update_email_template(key: str, body: dict, _=Depends(require_admin)):
     if not result.data:
         raise HTTPException(status_code=404, detail="Template not found")
     return result.data[0]
+
+class SmtpSettingsRequest(BaseModel):
+    host: str
+    port: int
+    user: str
+    password: str | None = None  # omitted/blank = keep existing password
+    from_email: str
+    from_name: str
+
+@app.get("/admin/smtp-settings")
+def get_smtp_settings(_=Depends(require_admin)):
+    row = supabase.table('app_settings').select('value').eq('key', 'smtp_settings').execute()
+    value = (row.data[0]['value'] if row.data else None) or {}
+    return {**value, "password": "••••••••" if value.get("password") else ""}
+
+@app.put("/admin/smtp-settings")
+def update_smtp_settings(body: SmtpSettingsRequest, _=Depends(require_admin)):
+    existing = supabase.table('app_settings').select('value').eq('key', 'smtp_settings').execute()
+    current = (existing.data[0]['value'] if existing.data else None) or {}
+    value = body.model_dump()
+    if not value.get("password"):
+        value["password"] = current.get("password", "")
+    supabase.table('app_settings').upsert({
+        'key': 'smtp_settings',
+        'value': value,
+        'updated_at': datetime.now(timezone.utc).isoformat(),
+    }, on_conflict='key').execute()
+    invalidate_smtp_cache()
+    return {**value, "password": "••••••••" if value.get("password") else ""}
 
 class TestModeRequest(BaseModel):
     enabled: bool
@@ -1617,12 +1683,26 @@ def get_my_plan(user=Depends(get_current_user)):
         "subscription_current_period_end": plan.get('subscription_current_period_end'),
     }
 
+def _invalidate_free_tier_report_cache(user_id: str):
+    """Called whenever a user's tier upgrades off 'free'. Their assessment_responses rows
+    may already hold a free-tier-sized AI report cache (fewer careers/AI-impact items than
+    a paid report should show) — nulling it out forces report_generator.create_report() and
+    GET /assessment/{id}/ai-impact to regenerate at full size on the next request."""
+    supabase.table('assessment_responses').update({
+        'ai_impact_cache_free': None,
+        'ai_content_cache_free': None,
+        'ai_impact_cache_ar_free': None,
+        'ai_content_cache_ar_free': None,
+    }).eq('user_id', user_id).execute()
+
 def _activate_plan(user_id: str, plan_code: str):
     """Applies a paid plan_code to user_plans. Pathfinder is a permanent, one-time
     unlock; launchpad_* extends a rolling subscription window independently of it."""
     catalog_entry = PLAN_CATALOG.get(plan_code)
     if not catalog_entry:
         return
+
+    _invalidate_free_tier_report_cache(user_id)
 
     if plan_code == "pathfinder":
         supabase.table('user_plans').upsert({
