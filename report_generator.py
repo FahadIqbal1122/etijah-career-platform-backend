@@ -218,6 +218,17 @@ ARABIC_LANGUAGE_INSTRUCTION = (
     "free-text narrative fields.\n\n"
 )
 
+def _as_dict(value) -> dict:
+    """Gemini's JSON mode is reliable but not schema-enforced — an occasional
+    response (especially after a translate_report_json() re-generation pass)
+    puts the wrong type on a key (e.g. a string where a nested object was
+    expected). Downstream code calls .get()/[:n] on these assuming the right
+    shape; coerce to a safe empty default instead of crashing PDF generation."""
+    return value if isinstance(value, dict) else {}
+
+def _as_list(value) -> list:
+    return value if isinstance(value, list) else []
+
 def _generate_json(model, prompt: str, retries: int = 1) -> dict:
     """Gemini's strict JSON mode is reliable but not perfect — an occasional stray
     unescaped character or truncated response yields invalid JSON. Regenerating is
@@ -451,7 +462,7 @@ def build_html_report(user_data: dict, summary: dict, raw_scores: list, ai: dict
 
     primary_type = riasec_types[0] if riasec_types else 'realistic'
     primary_meta = riasec_meta_src.get(primary_type, riasec_meta_src['realistic'])
-    riasec_code  = ''.join(t[0].upper() for t in riasec_types[:3])
+    riasec_code  = ''.join(t[0].upper() for t in riasec_types[:3]) or '—'
 
     # ── RIASEC cards ──────────────────────────────────────────────────────────
     narr_keys   = ['riasec_primary_narrative', 'riasec_secondary_narrative', 'riasec_tertiary_narrative']
@@ -488,7 +499,7 @@ def build_html_report(user_data: dict, summary: dict, raw_scores: list, ai: dict
         )
 
     # ── Big Five cards ────────────────────────────────────────────────────────
-    bf_narrs = ai.get('big_five_narratives', {})
+    bf_narrs = _as_dict(ai.get('big_five_narratives'))
     bf_cards = ""
     for bf in ['openness','conscientiousness','extraversion','agreeableness','stability']:
         level = big_five.get(bf, 'medium')
@@ -509,7 +520,7 @@ def build_html_report(user_data: dict, summary: dict, raw_scores: list, ai: dict
         )
 
     # ── Values cards ──────────────────────────────────────────────────────────
-    val_narrs    = ai.get('values_narratives', {})
+    val_narrs    = _as_dict(ai.get('values_narratives'))
     val_narr_list = [val_narrs.get('value_1',''), val_narrs.get('value_2',''), val_narrs.get('value_3','')]
     value_cards  = ""
     for i, val in enumerate(top_values[:3]):
@@ -528,8 +539,8 @@ def build_html_report(user_data: dict, summary: dict, raw_scores: list, ai: dict
         )
 
     # ── Strengths cards ───────────────────────────────────────────────────────
-    str_narrs    = ai.get('strengths_narratives', {})
-    str_narr_list = [str_narrs.get('strength_1',{}), str_narrs.get('strength_2',{}), str_narrs.get('strength_3',{})]
+    str_narrs    = _as_dict(ai.get('strengths_narratives'))
+    str_narr_list = [_as_dict(str_narrs.get('strength_1')), _as_dict(str_narrs.get('strength_2')), _as_dict(str_narrs.get('strength_3'))]
     strength_cards = ""
     for i, st in enumerate(top_strengths[:3]):
         sc   = scores.get(st, 0)
@@ -595,7 +606,8 @@ def build_html_report(user_data: dict, summary: dict, raw_scores: list, ai: dict
 
     # ── Career recommendation cards ───────────────────────────────────────────
     career_cards = ""
-    for rec in ai.get('career_recommendations', [])[:career_rec_cap]:
+    for rec in _as_list(ai.get('career_recommendations'))[:career_rec_cap]:
+        rec = _as_dict(rec)
         ms = rec.get('match_score', 0)
         career_cards += (
             f'<div class="card" style="margin-bottom:10px;">'
@@ -675,7 +687,7 @@ def build_html_report(user_data: dict, summary: dict, raw_scores: list, ai: dict
     ai_impact_summary = (ai_impact or {}).get('overall_summary', '')
 
     # ── Action plan ───────────────────────────────────────────────────────────
-    ap = ai.get('action_plan', {})
+    ap = _as_dict(ai.get('action_plan'))
 
     def render_phase(items: list, color: str, title: str) -> str:
         lis = "".join(
@@ -690,9 +702,9 @@ def build_html_report(user_data: dict, summary: dict, raw_scores: list, ai: dict
         )
 
     action_html = (
-        render_phase(ap.get('month_1',    []), '#2a9d5c', T['action_month1']) +
-        render_phase(ap.get('months_2_3', []), '#00c9a7', T['action_months23']) +
-        render_phase(ap.get('months_4_6', []), '#0770ba', T['action_months46'])
+        render_phase(_as_list(ap.get('month_1')),    '#2a9d5c', T['action_month1']) +
+        render_phase(_as_list(ap.get('months_2_3')), '#00c9a7', T['action_months23']) +
+        render_phase(_as_list(ap.get('months_4_6')), '#0770ba', T['action_months46'])
     )
 
     if locale == 'ar':
@@ -1189,12 +1201,16 @@ def create_report(response_id: str, supabase_client, tier: str = "launchpad", lo
     if not scores_row.data:
         raise ValueError(f"No scores found for {response_id}")
 
-    # Escape ILIKE wildcards in user-supplied country text so a submitted "%" or "_"
-    # can't widen the match to an arbitrary/wrong country_profiles row.
-    user_country = (profile.data.get('country') or '').replace('\\', '\\\\').replace('%', '\\%').replace('_', '\\_')
-    country_row = supabase_client.table('country_profiles') \
-        .select('*').ilike('country_name', user_country).limit(1).execute()
-    country_profile = country_row.data[0] if country_row.data else None
+    # assessment_responses.country stores the QO1 slug (e.g. "saudi_arabia"), not a
+    # display name, so it can't be matched against country_profiles.country_name
+    # (e.g. "Saudi Arabia") directly — go through COUNTRY_CODE_MAP and match on the
+    # code instead.
+    user_country_code = COUNTRY_CODE_MAP.get(profile.data.get('country') or '')
+    country_profile = None
+    if user_country_code:
+        country_row = supabase_client.table('country_profiles') \
+            .select('*').eq('country_code', user_country_code).limit(1).execute()
+        country_profile = country_row.data[0] if country_row.data else None
 
     raw_scores = scores_row.data
     summary    = build_framework_output(raw_scores)
@@ -1239,39 +1255,45 @@ def create_report(response_id: str, supabase_client, tier: str = "launchpad", lo
     impact_col_ar = 'ai_impact_cache_ar_free' if is_free else 'ai_impact_cache_ar'
     content_col_ar = 'ai_content_cache_ar_free' if is_free else 'ai_content_cache_ar'
 
-    # Each write below is conditioned on the column still being null, so if two requests
-    # race for the same response_id and both generate a value, the second write can't
-    # clobber whatever the first one already committed — it just no-ops instead.
-    ai_impact = profile.data.get(impact_col)
-    if not ai_impact:
-        ai_impact = generate_ai_impact(profile.data, summary, top_careers[:impact_count], 'en', career_count=impact_count)
-        supabase_client.table('assessment_responses') \
-            .update({impact_col: ai_impact}) \
-            .eq('id', response_id).is_(impact_col, 'null').execute()
+    def _generate_and_cache(col: str, generate):
+        """Each write is conditioned on the column still being null, so if two
+        requests race for the same response_id and both generate a value, the
+        second write can't clobber whatever the first one already committed —
+        it just no-ops. When that happens, re-read the column so the caller
+        gets back whatever actually ended up persisted (the winning request's
+        value), not its own discarded generation — otherwise a later Arabic
+        translation pass could translate content that was never the row's
+        real English cache, permanently diverging EN/AR content."""
+        value = generate()
+        written = supabase_client.table('assessment_responses') \
+            .update({col: value}) \
+            .eq('id', response_id).is_(col, 'null').execute()
+        if written.data:
+            return value
+        refreshed = supabase_client.table('assessment_responses').select(col).eq('id', response_id).single().execute()
+        return refreshed.data.get(col) or value
 
-    ai_content = profile.data.get(content_col)
-    if not ai_content:
-        ai_content = generate_ai_content(profile.data, summary, raw_scores, top_careers, country_profile, coaching_matches, 'en', career_count=content_count)
-        supabase_client.table('assessment_responses') \
-            .update({content_col: ai_content}) \
-            .eq('id', response_id).is_(content_col, 'null').execute()
+    ai_impact = profile.data.get(impact_col) or _generate_and_cache(
+        impact_col, lambda: generate_ai_impact(profile.data, summary, top_careers[:impact_count], 'en', career_count=impact_count))
+
+    ai_content = profile.data.get(content_col) or _generate_and_cache(
+        content_col, lambda: generate_ai_content(profile.data, summary, raw_scores, top_careers, country_profile, coaching_matches, 'en', career_count=content_count))
 
     if locale == 'ar':
-        ai_impact_ar = profile.data.get(impact_col_ar)
-        if not ai_impact_ar:
-            ai_impact_ar = translate_report_json(ai_impact, 'ar')
-            supabase_client.table('assessment_responses') \
-                .update({impact_col_ar: ai_impact_ar}) \
-                .eq('id', response_id).is_(impact_col_ar, 'null').execute()
-
-        ai_content_ar = profile.data.get(content_col_ar)
-        if not ai_content_ar:
-            ai_content_ar = translate_report_json(ai_content, 'ar')
-            supabase_client.table('assessment_responses') \
-                .update({content_col_ar: ai_content_ar}) \
-                .eq('id', response_id).is_(content_col_ar, 'null').execute()
-
-        ai_impact, ai_content = ai_impact_ar, ai_content_ar
+        try:
+            ai_impact_ar = profile.data.get(impact_col_ar) or _generate_and_cache(
+                impact_col_ar, lambda: translate_report_json(ai_impact, 'ar'))
+            ai_content_ar = profile.data.get(content_col_ar) or _generate_and_cache(
+                content_col_ar, lambda: translate_report_json(ai_content, 'ar'))
+            ai_impact, ai_content = ai_impact_ar, ai_content_ar
+        except (json.JSONDecodeError, ValueError):
+            # Translation failed after its retries — the English content was
+            # already generated and cached successfully above, so hand back a
+            # working English report rather than failing the whole PDF. Reset
+            # locale too: build_html_report() below still reads it to choose
+            # Arabic chrome/RTL layout, which would otherwise wrap English
+            # body text in an Arabic-labeled, right-to-left document.
+            locale = 'en'
 
     # Job listings have no free-tier gate on the live site (unlike companies/courses
     # below) — matching that here, so read the cache regardless of tier. Reads the

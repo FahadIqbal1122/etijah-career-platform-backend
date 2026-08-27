@@ -109,6 +109,10 @@ def score_answer(question_id: str, raw_answer) -> float:
     return score
 
 def compute_scores(answers: dict) -> list[dict]:
+    # A skipped question can arrive as an explicit null (rather than an omitted
+    # key) — treat it the same as "not answered" instead of crashing float(None).
+    answers = {q: raw for q, raw in answers.items() if raw is not None and raw != ''}
+
     # Detect flat RIASEC behavioral profile (≥80% of scale answers are 5 or 6)
     riasec_behavioral = [
         float(answers[q]) for q in answers
@@ -301,4 +305,18 @@ COUNTRY_CODE_MAP = {
     'kuwait': 'KW',
     'oman': 'OM',
     'qatar': 'QA',
+    'uae': 'AE',
+}
+
+# Display names for the same slugs — assessment_responses.country stores the raw
+# QO1 option value (e.g. "saudi_arabia"), not a human-readable name, so anything
+# that needs to show/search the country as text (JSearch queries, report copy)
+# should go through this rather than using the slug directly.
+COUNTRY_NAMES = {
+    'saudi_arabia': 'Saudi Arabia',
+    'bahrain': 'Bahrain',
+    'kuwait': 'Kuwait',
+    'oman': 'Oman',
+    'qatar': 'Qatar',
+    'uae': 'United Arab Emirates',
 }

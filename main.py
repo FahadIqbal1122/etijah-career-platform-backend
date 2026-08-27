@@ -6,7 +6,7 @@ from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.middleware.cors import CORSMiddleware
 from supabase import create_client, Client
 from dotenv import load_dotenv
-from scoring_engine import compute_scores, build_framework_output, score_careers, get_career_semantic_scores, COUNTRY_CODE_MAP
+from scoring_engine import compute_scores, build_framework_output, score_careers, get_career_semantic_scores, COUNTRY_CODE_MAP, COUNTRY_NAMES
 from pydantic import BaseModel, EmailStr, Field
 from typing import Any
 import io
@@ -14,8 +14,10 @@ from datetime import datetime, timezone, timedelta
 from collections import Counter
 from fastapi.responses import StreamingResponse
 from report_generator import create_report
+from google.api_core.exceptions import GoogleAPICallError
+from requests.exceptions import RequestException
 from smtp_service import send_report_email, send_feedback_email, send_results_ready_email, invalidate_smtp_cache
-import httpx, hmac, hashlib, json
+import httpx, hmac, hashlib, json, secrets
 from coaching_methodology import METHODOLOGY_DOC
 from coaching_pipeline import chunk_transcript, embed_and_store_chunks, client, embed_country_profile, sync_country_profile_embedding, sync_career_embedding, _gemini_embed
 from content_policy import is_appropriate, CULTURAL_GUARDRAIL
@@ -107,8 +109,12 @@ def _assert_can_view(owner_user_id: str | None, user):
 def _assert_can_force_refresh(owner_user_id: str | None, user):
     """force=true bypasses the cache and pays for a live LLM/API call — unlike a plain view,
     this must require the caller to be authenticated as the assessment's owner (or an admin),
-    otherwise anyone who knows a public response_id could loop it to run up API costs."""
-    if not user or (owner_user_id and user.id != owner_user_id and (user.app_metadata or {}).get("role") != "admin"):
+    otherwise anyone who knows a public response_id could loop it to run up API costs. An
+    unclaimed response (owner_user_id is None) has no legitimate owner to defer to, so only
+    an admin — not just "any logged-in user" — may force-refresh it."""
+    is_owner = bool(owner_user_id) and bool(user) and user.id == owner_user_id
+    is_admin = bool(user) and (user.app_metadata or {}).get("role") == "admin"
+    if not (is_owner or is_admin):
         raise HTTPException(status_code=403, detail="Sign in as the report owner to refresh this data")
 
 TEST_MODE_KEY = "test_mode_all_plans_unlocked"
@@ -157,6 +163,31 @@ def _get_homepage_mode() -> str:
     _homepage_mode_cache["value"] = mode
     _homepage_mode_cache["checked_at"] = now
     return mode
+
+DASHBOARD_SHARE_TOKEN_KEY = "dashboard_share_token"
+_share_token_cache: dict[str, Any] = {"value": None, "checked_at": None}
+_SHARE_TOKEN_CACHE_TTL = timedelta(seconds=10)
+
+def _get_share_token() -> str | None:
+    """Admin-regeneratable share token (app_settings.dashboard_share_token)
+    gating the public read-only /public/dashboard-stats link. Falls back to
+    the DASHBOARD_SHARE_TOKEN env var only when no DB value has been
+    generated yet, so an already-deployed env-configured link keeps working
+    until an admin explicitly regenerates it from the UI (which is also how
+    a leaked link gets revoked — regenerating invalidates the old one)."""
+    now = datetime.now(timezone.utc)
+    if _share_token_cache["checked_at"] and now - _share_token_cache["checked_at"] < _SHARE_TOKEN_CACHE_TTL:
+        return _share_token_cache["value"]
+    token = DASHBOARD_SHARE_TOKEN
+    try:
+        row = supabase.table('app_settings').select('value').eq('key', DASHBOARD_SHARE_TOKEN_KEY).execute()
+        if row.data and row.data[0]['value']:
+            token = row.data[0]['value']
+    except Exception as e:
+        print("Share token lookup failed, using env fallback:", e)
+    _share_token_cache["value"] = token
+    _share_token_cache["checked_at"] = now
+    return token
 
 def get_effective_tier(user_id: str | None) -> str:
     """free | pathfinder | launchpad, computed from user_plans (not stored directly)."""
@@ -591,17 +622,34 @@ def get_dashboard_stats(_=Depends(require_admin)):
 
 @app.get("/admin/dashboard-share-link")
 def get_dashboard_share_link(_=Depends(require_admin)):
-    if not DASHBOARD_SHARE_TOKEN:
+    token = _get_share_token()
+    if not token:
         raise HTTPException(status_code=404, detail="Share link not configured")
-    return {"token": DASHBOARD_SHARE_TOKEN}
+    return {"token": token}
+
+@app.post("/admin/dashboard-share-link/regenerate")
+def regenerate_dashboard_share_link(_=Depends(require_admin)):
+    """Issues a fresh share token and persists it, invalidating every link built
+    from the old one — this is how a leaked/no-longer-wanted share link is revoked,
+    since there was previously no way to invalidate one short of an env var change
+    + redeploy."""
+    new_token = secrets.token_urlsafe(32)
+    supabase.table('app_settings').upsert({
+        'key': DASHBOARD_SHARE_TOKEN_KEY,
+        'value': new_token,
+        'updated_at': datetime.now(timezone.utc).isoformat(),
+    }, on_conflict='key').execute()
+    _share_token_cache["checked_at"] = None
+    return {"token": new_token}
 
 @app.get("/public/dashboard-stats")
 def get_public_dashboard_stats(token: str):
     """Unauthenticated read-only dashboard for sharing via a long, unguessable
-    link — no login, gated only by DASHBOARD_SHARE_TOKEN matching the URL token.
+    link — no login, gated only by the share token matching the URL token.
     404s (not 401/403) on a bad token so a wrong guess doesn't confirm the
     endpoint exists."""
-    if not DASHBOARD_SHARE_TOKEN or not hmac.compare_digest(token, DASHBOARD_SHARE_TOKEN):
+    share_token = _get_share_token()
+    if not share_token or not hmac.compare_digest(token, share_token):
         raise HTTPException(status_code=404, detail="Not found")
     return _build_dashboard_stats()
 
@@ -725,6 +773,12 @@ def get_report(response_id: str, locale: str | None = None, user=Depends(get_opt
         raise HTTPException(status_code=502, detail="AI report generation failed, please try again")
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
+    except (GoogleAPICallError, RequestException):
+        # Gemini's own request deadline (or the raw embedding call's timeout) was
+        # hit — surface this as a retryable "still working on it" instead of the
+        # confusing "Report generation failed: 504 The request timed out" that
+        # GoogleAPICallError's str() otherwise produces.
+        raise HTTPException(status_code=503, detail="Report generation is taking longer than expected. Please try again in a moment.")
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Report generation failed: {str(e)}")
 
@@ -759,6 +813,8 @@ def email_report(response_id: str, background_tasks: BackgroundTasks, locale: st
         raise HTTPException(status_code=502, detail="AI report generation failed, please try again")
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
+    except (GoogleAPICallError, RequestException):
+        raise HTTPException(status_code=503, detail="Report generation is taking longer than expected. Please try again in a moment.")
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Report generation failed: {str(e)}")
 
@@ -1026,7 +1082,7 @@ async def fetch_market_analysis(background_tasks: BackgroundTasks, _=Depends(req
     supabase.table("market_fetch_status").upsert({
         "week": week_start, "status": "running", "inserted": 0, "errors": 0,
         "insert_error": None, "started_at": datetime.now(timezone.utc).isoformat(), "finished_at": None,
-    }).execute()
+    }, on_conflict="week").execute()
 
     background_tasks.add_task(_run_market_fetch, week_start)
     return {"week": week_start, "status": "started"}
@@ -1263,7 +1319,8 @@ def _search_matching_jobs(response_id: str) -> list[dict] | None:
     semantic_scores = get_career_semantic_scores(supabase, summary, profile.data)
     top3    = score_careers(summary, profile.data, careers, semantic_scores)[:3]
 
-    country = profile.data.get('country', '')
+    raw_country = profile.data.get('country', '')
+    country = COUNTRY_NAMES.get(raw_country, raw_country)
     rapidapi_key = os.getenv("RAPIDAPI_KEY")
 
     all_jobs = []
@@ -1544,9 +1601,14 @@ def get_companies_suggestions(response_id: str, user=Depends(get_optional_user))
 
 @app.post("/assessment/link-by-email")
 def link_by_email(user=Depends(get_current_user)):
+    # Escape ILIKE wildcards in the email so a "_" (a valid, common local-part
+    # character) or "%" can't widen the match to someone else's response —
+    # this must stay case-insensitive (ilike, not eq) since assessment emails
+    # aren't consistently lowercased at submit time.
+    safe_email = (user.email or '').replace('\\', '\\\\').replace('%', '\\%').replace('_', '\\_')
     result = supabase.table('assessment_responses') \
         .update({"user_id": user.id}) \
-        .ilike('email', user.email) \
+        .ilike('email', safe_email) \
         .is_('user_id', 'null') \
         .execute()
     return {"linked": len(result.data or [])}
@@ -1614,6 +1676,7 @@ def coach(payload: CoachRequest, user=Depends(get_current_user)):
         max_tokens=1024,
         system=system_prompt,
         messages=payload.conversation_history + [{"role": "user", "content": payload.message}],
+        timeout=30.0,
     )
     return {"reply": response.content[0].text}
 
@@ -1732,6 +1795,8 @@ def _activate_plan(user_id: str, plan_code: str):
 
 @app.post("/hub/transactions")
 async def receive_hub_transaction(request: Request):
+    if not HUB_API_KEY:
+        raise HTTPException(status_code=500, detail="HUB_API_KEY is not configured")
     raw_body = await request.body()
     signature = request.headers.get("X-Hub-Signature", "")
     expected = hmac.new(HUB_API_KEY.encode(), raw_body, hashlib.sha256).hexdigest()
@@ -1740,24 +1805,34 @@ async def receive_hub_transaction(request: Request):
 
     body = HubTransactionBody(**json.loads(raw_body))
 
-    existing = supabase.table('transactions') \
-        .select('status') \
-        .eq('order_ref', body.order_ref) \
-        .execute()
-    already_paid = bool(existing.data) and existing.data[0]['status'] == 'paid'
+    # record_hub_transaction (Postgres function) always writes/refreshes the
+    # transaction row, and atomically reports whether THIS call is the one
+    # that just transitioned it from not-paid to paid — so a duplicate/
+    # retried webhook delivery for the same order_ref (payment providers
+    # commonly retry) can't double-apply the plan. Done as a single DB-side
+    # function rather than a multi-step read-then-write from here, since a
+    # multi-step version has a real race window between its steps (see its
+    # definition for the exact locking it relies on).
+    try:
+        result = supabase.rpc('record_hub_transaction', {
+            'p_user_id': body.external_user_id,
+            'p_order_ref': body.order_ref,
+            'p_plan_code': body.plan_code,
+            'p_amount': body.amount,
+            'p_currency': body.currency,
+            'p_status': body.status,
+            'p_tap_charge_id': body.tap_charge_id,
+            'p_paid_at': body.paid_at,
+        }).execute()
+    except Exception as e:
+        # A genuine failure here (not just "already handled") must not be
+        # swallowed as if it were — otherwise a customer can pay and never
+        # get their plan with zero trace, since the provider won't retry a
+        # 200 response.
+        print(f"record_hub_transaction failed for order_ref={body.order_ref}:", e)
+        raise HTTPException(status_code=500, detail="Failed to record transaction")
 
-    supabase.table('transactions').upsert({
-        'user_id': body.external_user_id,
-        'order_ref': body.order_ref,
-        'plan_code': body.plan_code,
-        'amount': body.amount,
-        'currency': body.currency,
-        'status': body.status, 
-        'tap_charge_id': body.tap_charge_id,
-        'paid_at': body.paid_at,
-    }, on_conflict='order_ref').execute()
-
-    if body.status == 'paid' and not already_paid:
+    if result.data:
         _activate_plan(body.external_user_id, body.plan_code)
-    
+
     return {"received": True}

@@ -10,7 +10,7 @@ supabase = create_client(os.getenv("SUPABASE_URL"), os.getenv("SUPABASE_KEY"))
 def _gemini_embed(text: str) -> list[float]:
     api_key = os.getenv("GEMINI_API_KEY")
     url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-001:embedContent?key={api_key}"
-    resp = requests.post(url, json={"content": {"parts": [{"text": text}]}, "outputDimensionality": 768})
+    resp = requests.post(url, json={"content": {"parts": [{"text": text}]}, "outputDimensionality": 768}, timeout=30)
     resp.raise_for_status()
     return resp.json()["embedding"]["values"]
 
@@ -25,6 +25,7 @@ def chunk_transcript(raw_transcript: str) -> list[dict]:
         model="claude-sonnet-4-6",
         max_tokens=4096,
         messages=[{"role": "user", "content": prompt}],
+        timeout=60.0,
     )
     return parse_json_beats(response.content[0].text) #parse + validate JSON
 

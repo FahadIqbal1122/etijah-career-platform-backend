@@ -5,6 +5,7 @@ Sends via Titan Mail (Hostinger) by default; any SMTP host works through the sam
 
 import html as _html
 import os
+import re
 import smtplib
 import ssl
 from datetime import datetime, timezone, timedelta
@@ -75,15 +76,22 @@ def send_email(to, subject, html_body, text_body=None, attachments=None, reply_t
         msg.add_attachment(content, maintype=maintype, subtype=subtype or "octet-stream", filename=filename)
 
     context = ssl.create_default_context()
-    if cfg["port"] == 465:
-        with smtplib.SMTP_SSL(cfg["host"], cfg["port"], context=context) as server:
-            server.login(cfg["user"], cfg["password"])
-            server.send_message(msg)
-    else:
-        with smtplib.SMTP(cfg["host"], cfg["port"]) as server:
-            server.starttls(context=context)
-            server.login(cfg["user"], cfg["password"])
-            server.send_message(msg)
+    try:
+        if cfg["port"] == 465:
+            with smtplib.SMTP_SSL(cfg["host"], cfg["port"], context=context, timeout=20) as server:
+                server.login(cfg["user"], cfg["password"])
+                server.send_message(msg)
+        else:
+            with smtplib.SMTP(cfg["host"], cfg["port"], timeout=20) as server:
+                server.starttls(context=context)
+                server.login(cfg["user"], cfg["password"])
+                server.send_message(msg)
+    except Exception as e:
+        # send_email is normally invoked from a FastAPI BackgroundTasks callback,
+        # where an unhandled exception is otherwise swallowed silently with no log
+        # and no way for the caller to ever find out the email didn't go out.
+        print(f"SMTP send failed (to={recipients}, subject={subject!r}):", e)
+        raise
 
 
 DEFAULT_REPORT_TEMPLATE = {
@@ -114,11 +122,19 @@ def render_template(template_row, variables=None, locale="en"):
     is_ar = locale == "ar"
     subject = (template_row.get("subject_ar") if is_ar else template_row.get("subject_en")) or template_row.get("subject_en") or ""
     html_body = (template_row.get("body_html_ar") if is_ar else template_row.get("body_html_en")) or template_row.get("body_html_en") or ""
-    for key, value in (variables or {}).items():
-        token = "{{" + key + "}}"
-        plain_text = "" if value is None else str(value)
-        subject = subject.replace(token, plain_text)
-        html_body = html_body.replace(token, _html.escape(plain_text))
+    variables = variables or {}
+    if variables:
+        # Single-pass regex substitution over the *original* template string for
+        # each field — sequential str.replace() per key would re-scan text already
+        # substituted by an earlier key, so a value that happens to contain another
+        # token's literal "{{...}}" text (e.g. a crafted full_name) would get that
+        # token wrongly substituted too, even though it came from user input.
+        pattern = re.compile("|".join(re.escape("{{" + k + "}}") for k in variables))
+        def _value(token: str) -> str:
+            value = variables.get(token[2:-2])
+            return "" if value is None else str(value)
+        subject = pattern.sub(lambda m: _value(m.group(0)), subject)
+        html_body = pattern.sub(lambda m: _html.escape(_value(m.group(0))), html_body)
     return subject, html_body
 
 
