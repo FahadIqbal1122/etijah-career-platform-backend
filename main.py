@@ -591,6 +591,13 @@ def _count(table: str, **filters) -> int:
 def _count_since(table: str, since: str) -> int:
     return supabase.table(table).select('id', count='exact').gte('created_at', since).execute().count or 0
 
+def _safe_stat(label: str, fn, default):
+    try:
+        return fn()
+    except Exception as e:
+        print(f"dashboard stat '{label}' failed: {type(e).__name__}: {e}")
+        return default
+
 def _build_dashboard_stats() -> dict:
     now = datetime.now(timezone.utc)
     today_start = now.replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
@@ -598,22 +605,22 @@ def _build_dashboard_stats() -> dict:
 
     return {
         "waitlist_signups": {
-            "total": _count('waitlist_signups'),
-            "today": _count_since('waitlist_signups', today_start),
-            "this_week": _count_since('waitlist_signups', week_start),
+            "total": _safe_stat("waitlist_signups.total", lambda: _count('waitlist_signups'), 0),
+            "today": _safe_stat("waitlist_signups.today", lambda: _count_since('waitlist_signups', today_start), 0),
+            "this_week": _safe_stat("waitlist_signups.this_week", lambda: _count_since('waitlist_signups', week_start), 0),
         },
         "assessment_responses": {
-            "total": _count('assessment_responses'),
-            "completed": _count('assessment_responses', completed=True),
+            "total": _safe_stat("assessment_responses.total", lambda: _count('assessment_responses'), 0),
+            "completed": _safe_stat("assessment_responses.completed", lambda: _count('assessment_responses', completed=True), 0),
         },
-        "feedback_responses": _count('feedback_responses'),
-        "applications": _count('applications'),
-        "paid_plans": supabase.table('user_plans').select('user_id', count='exact').execute().count or 0,
-        "courses": _count('courses'),
-        "country_profiles": supabase.table('country_profiles').select('country_code', count='exact').execute().count or 0,
-        "waitlist_page": _get_waitlist_page_stats(),
-        "waitlist_age_breakdown": _get_waitlist_breakdown('age'),
-        "waitlist_country_breakdown": _get_waitlist_breakdown('country'),
+        "feedback_responses": _safe_stat("feedback_responses", lambda: _count('feedback_responses'), 0),
+        "applications": _safe_stat("applications", lambda: _count('applications'), 0),
+        "paid_plans": _safe_stat("paid_plans", lambda: supabase.table('user_plans').select('user_id', count='exact').execute().count or 0, 0),
+        "courses": _safe_stat("courses", lambda: _count('courses'), 0),
+        "country_profiles": _safe_stat("country_profiles", lambda: supabase.table('country_profiles').select('country_code', count='exact').execute().count or 0, 0),
+        "waitlist_page": _safe_stat("waitlist_page", _get_waitlist_page_stats, {"page_views": 0, "clicks": 0, "top_clicks": []}),
+        "waitlist_age_breakdown": _safe_stat("waitlist_age_breakdown", lambda: _get_waitlist_breakdown('age'), []),
+        "waitlist_country_breakdown": _safe_stat("waitlist_country_breakdown", lambda: _get_waitlist_breakdown('country'), []),
     }
 
 @app.get("/admin/dashboard-stats")
