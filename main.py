@@ -598,7 +598,25 @@ def _safe_stat(label: str, fn, default):
         print(f"dashboard stat '{label}' failed: {type(e).__name__}: {e}")
         return default
 
+_dashboard_stats_cache: dict[str, Any] = {"value": None, "computed_at": None}
+_DASHBOARD_STATS_CACHE_TTL = timedelta(seconds=60)
+
 def _build_dashboard_stats() -> dict:
+    """Cached wrapper — the underlying query runs 10+ sequential Supabase
+    round-trips (two of which page through the *entire* waitlist_signups
+    table), which can take long enough to blow past the public share page's
+    15s fetch timeout on a cold hit. A dashboard of aggregate counts doesn't
+    need per-second freshness, so serve a 60s-stale copy instead of
+    recomputing on every request."""
+    now = datetime.now(timezone.utc)
+    if _dashboard_stats_cache["computed_at"] and now - _dashboard_stats_cache["computed_at"] < _DASHBOARD_STATS_CACHE_TTL:
+        return _dashboard_stats_cache["value"]
+    value = _compute_dashboard_stats()
+    _dashboard_stats_cache["value"] = value
+    _dashboard_stats_cache["computed_at"] = now
+    return value
+
+def _compute_dashboard_stats() -> dict:
     now = datetime.now(timezone.utc)
     today_start = now.replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
     week_start = (now - timedelta(days=7)).isoformat()
