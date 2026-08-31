@@ -20,7 +20,7 @@ from smtp_service import send_report_email, send_feedback_email, send_results_re
 import httpx, hmac, hashlib, json, secrets
 from coaching_methodology import METHODOLOGY_DOC
 from coaching_pipeline import chunk_transcript, embed_and_store_chunks, client, embed_country_profile, sync_country_profile_embedding, sync_career_embedding, _gemini_embed
-from content_policy import is_appropriate, CULTURAL_GUARDRAIL
+from content_policy import is_appropriate, is_region_eligible, CULTURAL_GUARDRAIL
 
 load_dotenv()
 
@@ -1346,6 +1346,7 @@ def _search_matching_jobs(response_id: str) -> list[dict] | None:
 
     raw_country = profile.data.get('country', '')
     country = COUNTRY_NAMES.get(raw_country, raw_country)
+    country_code = COUNTRY_CODE_MAP.get(raw_country)
     rapidapi_key = os.getenv("RAPIDAPI_KEY")
 
     all_jobs = []
@@ -1355,7 +1356,12 @@ def _search_matching_jobs(response_id: str) -> list[dict] | None:
         try:
             resp = httpx.get(
                 "https://jsearch.p.rapidapi.com/search",
-                params={"query": f"{career['title']} {country}", "num_pages": "1", "page": "1"},
+                params={
+                    "query": f"{career['title']} {country}",
+                    "num_pages": "1",
+                    "page": "1",
+                    **({"country": country_code.lower()} if country_code else {}),
+                },
                 headers={
                     "X-RapidAPI-Key": rapidapi_key,
                     "X-RapidAPI-Host": "jsearch.p.rapidapi.com",
@@ -1367,7 +1373,10 @@ def _search_matching_jobs(response_id: str) -> list[dict] | None:
                 job_id = job.get("job_id")
                 job_title = job.get("job_title")
                 employer_name = job.get("employer_name")
+                job_country = job.get("job_country")
                 if not is_appropriate(job_title, employer_name, job.get("job_description")):
+                    continue
+                if not is_region_eligible(job_title, job.get("job_description"), job_country, country_code):
                     continue
                 if job_id and job_id not in seen_ids:
                     seen_ids.add(job_id)

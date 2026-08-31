@@ -9,6 +9,8 @@ import re
 import html as _html
 from datetime import datetime
 import google.generativeai as genai
+from google.api_core.exceptions import DeadlineExceeded, ServiceUnavailable
+from requests.exceptions import Timeout, ConnectionError as RequestsConnectionError
 from weasyprint import HTML
 from scoring_engine import build_framework_output, score_careers, COUNTRY_CODE_MAP
 from coaching_pipeline import _gemini_embed
@@ -233,10 +235,22 @@ def _generate_json(model, prompt: str, retries: int = 1) -> dict:
     """Gemini's strict JSON mode is reliable but not perfect — an occasional stray
     unescaped character or truncated response yields invalid JSON. Regenerating is
     far more likely to fix it than any repair heuristic, so retry once before
-    letting json.JSONDecodeError bubble up."""
+    letting json.JSONDecodeError bubble up.
+
+    A report is several of these calls chained (impact, content, translation),
+    each individually capped at GEMINI_TIMEOUT_S — so a single transient slow
+    response used to fail the whole report immediately with no retry. Retry
+    once on a timeout-shaped failure (deadline hit, or the backing service
+    briefly unavailable) before giving up — but not on other GoogleAPICallError
+    subclasses like InvalidArgument/PermissionDenied, which won't be fixed by
+    retrying and would just add a wasted ~30s before failing anyway."""
     last_err: Exception | None = None
     for _ in range(retries + 1):
-        response = model.generate_content(prompt, request_options={"timeout": GEMINI_TIMEOUT_S})
+        try:
+            response = model.generate_content(prompt, request_options={"timeout": GEMINI_TIMEOUT_S})
+        except (DeadlineExceeded, ServiceUnavailable, Timeout, RequestsConnectionError) as e:
+            last_err = e
+            continue
         text = response.text.strip()
         text = re.sub(r'^```[a-z]*\n?', '', text)
         text = re.sub(r'\n?```$', '', text)

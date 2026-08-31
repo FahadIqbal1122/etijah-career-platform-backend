@@ -288,8 +288,17 @@ def score_careers(summary: dict, user_data: dict, careers: list, semantic_scores
         if career.get('entrepreneurship_friendly') and user_entrepreneur_score >= 50:
             score += 2
         if user_education and user_education != 'not_applicable':
-            if user_education in (career.get('education_fields') or []):
+            career_fields = career.get('education_fields') or []
+            if user_education in career_fields:
                 score += 3
+            elif career_fields:
+                # The career names specific fields it wants and the user's
+                # isn't one of them — don't veto it outright (legitimate
+                # career-change suggestions exist), but stop letting a strong
+                # RIASEC/semantic match alone carry a field-specific career
+                # (e.g. IT roles) to the top for someone with no relevant
+                # background.
+                score -= 2
         if career.get('sector') in user_sector_names:
             score += 2
         # Similarity is 0-1; weighted to be comparable to the tag signals above

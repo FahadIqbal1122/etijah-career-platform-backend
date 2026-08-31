@@ -7,12 +7,29 @@ from supabase import create_client, Client
 client = Anthropic()
 supabase = create_client(os.getenv("SUPABASE_URL"), os.getenv("SUPABASE_KEY"))
 
-def _gemini_embed(text: str) -> list[float]:
+def _gemini_embed(text: str, retries: int = 1) -> list[float]:
     api_key = os.getenv("GEMINI_API_KEY")
     url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-001:embedContent?key={api_key}"
-    resp = requests.post(url, json={"content": {"parts": [{"text": text}]}, "outputDimensionality": 768}, timeout=30)
-    resp.raise_for_status()
-    return resp.json()["embedding"]["values"]
+    # One of several sequential Gemini calls a report generation chains together
+    # (see report_generator._generate_json) — a lone transient timeout here used
+    # to fail the whole report with no retry, so give it the same one-retry
+    # tolerance as the others before letting the exception bubble up. Scoped to
+    # Timeout/ConnectionError plus 5xx (server-side, transient) — not a bare 4xx
+    # like a bad key or malformed request, which won't be fixed by retrying and
+    # would just waste ~30s before failing anyway.
+    last_err: Exception | None = None
+    for _ in range(retries + 1):
+        try:
+            resp = requests.post(url, json={"content": {"parts": [{"text": text}]}, "outputDimensionality": 768}, timeout=30)
+            resp.raise_for_status()
+            return resp.json()["embedding"]["values"]
+        except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as e:
+            last_err = e
+        except requests.exceptions.HTTPError as e:
+            if e.response is None or e.response.status_code < 500:
+                raise
+            last_err = e
+    raise last_err
 
 def chunk_transcript(raw_transcript: str) -> list[dict]:
     prompt = f"""Split this speaker-labeled coaching transcript into discrete beats.
