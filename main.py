@@ -126,6 +126,23 @@ def _assert_can_force_refresh(owner_user_id: str | None, user):
     if not (is_owner or is_admin):
         raise HTTPException(status_code=403, detail="Sign in as the report owner to refresh this data")
 
+def _get_semantic_scores(response_id: str, summary: dict, profile_data: dict) -> dict:
+    """get_career_semantic_scores() is a live Gemini embedding call — its input (the
+    scored answers) never changes once a response is submitted, but career-suggestions,
+    courses, and companies each called it fresh on every single request, so every
+    "View report" click paid for 3 separate embedding calls with nothing to show for it
+    on repeat views. Cached per response_id; never invalidated since the input is fixed."""
+    cached = supabase.table('assessment_responses') \
+        .select('career_semantic_scores_cache').eq('id', response_id).single().execute()
+    if cached.data and cached.data.get('career_semantic_scores_cache') is not None:
+        return cached.data['career_semantic_scores_cache']
+
+    scores = get_career_semantic_scores(supabase, summary, profile_data)
+    if scores:
+        supabase.table('assessment_responses') \
+            .update({'career_semantic_scores_cache': scores}).eq('id', response_id).execute()
+    return scores
+
 TEST_MODE_KEY = "test_mode_all_plans_unlocked"
 _test_mode_cache: dict[str, Any] = {"value": False, "checked_at": None}
 _TEST_MODE_CACHE_TTL = timedelta(seconds=10)
@@ -735,7 +752,7 @@ def get_career_suggestions(response_id: str, user=Depends(get_optional_user)):
 
     summary = build_framework_output(rows.data)
     careers = supabase.table('careers').select('*').execute().data or []
-    semantic_scores = get_career_semantic_scores(supabase, summary, profile.data or {})
+    semantic_scores = _get_semantic_scores(response_id, summary, profile.data or {})
     top10   = score_careers(summary, profile.data or {}, careers, semantic_scores)
 
     user_riasec = summary.get('riasec', {}).get('top_types', [])
@@ -780,7 +797,7 @@ def get_ai_impact(response_id: str, force: bool = False, user=Depends(get_option
 
     summary = build_framework_output(rows.data)
     careers = supabase.table('careers').select('*').execute().data or []
-    semantic_scores = get_career_semantic_scores(supabase, summary, profile_row.data or {})
+    semantic_scores = _get_semantic_scores(response_id, summary, profile_row.data or {})
     top_careers = score_careers(summary, profile_row.data or {}, careers, semantic_scores)[:careers_cap]
 
     from report_generator import generate_ai_impact
@@ -1037,7 +1054,7 @@ def get_course_recommendations(response_id: str, user=Depends(get_optional_user)
         return []
     summary = build_framework_output(rows.data)
     careers = supabase.table('careers').select('*').execute().data or []
-    semantic_scores = get_career_semantic_scores(supabase, summary, profile.data)
+    semantic_scores = _get_semantic_scores(response_id, summary, profile.data)
     top5    = score_careers(summary, profile.data, careers, semantic_scores)[:5]
 
     user_riasec = set(summary.get('riasec', {}).get('top_types', []))
@@ -1355,7 +1372,7 @@ def _search_matching_jobs(response_id: str) -> list[dict] | None:
 
     summary = build_framework_output(rows.data)
     careers = supabase.table('careers').select('*').execute().data or []
-    semantic_scores = get_career_semantic_scores(supabase, summary, profile.data)
+    semantic_scores = _get_semantic_scores(response_id, summary, profile.data)
     top3    = score_careers(summary, profile.data, careers, semantic_scores)[:3]
 
     raw_country = profile.data.get('country', '')
@@ -1630,7 +1647,7 @@ def get_companies_suggestions(response_id: str, user=Depends(get_optional_user))
 
     summary = build_framework_output(rows.data)
     careers = supabase.table('careers').select('*').execute().data or []
-    semantic_scores = get_career_semantic_scores(supabase, summary, profile.data)
+    semantic_scores = _get_semantic_scores(response_id, summary, profile.data)
     top5    = score_careers(summary, profile.data, careers, semantic_scores)[:5]
 
     sectors = list(dict.fromkeys(c['sector'] for c in top5))
