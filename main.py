@@ -81,11 +81,20 @@ def get_current_user(credentials: HTTPAuthorizationCredentials = Security(_beare
 def get_optional_user(credentials: HTTPAuthorizationCredentials | None = Security(_bearer_optional)):
     if not credentials:
         return None
-    try:
-        response = supabase.auth.get_user(credentials.credentials)
-        return response.user if response.user else None
-    except Exception:
-        return None
+    # A present token means the caller believes they're logged in — treating
+    # any failure as "anonymous" (the original behavior here) let a transient
+    # network blip to Supabase Auth silently drop a real session, e.g. an
+    # authenticated /assessment/submit quietly saving with no user_id and no
+    # error shown. One retry filters that out; an actually invalid/expired
+    # token still fails both times and correctly falls back to anonymous.
+    for attempt in range(2):
+        try:
+            response = supabase.auth.get_user(credentials.credentials)
+            return response.user if response.user else None
+        except Exception:
+            if attempt == 0:
+                continue
+            return None
 
 def require_admin(user=Depends(get_current_user)):
     role = (user.app_metadata or {}).get("role")
@@ -334,7 +343,7 @@ def get_submissions(_=Depends(require_admin)):
 
 
 @app.post("/assessment/check-existing")
-def check_existing(body: CheckExistingRequest):
+def check_existing(body: CheckExistingRequest, user=Depends(get_optional_user)):
     result = supabase.rpc('check_existing_response', {
         'p_email': body.email,
         'p_phone': body.phone,
@@ -344,7 +353,12 @@ def check_existing(body: CheckExistingRequest):
         return None
 
     row = supabase.table('assessment_responses').select('user_id').eq('id', result.data).single().execute()
-    if row.data and row.data.get('user_id'):
+    owner_id = row.data.get('user_id') if row.data else None
+    # Only tell the caller "this email already has an account, log in" when
+    # it's actually someone else's account — otherwise a logged-in user
+    # retaking their own assessment (QD2 pre-filled with their own email)
+    # gets told to sign in while already signed in as that exact account.
+    if owner_id and not (user and user.id == owner_id):
         return {"id": None, "claimed": True}
 
     return {"id": result.data}
