@@ -8,6 +8,7 @@ import json
 import re
 import html as _html
 from datetime import datetime
+from concurrent.futures import ThreadPoolExecutor
 import google.generativeai as genai
 from google.api_core.exceptions import DeadlineExceeded, ServiceUnavailable
 from requests.exceptions import Timeout, ConnectionError as RequestsConnectionError
@@ -266,6 +267,13 @@ def _generate_json(model, prompt: str, retries: int = 1) -> dict:
     raise last_err
 
 def generate_ai_content(user_data: dict, summary: dict, raw_scores: list, careers: list, country_profile: dict | None = None, coaching_chunks: list[dict] | None = None, locale: str = 'en', career_count: int = 8) -> dict:
+    """Split into two independent Gemini calls (personality/values narratives + action plan,
+    and career recommendations) run concurrently, instead of one call covering ~20 narrative
+    fields plus up to 8 career objects in a single JSON response. The combined schema was large
+    enough that gemini-2.5-flash almost always either blew the per-call timeout or truncated
+    mid-JSON before finishing (only 1 of 58 completed reports ever got a usable cache) — each
+    half on its own is small enough to reliably finish within GEMINI_TIMEOUT_S, and running them
+    concurrently means the wall-clock cost is roughly the slower of the two, not their sum."""
     genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
     model = genai.GenerativeModel(
       "gemini-2.5-flash",
@@ -290,10 +298,7 @@ def generate_ai_content(user_data: dict, summary: dict, raw_scores: list, career
     str_lines     = "\n".join(f"  - {s.replace('_',' ').title()}: {scores.get(s,0):.0f}/100" for s in top_strengths)
     careers_text  = "\n".join(f"  - {c['title']} ({c['sector']})" for c in careers[:career_count])
 
-    prompt = (
-        f"You are writing a professional, personalized career development report for {user_data['full_name']}.\n"
-        "Write in second person (you, your). Be warm, specific, and empowering — not generic.\n"
-        "Reference actual scores and combinations. Do not write boilerplate.\n\n"
+    shared_header = (
         f"{CULTURAL_GUARDRAIL}\n\n"
         + (ARABIC_LANGUAGE_INSTRUCTION if locale == 'ar' else "")
         + "=== ASSESSMENT DATA ===\n\n"
@@ -321,36 +326,27 @@ def generate_ai_content(user_data: dict, summary: dict, raw_scores: list, career
         f"  - Prior experience: {entrepreneurship.get('prior_experience',0):.0f}/100\n"
         f"  - Risk tolerance: {entrepreneurship.get('risk_tolerance',0):.0f}/100\n"
         f"  - Portfolio interest: {entrepreneurship.get('portfolio_interest',0):.0f}/100\n\n"
-        f"Matched careers:\n{careers_text}\n\n"
-        + (
-            f"=== COUNTRY CONTEXT: {country_profile.get('country_name', user_data.get('country', 'Unknown'))} ===\n\n"
-            + (
-                country_profile['raw_notes']
-                if country_profile.get('raw_notes')
-                else (
-                    f"Labour market authority: {country_profile.get('labour_market_authority', 'N/A')}\n"
-                    f"Nationalisation programme: {country_profile.get('nationalisation_programme', 'N/A')}\n"
-                    f"Strategic priorities: {json.dumps(country_profile.get('strategic_priorities') or {})}\n"
-                    f"Nationalisation rates by sector: {json.dumps(country_profile.get('nationalisation_rates_by_sector') or {})}\n"
-                )
-            )
-            + "\n\nIMPORTANT: Use this country context to qualify career recommendations. "
-            "If a career is low-demand or restricted by nationalisation quotas in this country, note that in fit_summary. "
-            "If it aligns with strategic priorities, highlight that as an advantage.\n\n"
-            if country_profile else ""
+    )
+
+    coaching_block = (
+        "=== RELEVANT COACHING KNOWLEDGE ===\n\n"
+        + "\n\n".join(
+            f"Situation: {c['situation']}\nCoach response: {c['coach_response']}"
+            for c in coaching_chunks
         )
-        + (
-            "=== RELEVANT COACHING KNOWLEDGE ===\n\n"
-            + "\n\n".join(
-                f"Situation: {c['situation']}\nCoach response: {c['coach_response']}"
-                for c in coaching_chunks
-            )
-            + "\n\nIMPORTANT: These are real excerpts from professional career coaching sessions "
-            "with similar client profiles. Use the coach's tone, framing, and specific advice patterns "
-            "to inform the narratives and action plan below — don't quote them verbatim, but let them "
-            "shape how you'd counsel this person.\n\n"
-            if coaching_chunks else ""
-        )
+        + "\n\nIMPORTANT: These are real excerpts from professional career coaching sessions "
+        "with similar client profiles. Use the coach's tone, framing, and specific advice patterns "
+        "to inform the narratives and action plan below — don't quote them verbatim, but let them "
+        "shape how you'd counsel this person.\n\n"
+        if coaching_chunks else ""
+    )
+
+    narrative_prompt = (
+        f"You are writing a professional, personalized career development report for {user_data['full_name']}.\n"
+        "Write in second person (you, your). Be warm, specific, and empowering — not generic.\n"
+        "Reference actual scores and combinations. Do not write boilerplate.\n\n"
+        + shared_header
+        + coaching_block
         + "=== OUTPUT ===\n\n"
         "Return ONLY a valid JSON object (no markdown, no code fences) with exactly these keys:\n\n"
         "{\n"
@@ -383,6 +379,43 @@ def generate_ai_content(user_data: dict, summary: dict, raw_scores: list, career
         '  "resilience_narrative": "2-3 sentences interpreting resilience scores in context of workplace challenges.",\n'
         '  "work_style_narrative": "2-3 sentences describing ideal work environment from all work style scores.",\n'
         '  "entrepreneurship_narrative": "2-3 sentences on entrepreneurial profile and whether/how to explore it.",\n\n'
+        '  "action_plan": {\n'
+        '    "month_1":    ["Specific action 1", "Specific action 2", "Specific action 3"],\n'
+        '    "months_2_3": ["Specific action 1", "Specific action 2", "Specific action 3"],\n'
+        '    "months_4_6": ["Specific action 1", "Specific action 2", "Specific action 3"]\n'
+        '  },\n\n'
+        '  "closing_message": "2-3 warm encouraging sentences tying back to this persons unique profile."\n'
+        "}\n\n"
+        "Be specific, insightful, and empowering throughout."
+    )
+
+    careers_prompt = (
+        f"You are selecting and explaining career recommendations for {user_data['full_name']}, "
+        "as part of a professional, personalized career development report.\n"
+        "Write in second person (you, your). Be warm, specific, and empowering — not generic.\n"
+        "Reference actual scores and combinations. Do not write boilerplate.\n\n"
+        + shared_header
+        + f"Matched careers:\n{careers_text}\n\n"
+        + (
+            f"=== COUNTRY CONTEXT: {country_profile.get('country_name', user_data.get('country', 'Unknown'))} ===\n\n"
+            + (
+                country_profile['raw_notes']
+                if country_profile.get('raw_notes')
+                else (
+                    f"Labour market authority: {country_profile.get('labour_market_authority', 'N/A')}\n"
+                    f"Nationalisation programme: {country_profile.get('nationalisation_programme', 'N/A')}\n"
+                    f"Strategic priorities: {json.dumps(country_profile.get('strategic_priorities') or {})}\n"
+                    f"Nationalisation rates by sector: {json.dumps(country_profile.get('nationalisation_rates_by_sector') or {})}\n"
+                )
+            )
+            + "\n\nIMPORTANT: Use this country context to qualify career recommendations. "
+            "If a career is low-demand or restricted by nationalisation quotas in this country, note that in fit_summary. "
+            "If it aligns with strategic priorities, highlight that as an advantage.\n\n"
+            if country_profile else ""
+        )
+        + "=== OUTPUT ===\n\n"
+        "Return ONLY a valid JSON object (no markdown, no code fences) with exactly this key:\n\n"
+        "{\n"
         '  "career_recommendations": [\n'
         '    {\n'
         '      "title": "Career title from the matched careers list",\n'
@@ -391,18 +424,18 @@ def generate_ai_content(user_data: dict, summary: dict, raw_scores: list, career
         '      "fit_summary": "2 sentences on exactly why this fits this specific person.",\n'
         '      "growth_note": "1 sentence on career growth potential."\n'
         '    }\n'
-        '  ],\n\n'
-        '  "action_plan": {\n'
-        '    "month_1":    ["Specific action 1", "Specific action 2", "Specific action 3"],\n'
-        '    "months_2_3": ["Specific action 1", "Specific action 2", "Specific action 3"],\n'
-        '    "months_4_6": ["Specific action 1", "Specific action 2", "Specific action 3"]\n'
-        '  },\n\n'
-        '  "closing_message": "2-3 warm encouraging sentences tying back to this persons unique profile."\n'
+        '  ]\n'
         "}\n\n"
         f"Provide exactly {career_count} career recommendations. Be specific, insightful, and empowering throughout."
     )
 
-    return _generate_json(model, prompt)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        narrative_future = pool.submit(_generate_json, model, narrative_prompt)
+        careers_future = pool.submit(_generate_json, model, careers_prompt)
+        narrative_result = narrative_future.result()
+        careers_result = careers_future.result()
+
+    return {**narrative_result, "career_recommendations": careers_result.get("career_recommendations", [])}
 
 # ─── HTML helpers ──────────────────────────────────────────────────────────────
 
