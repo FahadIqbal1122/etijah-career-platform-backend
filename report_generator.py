@@ -10,8 +10,8 @@ import html as _html
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor
 import google.generativeai as genai
-from google.api_core.exceptions import DeadlineExceeded, ServiceUnavailable
-from requests.exceptions import Timeout, ConnectionError as RequestsConnectionError
+from google.api_core.exceptions import GoogleAPICallError, DeadlineExceeded, ServiceUnavailable
+from requests.exceptions import RequestException, Timeout, ConnectionError as RequestsConnectionError
 from weasyprint import HTML
 from scoring_engine import build_framework_output, score_careers, COUNTRY_CODE_MAP
 from coaching_pipeline import _gemini_embed
@@ -1224,6 +1224,22 @@ def translate_report_json(data: dict, target_locale: str = 'ar') -> dict:
 
     return _generate_json(model, prompt)
 
+def translate_ai_content(data: dict, target_locale: str = 'ar') -> dict:
+    """ai_content carries the same ~20 narrative fields + up to 8 career objects that made
+    generate_ai_content unreliable as a single call (see its docstring) — translating that
+    merged blob in one Gemini call inherits the same timeout/truncation risk. Split along the
+    same seam and translate both halves concurrently, same tradeoff: more reliable, no slower."""
+    careers = data.get('career_recommendations', [])
+    narrative = {k: v for k, v in data.items() if k != 'career_recommendations'}
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        narrative_future = pool.submit(translate_report_json, narrative, target_locale)
+        careers_future = pool.submit(translate_report_json, {'career_recommendations': careers}, target_locale)
+        narrative_result = narrative_future.result()
+        careers_result = careers_future.result()
+
+    return {**narrative_result, "career_recommendations": careers_result.get("career_recommendations", [])}
+
 # ─── PDF renderer ──────────────────────────────────────────────────────────────
 
 def generate_pdf(
@@ -1328,18 +1344,26 @@ def create_report(response_id: str, supabase_client, tier: str = "launchpad", lo
 
     if locale == 'ar':
         try:
-            ai_impact_ar = profile.data.get(impact_col_ar) or _generate_and_cache(
-                impact_col_ar, lambda: translate_report_json(ai_impact, 'ar'))
-            ai_content_ar = profile.data.get(content_col_ar) or _generate_and_cache(
-                content_col_ar, lambda: translate_report_json(ai_content, 'ar'))
+            # Impact and content translation are independent — run them concurrently
+            # (same reasoning as generate_ai_content's split) instead of back-to-back.
+            with ThreadPoolExecutor(max_workers=2) as pool:
+                impact_future = pool.submit(
+                    lambda: profile.data.get(impact_col_ar) or _generate_and_cache(
+                        impact_col_ar, lambda: translate_report_json(ai_impact, 'ar')))
+                content_future = pool.submit(
+                    lambda: profile.data.get(content_col_ar) or _generate_and_cache(
+                        content_col_ar, lambda: translate_ai_content(ai_content, 'ar')))
+                ai_impact_ar = impact_future.result()
+                ai_content_ar = content_future.result()
             ai_impact, ai_content = ai_impact_ar, ai_content_ar
-        except (json.JSONDecodeError, ValueError):
-            # Translation failed after its retries — the English content was
-            # already generated and cached successfully above, so hand back a
-            # working English report rather than failing the whole PDF. Reset
-            # locale too: build_html_report() below still reads it to choose
-            # Arabic chrome/RTL layout, which would otherwise wrap English
-            # body text in an Arabic-labeled, right-to-left document.
+        except (json.JSONDecodeError, ValueError, GoogleAPICallError, RequestException):
+            # Translation failed after its retries (including a Gemini deadline/service-
+            # unavailable, which used to propagate all the way up as a 503 instead of
+            # landing here) — the English content was already generated and cached
+            # successfully above, so hand back a working English report rather than
+            # failing the whole PDF. Reset locale too: build_html_report() below still
+            # reads it to choose Arabic chrome/RTL layout, which would otherwise wrap
+            # English body text in an Arabic-labeled, right-to-left document.
             locale = 'en'
 
     # Job listings have no free-tier gate on the live site (unlike companies/courses
