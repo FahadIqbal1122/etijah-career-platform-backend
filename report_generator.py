@@ -1226,19 +1226,32 @@ def translate_report_json(data: dict, target_locale: str = 'ar') -> dict:
 
 def translate_ai_content(data: dict, target_locale: str = 'ar') -> dict:
     """ai_content carries the same ~20 narrative fields + up to 8 career objects that made
-    generate_ai_content unreliable as a single call (see its docstring) — translating that
-    merged blob in one Gemini call inherits the same timeout/truncation risk. Split along the
-    same seam and translate both halves concurrently, same tradeoff: more reliable, no slower."""
+    generate_ai_content unreliable as a single call (see its docstring). Translation is worse:
+    each call has to embed the full source text *and* generate equally long translated text,
+    roughly double the token load of the equivalent generation call — a two-way split
+    (narrative half + careers half) still hit DeadlineExceeded on the narrative half in
+    real testing (1 of 3 tries). Split the narrative into three roughly-even pieces instead
+    and translate all four pieces (3 narrative + careers) concurrently; wall-clock cost is
+    still bounded by the slowest piece, not their sum."""
     careers = data.get('career_recommendations', [])
     narrative = {k: v for k, v in data.items() if k != 'career_recommendations'}
+    narrative_keys = list(narrative.keys())
+    n = len(narrative_keys)
+    third = -(-n // 3)  # ceil division, so the last chunk isn't left empty on small n
+    chunks = [narrative_keys[i:i + third] for i in range(0, n, third)]
+    narrative_pieces = [{k: narrative[k] for k in chunk} for chunk in chunks]
 
-    with ThreadPoolExecutor(max_workers=2) as pool:
-        narrative_future = pool.submit(translate_report_json, narrative, target_locale)
+    with ThreadPoolExecutor(max_workers=len(narrative_pieces) + 1) as pool:
+        piece_futures = [pool.submit(translate_report_json, piece, target_locale) for piece in narrative_pieces]
         careers_future = pool.submit(translate_report_json, {'career_recommendations': careers}, target_locale)
-        narrative_result = narrative_future.result()
+        piece_results = [f.result() for f in piece_futures]
         careers_result = careers_future.result()
 
-    return {**narrative_result, "career_recommendations": careers_result.get("career_recommendations", [])}
+    merged: dict = {}
+    for piece_result in piece_results:
+        merged.update(piece_result)
+    merged["career_recommendations"] = careers_result.get("career_recommendations", [])
+    return merged
 
 # ─── PDF renderer ──────────────────────────────────────────────────────────────
 
