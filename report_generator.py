@@ -1224,6 +1224,20 @@ def translate_report_json(data: dict, target_locale: str = 'ar') -> dict:
 
     return _generate_json(model, prompt)
 
+def _translate_piece_with_retry(piece: dict, target_locale: str, max_attempts: int = 3) -> dict:
+    """translate_report_json already retries once internally inside _generate_json for a fast
+    transient blip — this covers the rarer case of a piece being unlucky on both of those
+    attempts (observed ~1 in 5 in testing). Only exercised on the failure path, so a normal
+    successful translation (the common case) still exits on the first attempt and pays no
+    extra latency; only an already-failing piece pays for the extra attempts."""
+    last_err: Exception | None = None
+    for _ in range(max_attempts):
+        try:
+            return translate_report_json(piece, target_locale)
+        except (GoogleAPICallError, RequestException, json.JSONDecodeError, ValueError) as e:
+            last_err = e
+    raise last_err
+
 def translate_ai_content(data: dict, target_locale: str = 'ar') -> dict:
     """ai_content carries the same ~20 narrative fields + up to 8 career objects that made
     generate_ai_content unreliable as a single call (see its docstring). Translation is worse:
@@ -1242,8 +1256,8 @@ def translate_ai_content(data: dict, target_locale: str = 'ar') -> dict:
     narrative_pieces = [{k: narrative[k] for k in chunk} for chunk in chunks]
 
     with ThreadPoolExecutor(max_workers=len(narrative_pieces) + 1) as pool:
-        piece_futures = [pool.submit(translate_report_json, piece, target_locale) for piece in narrative_pieces]
-        careers_future = pool.submit(translate_report_json, {'career_recommendations': careers}, target_locale)
+        piece_futures = [pool.submit(_translate_piece_with_retry, piece, target_locale) for piece in narrative_pieces]
+        careers_future = pool.submit(_translate_piece_with_retry, {'career_recommendations': careers}, target_locale)
         piece_results = [f.result() for f in piece_futures]
         careers_result = careers_future.result()
 
@@ -1362,7 +1376,7 @@ def create_report(response_id: str, supabase_client, tier: str = "launchpad", lo
             with ThreadPoolExecutor(max_workers=2) as pool:
                 impact_future = pool.submit(
                     lambda: profile.data.get(impact_col_ar) or _generate_and_cache(
-                        impact_col_ar, lambda: translate_report_json(ai_impact, 'ar')))
+                        impact_col_ar, lambda: _translate_piece_with_retry(ai_impact, 'ar')))
                 content_future = pool.submit(
                     lambda: profile.data.get(content_col_ar) or _generate_and_cache(
                         content_col_ar, lambda: translate_ai_content(ai_content, 'ar')))
