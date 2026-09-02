@@ -294,6 +294,43 @@ class FeedbackRequest(BaseModel):
     recommend: str | None = None
     other: str | None = None
 
+class BetaFeedbackStage1Request(BaseModel):
+    response_id: str
+    s1_clarity: int | None = Field(default=None, ge=1, le=5)
+    s1_feeling: int | None = Field(default=None, ge=1, le=5)
+    s1_understood: int | None = Field(default=None, ge=1, le=5)
+    locale: str | None = None
+
+class BetaFeedbackStage2Request(BaseModel):
+    response_id: str
+    language_used: str | None = None
+    understood_after: int | None = Field(default=None, ge=1, le=5)
+    personality_accuracy: str | None = None
+    values_accuracy: str | None = None
+    strengths_accuracy: str | None = None
+    career_matches_accuracy: str | None = None
+    wrong_career_text: str | None = None
+    missing_career_text: str | None = None
+    ai_impact_useful: int | None = Field(default=None, ge=1, le=6)
+    ai_impact_credible: int | None = Field(default=None, ge=1, le=6)
+    ai_impact_changed_thinking: str | None = None
+    jobs_relevant: int | None = Field(default=None, ge=1, le=6)
+    companies_fit: int | None = Field(default=None, ge=1, le=6)
+    courses_useful: int | None = Field(default=None, ge=1, le=6)
+    plan_would_follow: str | None = None
+    clear_next_step: str | None = None
+    arabic_natural: str | None = None
+    overall_value: int | None = Field(default=None, ge=1, le=6)
+    most_valuable_parts: list[str] | None = None
+    would_pay: str | None = None
+    would_recommend: str | None = None
+    device: str | None = None
+    had_issues: str | None = None
+    issue_detail: str | None = None
+    surprised_text: str | None = None
+    not_me_text: str | None = None
+    other_text: str | None = None
+
 class WaitlistRequest(BaseModel):
     email: EmailStr
     name: str | None = None
@@ -549,7 +586,13 @@ def get_results(response_id: str, user=Depends(get_optional_user)):
 
     summary = build_framework_output(rows.data)
     tier = get_effective_tier(profile.data.get('user_id'))
-    return {'results': rows.data, 'summary': summary, 'email': profile.data.get('email'), 'tier': tier, 'locale': profile.data.get('locale') or 'en'}
+    return {
+        'results': rows.data, 'summary': summary, 'email': profile.data.get('email'),
+        'tier': tier, 'locale': profile.data.get('locale') or 'en',
+        # Drives the beta feedback form on the frontend — only shown during the
+        # beta window, distinct from a genuine paying launchpad tier.
+        'beta_mode': _is_test_mode_enabled(),
+    }
 
 @app.post("/feedback")
 def submit_feedback(body: FeedbackRequest):
@@ -561,6 +604,37 @@ def submit_feedback(body: FeedbackRequest):
 @app.get("/admin/feedback")
 def get_feedback(_=Depends(require_admin)):
     data = supabase.table('feedback_responses') \
+        .select('*') \
+        .order('created_at', desc=True) \
+        .execute()
+    return data.data or []
+
+@app.post("/beta-feedback/stage1")
+def submit_beta_feedback_stage1(body: BetaFeedbackStage1Request, user=Depends(get_optional_user)):
+    row = body.model_dump(exclude={'response_id'}, exclude_none=True)
+    row['response_id'] = body.response_id
+    row['user_id'] = user.id if user else None
+    if all(row.get(k) is not None for k in ('s1_clarity', 's1_feeling', 's1_understood')):
+        row['stage1_completed_at'] = datetime.now(timezone.utc).isoformat()
+    result = supabase.table('beta_feedback').upsert(row, on_conflict='response_id').execute()
+    if not result.data:
+        raise HTTPException(status_code=500, detail="Failed to save feedback")
+    return {"ok": True}
+
+@app.post("/beta-feedback/stage2")
+def submit_beta_feedback_stage2(body: BetaFeedbackStage2Request, user=Depends(get_optional_user)):
+    row = body.model_dump(exclude={'response_id'}, exclude_none=True)
+    row['response_id'] = body.response_id
+    row['user_id'] = user.id if user else None
+    row['stage2_completed_at'] = datetime.now(timezone.utc).isoformat()
+    result = supabase.table('beta_feedback').upsert(row, on_conflict='response_id').execute()
+    if not result.data:
+        raise HTTPException(status_code=500, detail="Failed to save feedback")
+    return {"ok": True}
+
+@app.get("/admin/beta-feedback")
+def get_beta_feedback(_=Depends(require_admin)):
+    data = supabase.table('beta_feedback') \
         .select('*') \
         .order('created_at', desc=True) \
         .execute()
