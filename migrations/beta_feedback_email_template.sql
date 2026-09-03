@@ -1,0 +1,8 @@
+insert into email_templates (key, name, description, is_active, subject_en, subject_ar, body_html_en, body_html_ar, variables) values
+('beta_feedback_stage2', 'Beta Stage 2 Feedback Request', 'Sent automatically instead of feedback_request when a beta-cohort user completes an assessment. Links straight to the standalone stage-2 feedback form for their response.', true,
+ 'One more thing — tell us what you think', 'أمر أخير — أخبرنا برأيك',
+ '<div style="font-family: Arial, sans-serif; font-size: 15px; color: #1f2937; line-height: 1.6;"><p>Hi {{full_name}},</p><p>Thanks for being one of our beta testers! Now that you have seen your results, we would love your detailed feedback — it takes about 3 minutes and shapes what we build next.</p><p style="margin: 24px 0;"><a href="{{beta_feedback_url}}" style="background:#7c3aed;color:#fff;padding:10px 20px;border-radius:8px;text-decoration:none;font-weight:600;">Share Your Feedback</a></p><p style="margin-top: 24px; color: #6b7280; font-size: 13px;">Etijah Career Platform</p></div>',
+ '<div dir="rtl" style="font-family: Arial, sans-serif; font-size: 15px; color: #1f2937; line-height: 1.6;"><p>مرحباً {{full_name}}،</p><p>شكراً لكونك أحد مختبري النسخة التجريبية! بعد أن اطّلعت على نتائجك، يسعدنا معرفة رأيك بالتفصيل — يستغرق الأمر حوالي 3 دقائق ويساعدنا على تطوير المنصة.</p><p style="margin: 24px 0;"><a href="{{beta_feedback_url}}" style="background:#7c3aed;color:#fff;padding:10px 20px;border-radius:8px;text-decoration:none;font-weight:600;">شاركنا رأيك</a></p><p style="margin-top: 24px; color: #6b7280; font-size: 13px;">منصة اتجاهي المهنية</p></div>',
+ '["full_name", "beta_feedback_url"]'::jsonb
+)
+on conflict (key) do nothing;

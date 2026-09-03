@@ -16,7 +16,7 @@ from fastapi.responses import StreamingResponse
 from report_generator import create_report
 from google.api_core.exceptions import GoogleAPICallError
 from requests.exceptions import RequestException
-from smtp_service import send_report_email, send_feedback_email, send_results_ready_email, invalidate_smtp_cache
+from smtp_service import send_report_email, send_feedback_email, send_results_ready_email, send_beta_feedback_email, invalidate_smtp_cache
 import httpx, hmac, hashlib, json, secrets
 from coaching_methodology import METHODOLOGY_DOC
 from coaching_pipeline import chunk_transcript, embed_and_store_chunks, client, embed_country_profile, sync_country_profile_embedding, sync_career_embedding, _gemini_embed
@@ -62,9 +62,9 @@ INTERNAL_JOBS_KEY = os.getenv("INTERNAL_JOBS_KEY")
 DASHBOARD_SHARE_TOKEN = os.getenv("DASHBOARD_SHARE_TOKEN")
 
 PLAN_CATALOG = {
-    "pathfinder":        {"name": "Pathfinder",        "amount": 149, "currency": "SAR", "interval": "lifetime", "extension_days": None},
-    "launchpad_monthly": {"name": "Launchpad Monthly",  "amount": 99,  "currency": "SAR", "interval": "month",    "extension_days": 30},
-    "launchpad_yearly":  {"name": "Launchpad Yearly",   "amount": 799, "currency": "SAR", "interval": "year",     "extension_days": 365},
+    "pathfinder":        {"name": "Pathfinder",        "amount": 149, "currency": "SAR", "interval": "lifetime", "extension_days": None, "available": True},
+    "launchpad_monthly": {"name": "Launchpad Monthly",  "amount": 99,  "currency": "SAR", "interval": "month",    "extension_days": 30,   "available": False},
+    "launchpad_yearly":  {"name": "Launchpad Yearly",   "amount": 799, "currency": "SAR", "interval": "year",     "extension_days": 365,  "available": False},
 }
 
 _bearer = HTTPBearer()
@@ -471,11 +471,20 @@ def submit_assessment(body: SubmitRequest, background_tasks: BackgroundTasks, us
             results_url = f"{frontend_base}/{locale}/results/{response_id}"
             background_tasks.add_task(send_results_ready_email, body.email, body.full_name, results_url, locale, results_tmpl, supabase)
 
-        feedback_template = supabase.table('email_templates').select('*').eq('key', 'feedback_request').limit(1).execute()
-        feedback_tmpl = feedback_template.data[0] if feedback_template.data else None
-        if feedback_tmpl and feedback_tmpl.get('is_active'):
-            feedback_url = f"{frontend_base}/{locale}/feedback"
-            background_tasks.add_task(send_feedback_email, body.email, body.full_name, feedback_url, locale, feedback_tmpl, supabase)
+        # Beta cohort gets the dedicated stage-2 feedback link instead of the
+        # generic feedback form — same email slot, different template/target.
+        if _is_test_mode_enabled():
+            beta_feedback_template = supabase.table('email_templates').select('*').eq('key', 'beta_feedback_stage2').limit(1).execute()
+            beta_feedback_tmpl = beta_feedback_template.data[0] if beta_feedback_template.data else None
+            if beta_feedback_tmpl and beta_feedback_tmpl.get('is_active'):
+                beta_feedback_url = f"{frontend_base}/{locale}/beta-feedback/{response_id}"
+                background_tasks.add_task(send_beta_feedback_email, body.email, body.full_name, beta_feedback_url, locale, beta_feedback_tmpl, supabase)
+        else:
+            feedback_template = supabase.table('email_templates').select('*').eq('key', 'feedback_request').limit(1).execute()
+            feedback_tmpl = feedback_template.data[0] if feedback_template.data else None
+            if feedback_tmpl and feedback_tmpl.get('is_active'):
+                feedback_url = f"{frontend_base}/{locale}/feedback"
+                background_tasks.add_task(send_feedback_email, body.email, body.full_name, feedback_url, locale, feedback_tmpl, supabase)
 
     # Return summary
     return {"response_id": response_id, "summary": summary}
@@ -1845,6 +1854,8 @@ def create_checkout(body: CheckoutRequest, user=Depends(get_current_user)):
     plan = PLAN_CATALOG.get(body.plan_code)
     if not plan:
         raise HTTPException(status_code=400, detail=f"Unknown plan_code: {body.plan_code}")
+    if not plan.get("available", True):
+        raise HTTPException(status_code=400, detail=f"{plan['name']} isn't available yet")
 
     full_name = (user.user_metadata or {}).get("full_name", "") or ""
     first_name, _, last_name = full_name.strip().partition(" ")
