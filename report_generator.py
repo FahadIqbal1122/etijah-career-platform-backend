@@ -10,18 +10,22 @@ import html as _html
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor
 import google.generativeai as genai
+import anthropic
 from google.api_core.exceptions import GoogleAPICallError, DeadlineExceeded, ServiceUnavailable
 from requests.exceptions import RequestException, Timeout, ConnectionError as RequestsConnectionError
 from weasyprint import HTML
 from scoring_engine import build_framework_output, score_careers, COUNTRY_CODE_MAP
-from coaching_pipeline import _gemini_embed
+from coaching_pipeline import _gemini_embed, client as anthropic_client
 from content_policy import is_appropriate, CULTURAL_GUARDRAIL
+from ai_provider import get_ai_provider
 
 # Without a timeout, a bad/corrupted key or network blip on Gemini's side hangs
 # indefinitely instead of failing fast — which then trips a reverse-proxy
 # timeout upstream, surfacing as an opaque "Failed to fetch" on the frontend
 # for whichever report section happened to be waiting on it.
 GEMINI_TIMEOUT_S = 30
+CLAUDE_TIMEOUT_S = 60
+CLAUDE_REPORT_MODEL = os.getenv("CLAUDE_REPORT_MODEL", "claude-opus-5")
 
 def _escape_deep(value):
     """Recursively HTML-escape every string in a dict/list, so user-supplied text
@@ -232,33 +236,79 @@ def _as_dict(value) -> dict:
 def _as_list(value) -> list:
     return value if isinstance(value, list) else []
 
-def _generate_json(model, prompt: str, retries: int = 1) -> dict:
-    """Gemini's strict JSON mode is reliable but not perfect — an occasional stray
-    unescaped character or truncated response yields invalid JSON. Regenerating is
-    far more likely to fix it than any repair heuristic, so retry once before
+_gemini_model = None
+
+def _get_gemini_model():
+    """Lazily built once and reused — genai.configure()/GenerativeModel() were
+    previously reconstructed on every _call_model invocation (every retry, and
+    every concurrent thread in generate_ai_content's 2-way / translate_ai_content's
+    4-way pools), which is redundant work and mutates the SDK's global config from
+    multiple threads concurrently on every call."""
+    global _gemini_model
+    if _gemini_model is None:
+        genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
+        _gemini_model = genai.GenerativeModel(
+            "gemini-2.5-flash",
+            generation_config={"response_mime_type": "application/json"}
+        )
+    return _gemini_model
+
+def _call_model(prompt: str) -> str:
+    """Dispatches to whichever provider the app_settings.ai_provider toggle selects
+    and returns raw text. Both providers get the same "return only JSON" instructions
+    in the prompt itself — downstream fence-stripping/brace-extraction in
+    _generate_json is provider-agnostic."""
+    if get_ai_provider() == "claude":
+        response = anthropic_client.messages.create(
+            model=CLAUDE_REPORT_MODEL,
+            max_tokens=8000,
+            messages=[{"role": "user", "content": prompt}],
+            timeout=CLAUDE_TIMEOUT_S,
+        )
+        text_block = next((b for b in response.content if b.type == "text"), None)
+        if text_block is None:
+            raise ValueError(f"Claude response had no text block (stop_reason={response.stop_reason!r})")
+        return text_block.text
+
+    response = _get_gemini_model().generate_content(prompt, request_options={"timeout": GEMINI_TIMEOUT_S})
+    return response.text
+
+def _generate_json(prompt: str, retries: int = 1) -> dict:
+    """The active provider's JSON output is reliable but not perfect — an occasional
+    stray unescaped character or truncated response yields invalid JSON. Regenerating
+    is far more likely to fix it than any repair heuristic, so retry once before
     letting json.JSONDecodeError bubble up.
 
-    A report is several of these calls chained (impact, content, translation),
-    each individually capped at GEMINI_TIMEOUT_S — so a single transient slow
-    response used to fail the whole report immediately with no retry. Retry
-    once on a timeout-shaped failure (deadline hit, or the backing service
-    briefly unavailable) before giving up — but not on other GoogleAPICallError
-    subclasses like InvalidArgument/PermissionDenied, which won't be fixed by
-    retrying and would just add a wasted ~30s before failing anyway."""
+    A report is several of these calls chained (impact, content, translation), each
+    individually capped at its provider's timeout — so a single transient slow
+    response used to fail the whole report immediately with no retry. Retry once on
+    a timeout-shaped failure (deadline hit, or the backing service briefly
+    unavailable) before giving up — but not on other errors like a bad key or a
+    malformed request, which won't be fixed by retrying and would just add a wasted
+    delay before failing anyway."""
     last_err: Exception | None = None
     for _ in range(retries + 1):
         try:
-            response = model.generate_content(prompt, request_options={"timeout": GEMINI_TIMEOUT_S})
-        except (DeadlineExceeded, ServiceUnavailable, Timeout, RequestsConnectionError) as e:
+            text = _call_model(prompt)
+        except (DeadlineExceeded, ServiceUnavailable, Timeout, RequestsConnectionError,
+                anthropic.APIConnectionError, anthropic.RateLimitError, ValueError) as e:
+            # ValueError here is _call_model's own "Claude returned no text block" case
+            # (e.g. a refusal) — worth one retry rather than failing the whole report,
+            # same treatment as the "no JSON object found" case below.
             last_err = e
             continue
-        text = response.text.strip()
+        except anthropic.APIStatusError as e:
+            if e.status_code < 500:
+                raise
+            last_err = e
+            continue
+        text = text.strip()
         text = re.sub(r'^```[a-z]*\n?', '', text)
         text = re.sub(r'\n?```$', '', text)
         text = text.strip()
         start, end = text.find('{'), text.rfind('}')
         if start == -1 or end == -1:
-            last_err = ValueError(f"No JSON object found in Gemini response: {text[:200]}")
+            last_err = ValueError(f"No JSON object found in {get_ai_provider()} response: {text[:200]}")
             continue
         try:
             return json.loads(text[start:end + 1])
@@ -274,12 +324,6 @@ def generate_ai_content(user_data: dict, summary: dict, raw_scores: list, career
     mid-JSON before finishing (only 1 of 58 completed reports ever got a usable cache) — each
     half on its own is small enough to reliably finish within GEMINI_TIMEOUT_S, and running them
     concurrently means the wall-clock cost is roughly the slower of the two, not their sum."""
-    genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
-    model = genai.GenerativeModel(
-      "gemini-2.5-flash",
-      generation_config={"response_mime_type": "application/json"}
-    )
-
     scores = {r['dimension']: r['normalized_score'] for r in raw_scores}
 
     riasec_types = summary.get('riasec', {}).get('top_types', [])
@@ -430,8 +474,8 @@ def generate_ai_content(user_data: dict, summary: dict, raw_scores: list, career
     )
 
     with ThreadPoolExecutor(max_workers=2) as pool:
-        narrative_future = pool.submit(_generate_json, model, narrative_prompt)
-        careers_future = pool.submit(_generate_json, model, careers_prompt)
+        narrative_future = pool.submit(_generate_json, narrative_prompt)
+        careers_future = pool.submit(_generate_json, careers_prompt)
         narrative_result = narrative_future.result()
         careers_result = careers_future.result()
 
@@ -1158,12 +1202,6 @@ def build_html_report(user_data: dict, summary: dict, raw_scores: list, ai: dict
 # ─── AI Impact Analysis ────────────────────────────────────────────────────────
 
 def generate_ai_impact(user_data: dict, summary: dict, careers: list, locale: str = 'en', career_count: int = 5) -> dict:
-  genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
-  model = genai.GenerativeModel(
-    "gemini-2.5-flash",
-    generation_config={"response_mime_type": "application/json"}
-  )
-
   riasec_types   = summary.get('riasec',    {}).get('top_types',    [])
   top_strengths  = summary.get('strengths', {}).get('top_strengths', [])
   top_values     = summary.get('values',    {}).get('top_values',   [])
@@ -1200,17 +1238,11 @@ def generate_ai_impact(user_data: dict, summary: dict, careers: list, locale: st
     f"Cover all {career_count} careers. Be specific and GCC-aware throughout."
   )
 
-  return _generate_json(model, prompt)
+  return _generate_json(prompt)
 
 def translate_report_json(data: dict, target_locale: str = 'ar') -> dict:
     """Translate a generated report JSON blob (ai_content or ai_impact output) into target_locale,
     preserving structure/keys and fixed enums, without re-running the full generation prompt."""
-    genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
-    model = genai.GenerativeModel(
-        "gemini-2.5-flash",
-        generation_config={"response_mime_type": "application/json"}
-    )
-
     prompt = (
         "Translate the free-text string values in this JSON object into professional Modern Standard "
         "Arabic (فصحى), in a register and word choice natural to a Saudi or Bahraini professional — "
@@ -1222,7 +1254,7 @@ def translate_report_json(data: dict, target_locale: str = 'ar') -> dict:
         f"=== JSON TO TRANSLATE ===\n{json.dumps(data, ensure_ascii=False)}"
     )
 
-    return _generate_json(model, prompt)
+    return _generate_json(prompt)
 
 def _translate_piece_with_retry(piece: dict, target_locale: str, max_attempts: int = 3) -> dict:
     """translate_report_json already retries once internally inside _generate_json for a fast
@@ -1234,7 +1266,8 @@ def _translate_piece_with_retry(piece: dict, target_locale: str, max_attempts: i
     for _ in range(max_attempts):
         try:
             return translate_report_json(piece, target_locale)
-        except (GoogleAPICallError, RequestException, json.JSONDecodeError, ValueError) as e:
+        except (GoogleAPICallError, RequestException, json.JSONDecodeError, ValueError,
+                anthropic.APIConnectionError, anthropic.RateLimitError, anthropic.APIStatusError) as e:
             last_err = e
     raise last_err
 
@@ -1383,10 +1416,12 @@ def create_report(response_id: str, supabase_client, tier: str = "launchpad", lo
                 ai_impact_ar = impact_future.result()
                 ai_content_ar = content_future.result()
             ai_impact, ai_content = ai_impact_ar, ai_content_ar
-        except (json.JSONDecodeError, ValueError, GoogleAPICallError, RequestException):
+        except (json.JSONDecodeError, ValueError, GoogleAPICallError, RequestException,
+                anthropic.APIConnectionError, anthropic.RateLimitError, anthropic.APIStatusError):
             # Translation failed after its retries (including a Gemini deadline/service-
-            # unavailable, which used to propagate all the way up as a 503 instead of
-            # landing here) — the English content was already generated and cached
+            # unavailable, or a Claude connection/rate-limit/5xx error when the provider
+            # is set to Claude, which used to propagate all the way up as a 500 instead
+            # of landing here) — the English content was already generated and cached
             # successfully above, so hand back a working English report rather than
             # failing the whole PDF. Reset locale too: build_html_report() below still
             # reads it to choose Arabic chrome/RTL layout, which would otherwise wrap

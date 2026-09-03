@@ -21,6 +21,7 @@ import httpx, hmac, hashlib, json, secrets
 from coaching_methodology import METHODOLOGY_DOC
 from coaching_pipeline import chunk_transcript, embed_and_store_chunks, client, embed_country_profile, sync_country_profile_embedding, sync_career_embedding, _gemini_embed
 from content_policy import is_appropriate, is_region_eligible, CULTURAL_GUARDRAIL
+from ai_provider import get_ai_provider, invalidate_ai_provider_cache, AI_PROVIDER_KEY, VALID_PROVIDERS
 
 load_dotenv()
 
@@ -1050,6 +1051,25 @@ def set_homepage_mode(body: HomepageModeRequest, _=Depends(require_admin)):
     _homepage_mode_cache["value"] = body.mode
     _homepage_mode_cache["checked_at"] = datetime.now(timezone.utc)
     return {"mode": body.mode}
+
+class AiProviderRequest(BaseModel):
+    provider: str
+
+@app.get("/admin/ai-provider")
+def get_ai_provider_admin(_=Depends(require_admin)):
+    return {"provider": get_ai_provider()}
+
+@app.post("/admin/ai-provider")
+def set_ai_provider(body: AiProviderRequest, _=Depends(require_admin)):
+    if body.provider not in VALID_PROVIDERS:
+        raise HTTPException(status_code=400, detail="provider must be 'gemini' or 'claude'")
+    supabase.table('app_settings').upsert({
+        'key': AI_PROVIDER_KEY,
+        'value': body.provider,
+        'updated_at': datetime.now(timezone.utc).isoformat(),
+    }, on_conflict='key').execute()
+    invalidate_ai_provider_cache()
+    return {"provider": body.provider}
 
 @app.get("/admin/country-profiles")
 def get_country_profiles(_=Depends(require_admin)):
