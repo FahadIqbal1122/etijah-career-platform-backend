@@ -645,8 +645,11 @@ def submit_beta_feedback_stage2(body: BetaFeedbackStage2Request, user=Depends(ge
 
 @app.get("/admin/beta-feedback")
 def get_beta_feedback(_=Depends(require_admin)):
+    # beta_feedback has no name/email of its own — embed the owning
+    # assessment_responses row (FK on response_id) so the admin list doesn't
+    # need a second round-trip per row.
     data = supabase.table('beta_feedback') \
-        .select('*') \
+        .select('*, assessment_responses(full_name, email, locale)') \
         .order('created_at', desc=True) \
         .execute()
     return data.data or []
