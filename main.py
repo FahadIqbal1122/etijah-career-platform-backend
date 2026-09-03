@@ -478,7 +478,8 @@ def submit_assessment(body: SubmitRequest, background_tasks: BackgroundTasks, us
             beta_feedback_tmpl = beta_feedback_template.data[0] if beta_feedback_template.data else None
             if beta_feedback_tmpl and beta_feedback_tmpl.get('is_active'):
                 beta_feedback_url = f"{frontend_base}/{locale}/beta-feedback/{response_id}"
-                background_tasks.add_task(send_beta_feedback_email, body.email, body.full_name, beta_feedback_url, locale, beta_feedback_tmpl, supabase)
+                beta_first_name = (body.full_name or '').strip().split(' ')[0]
+                background_tasks.add_task(send_beta_feedback_email, body.email, beta_first_name, beta_feedback_url, locale, beta_feedback_tmpl, supabase)
         else:
             feedback_template = supabase.table('email_templates').select('*').eq('key', 'feedback_request').limit(1).execute()
             feedback_tmpl = feedback_template.data[0] if feedback_template.data else None
