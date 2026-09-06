@@ -649,7 +649,7 @@ def get_beta_feedback(_=Depends(require_admin)):
     # assessment_responses row (FK on response_id) so the admin list doesn't
     # need a second round-trip per row.
     data = supabase.table('beta_feedback') \
-        .select('*, assessment_responses(full_name, email, locale, country)') \
+        .select('*, assessment_responses(full_name, email, locale, country, age_bracket, current_stage)') \
         .order('created_at', desc=True) \
         .execute()
     return data.data or []
