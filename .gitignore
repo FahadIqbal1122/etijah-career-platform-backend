@@ -8,3 +8,4 @@ __pycache__/
 dist/
 build/
 .DS_Store
+scripts/sent_beta_invite_log.json
