@@ -25,7 +25,7 @@ from ai_provider import get_ai_provider
 # for whichever report section happened to be waiting on it.
 GEMINI_TIMEOUT_S = 30
 CLAUDE_TIMEOUT_S = 60
-CLAUDE_REPORT_MODEL = os.getenv("CLAUDE_REPORT_MODEL", "claude-opus-5")
+CLAUDE_REPORT_MODEL = os.getenv("CLAUDE_REPORT_MODEL", "claude-sonnet-4-6")
 
 def _escape_deep(value):
     """Recursively HTML-escape every string in a dict/list, so user-supplied text
