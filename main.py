@@ -27,6 +27,29 @@ load_dotenv()
 
 app = FastAPI()
 
+import traceback
+from fastapi.responses import JSONResponse
+from fastapi import Request
+from starlette.middleware.base import BaseHTTPMiddleware
+
+
+class CatchAllMiddleware(BaseHTTPMiddleware):
+    """Catches unhandled exceptions from inside the CORS layer (registered before
+    CORSMiddleware below, so it wraps closer to the router). A handler registered
+    via @app.exception_handler(Exception) instead gets promoted by Starlette into
+    ServerErrorMiddleware, which sits *outside* CORSMiddleware — its 500 responses
+    never get an Access-Control-Allow-Origin header, so the browser can't read them
+    and reports a generic "Failed to fetch" instead of the actual error."""
+    async def dispatch(self, request: Request, call_next):
+        try:
+            return await call_next(request)
+        except Exception:
+            traceback.print_exc()
+            return JSONResponse(status_code=500, content={"error": "Internal server error"})
+
+
+app.add_middleware(CatchAllMiddleware)
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
@@ -39,15 +62,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-import traceback
-from fastapi.responses import JSONResponse
-from fastapi import Request
-
-@app.exception_handler(Exception)
-async def unhandled_exception_handler(request: Request, exc: Exception):
-    traceback.print_exc()
-    return JSONResponse(status_code=500, content={"error": "Internal server error"})
 
 supabase: Client = create_client(
     os.getenv("SUPABASE_URL"),
