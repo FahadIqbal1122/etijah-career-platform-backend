@@ -9,3 +9,4 @@ dist/
 build/
 .DS_Store
 scripts/sent_beta_invite_log.json
+scripts/sent_ai_impact_ready_log.json
