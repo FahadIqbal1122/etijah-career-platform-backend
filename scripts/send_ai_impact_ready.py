@@ -113,8 +113,9 @@ def main():
 
     if args.test:
         results_url = f"{FRONTEND_BASE}/en/results/00000000-0000-0000-0000-000000000000"
+        feedback_url = f"{FRONTEND_BASE}/en/beta-feedback/00000000-0000-0000-0000-000000000000"
         subject, html_body = render_template(
-            template, {"full_name": "there", "results_url": results_url}, locale="en"
+            template, {"full_name": "there", "results_url": results_url, "feedback_url": feedback_url}, locale="en"
         )
         send_email(to=args.test, subject=subject, html_body=html_body, supabase=supabase)
         print(f"Test email sent to {args.test}")
@@ -136,8 +137,9 @@ def main():
     for r in pending:
         locale = r.get("locale") or "en"
         results_url = f"{FRONTEND_BASE}/{locale}/results/{r['id']}"
+        feedback_url = f"{FRONTEND_BASE}/{locale}/beta-feedback/{r['id']}"
         subject, html_body = render_template(
-            template, {"full_name": r.get("full_name") or "", "results_url": results_url}, locale=locale
+            template, {"full_name": r.get("full_name") or "", "results_url": results_url, "feedback_url": feedback_url}, locale=locale
         )
         try:
             send_email(to=r["email"], subject=subject, html_body=html_body, supabase=supabase)

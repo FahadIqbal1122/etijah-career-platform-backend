@@ -27,18 +27,31 @@ insert into email_templates (key, name, description, is_active, subject_en, subj
           <td dir="ltr" align="left" style="padding: 34px 40px 0px; font-family: Arial, Helvetica, sans-serif; text-size-adjust: 100%;">
             <p style="margin: 0px 0px 22px; font-size: 28px; line-height: 1.35; font-weight: bold; color: rgb(0, 82, 204);">Your AI Career Impact Analysis Is Ready</p>
             <p style="margin: 0px 0px 16px; font-size: 15px; line-height: 1.9; color: rgb(45, 45, 45);">Hi {{full_name}},</p>
-            <p style="margin: 0px 0px 16px; font-size: 15px; line-height: 1.9; color: rgb(45, 45, 45);">When you completed your Etijahi assessment, one part of your report &mdash; the <strong style="color: rgb(0, 82, 204);">AI Career Impact</strong> analysis for your top matched careers &mdash; didn&rsquo;t generate correctly because of a technical issue on our end.</p>
-            <p style="margin: 0px 0px 22px; font-size: 15px; line-height: 1.9; color: rgb(45, 45, 45);">It&rsquo;s fixed now, and your personalized analysis &mdash; including AI risk level, at-risk tasks, and the skills that keep you protected &mdash; is ready and waiting in your results.</p>
+            <p style="margin: 0px 0px 16px; font-size: 15px; line-height: 1.9; color: rgb(45, 45, 45);">There was an issue with the <strong style="color: rgb(0, 82, 204);">AI Career Impact</strong> section of your report &mdash; the analysis of AI&rsquo;s impact on your top matched careers didn&rsquo;t generate correctly because of a technical issue on our end.</p>
+            <p style="margin: 0px 0px 22px; font-size: 15px; line-height: 1.9; color: rgb(45, 45, 45);">It&rsquo;s fixed now, and your personalized analysis &mdash; including AI risk level, at-risk tasks, and the skills that keep you protected &mdash; is ready and waiting. You can check your report again below.</p>
           </td>
         </tr>
 
         <tr><td dir="ltr" style="padding: 0px 40px 8px; text-size-adjust: 100%;">
           <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="text-size-adjust: 100%;"><tbody><tr>
             <td align="center" bgcolor="#EBF3FF" style="background: rgb(235, 243, 255); border: 1px solid rgb(207, 224, 251); border-radius: 14px; padding: 28px 26px; text-size-adjust: 100%;">
-              <p style="margin: 0px 0px 20px; font-family: Arial, Helvetica, sans-serif; font-size: 14px; line-height: 1.7; color: rgb(90, 106, 133);">No need to retake anything &mdash; just revisit the results you already have.</p>
+              <p style="margin: 0px 0px 20px; font-family: Arial, Helvetica, sans-serif; font-size: 14px; line-height: 1.7; color: rgb(90, 106, 133);">No need to retake anything &mdash; just check the results you already have.</p>
               <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="width: auto; margin: 0px auto; text-size-adjust: 100%;"><tbody><tr>
                 <td align="center" bgcolor="#00C9A7" style="border-radius: 40px; text-size-adjust: 100%;">
-                  <a href="{{results_url}}" style="display: inline-block; font-family: Arial, Helvetica, sans-serif; font-size: 17px; font-weight: bold; color: rgb(255, 255, 255); text-decoration: none; padding: 17px 44px; border-radius: 40px;">View Your Updated Results &nbsp;&rarr;</a>
+                  <a href="{{results_url}}" style="display: inline-block; font-family: Arial, Helvetica, sans-serif; font-size: 17px; font-weight: bold; color: rgb(255, 255, 255); text-decoration: none; padding: 17px 44px; border-radius: 40px;">Check Your Report Again &nbsp;&rarr;</a>
+                </td>
+              </tr></tbody></table>
+            </td>
+          </tr></tbody></table>
+        </td></tr>
+
+        <tr><td dir="ltr" style="padding: 0px 40px 8px; text-size-adjust: 100%;">
+          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="text-size-adjust: 100%;"><tbody><tr>
+            <td align="center" style="border: 1px solid rgb(220, 231, 251); border-radius: 14px; padding: 22px 26px; text-size-adjust: 100%;">
+              <p style="margin: 0px 0px 16px; font-family: Arial, Helvetica, sans-serif; font-size: 14px; line-height: 1.7; color: rgb(90, 106, 133);">Already sent us feedback? You can still go back and update it if you&rsquo;d like.</p>
+              <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="width: auto; margin: 0px auto; text-size-adjust: 100%;"><tbody><tr>
+                <td align="center" style="border: 2px solid rgb(0, 82, 204); border-radius: 40px; text-size-adjust: 100%;">
+                  <a href="{{feedback_url}}" style="display: inline-block; font-family: Arial, Helvetica, sans-serif; font-size: 15px; font-weight: bold; color: rgb(0, 82, 204); text-decoration: none; padding: 13px 36px; border-radius: 40px;">Update Your Feedback &nbsp;&rarr;</a>
                 </td>
               </tr></tbody></table>
             </td>
@@ -109,8 +122,8 @@ insert into email_templates (key, name, description, is_active, subject_en, subj
           <td dir="rtl" align="right" style="padding: 34px 40px 0px; font-family: &quot;Segoe UI&quot;, Tahoma, Arial, sans-serif; text-size-adjust: 100%;">
             <p style="margin: 0px 0px 22px; font-size: 26px; line-height: 1.5; font-weight: bold; color: rgb(0, 82, 204);">تحليل تأثير الذكاء الاصطناعي على مسارك المهني جاهز الآن</p>
             <p style="margin: 0px 0px 16px; font-size: 15px; line-height: 1.9; color: rgb(45, 45, 45);">مرحباً {{full_name}}،</p>
-            <p style="margin: 0px 0px 16px; font-size: 15px; line-height: 1.9; color: rgb(45, 45, 45);">عند إكمالك لتقييم اتجاهي، لم يظهر جزء من تقريرك بشكل صحيح — وهو تحليل <strong style="color: rgb(0, 82, 204);">تأثير الذكاء الاصطناعي</strong> على أبرز المسارات المهنية المطابقة لك، بسبب مشكلة تقنية من جانبنا.</p>
-            <p style="margin: 0px 0px 22px; font-size: 15px; line-height: 1.9; color: rgb(45, 45, 45);">تم إصلاح المشكلة الآن، وتحليلك الشخصي — بما يشمل مستوى التأثير المتوقع، والمهام الأكثر عرضة للتأثر، والمهارات التي تحميك — جاهز بانتظارك ضمن نتائجك.</p>
+            <p style="margin: 0px 0px 16px; font-size: 15px; line-height: 1.9; color: rgb(45, 45, 45);">كانت هناك مشكلة في قسم <strong style="color: rgb(0, 82, 204);">تأثير الذكاء الاصطناعي</strong> ضمن تقريرك — لم يظهر تحليل تأثير الذكاء الاصطناعي على أبرز المسارات المهنية المطابقة لك بشكل صحيح، بسبب مشكلة تقنية من جانبنا.</p>
+            <p style="margin: 0px 0px 22px; font-size: 15px; line-height: 1.9; color: rgb(45, 45, 45);">تم إصلاح المشكلة الآن، وتحليلك الشخصي — بما يشمل مستوى التأثير المتوقع، والمهام الأكثر عرضة للتأثر، والمهارات التي تحميك — جاهز الآن. يمكنك مراجعة تقريرك مرة أخرى أدناه.</p>
           </td>
         </tr>
 
@@ -120,7 +133,20 @@ insert into email_templates (key, name, description, is_active, subject_en, subj
               <p style="margin: 0px 0px 20px; font-family: &quot;Segoe UI&quot;, Tahoma, Arial, sans-serif; font-size: 14px; line-height: 1.7; color: rgb(90, 106, 133);">لا داعي لإعادة أي شيء — فقط راجع النتائج التي حصلت عليها سابقاً.</p>
               <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="width: auto; margin: 0px auto; text-size-adjust: 100%;"><tbody><tr>
                 <td align="center" bgcolor="#00C9A7" style="border-radius: 40px; text-size-adjust: 100%;">
-                  <a href="{{results_url}}" style="display: inline-block; font-family: &quot;Segoe UI&quot;, Tahoma, Arial, sans-serif; font-size: 17px; font-weight: bold; color: rgb(255, 255, 255); text-decoration: none; padding: 17px 46px; border-radius: 40px;">‏شاهد نتائجك المحدّثة&nbsp;←</a>
+                  <a href="{{results_url}}" style="display: inline-block; font-family: &quot;Segoe UI&quot;, Tahoma, Arial, sans-serif; font-size: 17px; font-weight: bold; color: rgb(255, 255, 255); text-decoration: none; padding: 17px 46px; border-radius: 40px;">‏راجع تقريرك مرة أخرى&nbsp;←</a>
+                </td>
+              </tr></tbody></table>
+            </td>
+          </tr></tbody></table>
+        </td></tr>
+
+        <tr><td dir="rtl" style="padding: 0px 40px 8px; text-size-adjust: 100%;">
+          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="text-size-adjust: 100%;"><tbody><tr>
+            <td align="center" style="border: 1px solid rgb(220, 231, 251); border-radius: 14px; padding: 22px 26px; text-size-adjust: 100%;">
+              <p style="margin: 0px 0px 16px; font-family: &quot;Segoe UI&quot;, Tahoma, Arial, sans-serif; font-size: 14px; line-height: 1.7; color: rgb(90, 106, 133);">سبق أن أرسلت لنا ملاحظاتك؟ يمكنك الرجوع وتعديلها إذا أردت.</p>
+              <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="width: auto; margin: 0px auto; text-size-adjust: 100%;"><tbody><tr>
+                <td align="center" style="border: 2px solid rgb(0, 82, 204); border-radius: 40px; text-size-adjust: 100%;">
+                  <a href="{{feedback_url}}" style="display: inline-block; font-family: &quot;Segoe UI&quot;, Tahoma, Arial, sans-serif; font-size: 15px; font-weight: bold; color: rgb(0, 82, 204); text-decoration: none; padding: 13px 34px; border-radius: 40px;">‏تعديل ملاحظاتك&nbsp;←</a>
                 </td>
               </tr></tbody></table>
             </td>
@@ -166,6 +192,6 @@ insert into email_templates (key, name, description, is_active, subject_en, subj
     </td>
   </tr>
 </tbody></table>',
- '["full_name", "results_url"]'::jsonb
+ '["full_name", "results_url", "feedback_url"]'::jsonb
 )
 on conflict (key) do nothing;
