@@ -632,8 +632,26 @@ def submit_beta_feedback_stage1(body: BetaFeedbackStage1Request, user=Depends(ge
         raise HTTPException(status_code=500, detail="Failed to save feedback")
     return {"ok": True}
 
+@app.get("/beta-feedback/{response_id}/status")
+def get_beta_feedback_status(response_id: str, user=Depends(get_optional_user)):
+    existing = supabase.table('beta_feedback') \
+        .select('stage1_completed_at, stage2_completed_at') \
+        .eq('response_id', response_id) \
+        .limit(1).execute()
+    row = existing.data[0] if existing.data else None
+    return {
+        "stage1_completed": bool(row and row.get('stage1_completed_at')),
+        "stage2_completed": bool(row and row.get('stage2_completed_at')),
+    }
+
 @app.post("/beta-feedback/stage2")
 def submit_beta_feedback_stage2(body: BetaFeedbackStage2Request, user=Depends(get_optional_user)):
+    existing = supabase.table('beta_feedback') \
+        .select('stage1_completed_at') \
+        .eq('response_id', body.response_id) \
+        .limit(1).execute()
+    if not existing.data or not existing.data[0].get('stage1_completed_at'):
+        raise HTTPException(status_code=403, detail="Stage 1 feedback must be completed first")
     row = body.model_dump(exclude={'response_id'}, exclude_none=True)
     row['response_id'] = body.response_id
     row['user_id'] = user.id if user else None
