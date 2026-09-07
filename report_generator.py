@@ -11,13 +11,21 @@ from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor
 import google.generativeai as genai
 import anthropic
+import httpx
 from google.api_core.exceptions import GoogleAPICallError, DeadlineExceeded, ServiceUnavailable
 from requests.exceptions import RequestException, Timeout, ConnectionError as RequestsConnectionError
 from weasyprint import HTML
+from supabase import create_client as _create_supabase_client
 from scoring_engine import build_framework_output, score_careers, COUNTRY_CODE_MAP
 from coaching_pipeline import _gemini_embed, client as anthropic_client
 from content_policy import is_appropriate, CULTURAL_GUARDRAIL
 from ai_provider import get_ai_provider
+
+# Self-contained client (like ai_provider.py / smtp_service.py) purely for the
+# provider-fallback admin alert — report_generator.py doesn't otherwise touch
+# Supabase directly, and this avoids threading a request-scoped client all the
+# way down through every generate_*/translate_* call for one rare notification.
+_alert_supabase = _create_supabase_client(os.getenv("SUPABASE_URL"), os.getenv("SUPABASE_KEY"))
 
 # Without a timeout, a bad/corrupted key or network blip on Gemini's side hangs
 # indefinitely instead of failing fast — which then trips a reverse-proxy
@@ -253,12 +261,12 @@ def _get_gemini_model():
         )
     return _gemini_model
 
-def _call_model(prompt: str) -> str:
-    """Dispatches to whichever provider the app_settings.ai_provider toggle selects
+def _call_model(prompt: str, provider: str | None = None) -> str:
+    """Dispatches to `provider`, or the app_settings.ai_provider toggle when not given,
     and returns raw text. Both providers get the same "return only JSON" instructions
     in the prompt itself — downstream fence-stripping/brace-extraction in
     _generate_json is provider-agnostic."""
-    if get_ai_provider() == "claude":
+    if (provider or get_ai_provider()) == "claude":
         response = anthropic_client.messages.create(
             model=CLAUDE_REPORT_MODEL,
             max_tokens=8000,
@@ -273,6 +281,38 @@ def _call_model(prompt: str) -> str:
     response = _get_gemini_model().generate_content(prompt, request_options={"timeout": GEMINI_TIMEOUT_S})
     return response.text
 
+
+# httpx.HTTPError covers connection-shaped failures neither SDK wraps into its own
+# exception type (e.g. a bare httpx.RemoteProtocolError from a server-terminated
+# HTTP/2 stream) — those used to propagate as an unretried 500 instead of getting
+# the same "maybe just a blip" treatment as everything else here.
+_RETRYABLE_ERRORS = (
+    DeadlineExceeded, ServiceUnavailable, Timeout, RequestsConnectionError,
+    anthropic.APIConnectionError, anthropic.RateLimitError, ValueError, httpx.HTTPError,
+)
+
+
+def _notify_provider_fallback(primary: str, fallback: str, error: Exception):
+    """Best-effort admin heads-up that the configured provider failed and this
+    request was automatically served by the other one instead — so a
+    misconfigured/outaged provider (a pulled API key, a quota cutoff, an
+    extended outage) surfaces as an email instead of just quietly costing
+    more per report until someone happens to notice."""
+    try:
+        from smtp_service import send_failure_alert
+        send_failure_alert(
+            f"AI provider fallback ({primary} → {fallback})",
+            error,
+            extra=(f"{primary} failed (see error below) so this request was automatically "
+                   f"retried with {fallback}, which succeeded. Worth checking whether "
+                   f"{primary} needs attention (API key, quota, outage) — until fixed, "
+                   f"generation is quietly costing more per report on {fallback}."),
+            supabase=_alert_supabase,
+        )
+    except Exception as e:
+        print("Provider-fallback alert failed (not re-raised):", e)
+
+
 def _generate_json(prompt: str, retries: int = 1) -> dict:
     """The active provider's JSON output is reliable but not perfect — an occasional
     stray unescaped character or truncated response yields invalid JSON. Regenerating
@@ -283,38 +323,64 @@ def _generate_json(prompt: str, retries: int = 1) -> dict:
     individually capped at its provider's timeout — so a single transient slow
     response used to fail the whole report immediately with no retry. Retry once on
     a timeout-shaped failure (deadline hit, or the backing service briefly
-    unavailable) before giving up — but not on other errors like a bad key or a
-    malformed request, which won't be fixed by retrying and would just add a wasted
-    delay before failing anyway."""
-    last_err: Exception | None = None
-    for _ in range(retries + 1):
-        try:
-            text = _call_model(prompt)
-        except (DeadlineExceeded, ServiceUnavailable, Timeout, RequestsConnectionError,
-                anthropic.APIConnectionError, anthropic.RateLimitError, ValueError) as e:
-            # ValueError here is _call_model's own "Claude returned no text block" case
-            # (e.g. a refusal) — worth one retry rather than failing the whole report,
-            # same treatment as the "no JSON object found" case below.
-            last_err = e
-            continue
-        except anthropic.APIStatusError as e:
-            if e.status_code < 500:
-                raise
-            last_err = e
-            continue
-        text = text.strip()
-        text = re.sub(r'^```[a-z]*\n?', '', text)
-        text = re.sub(r'\n?```$', '', text)
-        text = text.strip()
-        start, end = text.find('{'), text.rfind('}')
-        if start == -1 or end == -1:
-            last_err = ValueError(f"No JSON object found in {get_ai_provider()} response: {text[:200]}")
-            continue
-        try:
-            return json.loads(text[start:end + 1])
-        except json.JSONDecodeError as e:
-            last_err = e
-    raise last_err
+    unavailable) before giving up.
+
+    If the configured (primary) provider still fails after those retries — for *any*
+    reason, including a missing/bad API key, an outage, or a malformed-request error
+    that would normally raise immediately — this automatically retries the same
+    prompt on the other provider before giving up, and emails an admin alert about
+    the fallback. A single misconfigured provider then degrades service (temporarily
+    costs more, on the other provider) instead of breaking every AI-backed feature."""
+    primary = get_ai_provider()
+    fallback = "gemini" if primary == "claude" else "claude"
+
+    def _attempt(provider: str, catch_broadly: bool):
+        last_err: Exception | None = None
+        for _ in range(retries + 1):
+            try:
+                text = _call_model(prompt, provider=provider)
+            except anthropic.APIStatusError as e:
+                if not catch_broadly and e.status_code < 500:
+                    raise
+                last_err = e
+                continue
+            except _RETRYABLE_ERRORS as e:
+                last_err = e
+                continue
+            except Exception as e:
+                # Only the primary provider gets this wide a net — we want ANY
+                # failure of the configured provider to fall back, not just the
+                # transient-shaped ones above. The fallback provider keeps the
+                # narrower behavior so a real bug still surfaces normally when
+                # both providers have been tried.
+                if not catch_broadly:
+                    raise
+                last_err = e
+                continue
+            text = text.strip()
+            text = re.sub(r'^```[a-z]*\n?', '', text)
+            text = re.sub(r'\n?```$', '', text)
+            text = text.strip()
+            start, end = text.find('{'), text.rfind('}')
+            if start == -1 or end == -1:
+                last_err = ValueError(f"No JSON object found in {provider} response: {text[:200]}")
+                continue
+            try:
+                return json.loads(text[start:end + 1]), None
+            except json.JSONDecodeError as e:
+                last_err = e
+        return None, last_err
+
+    result, primary_err = _attempt(primary, catch_broadly=True)
+    if result is not None:
+        return result
+
+    result, fallback_err = _attempt(fallback, catch_broadly=False)
+    if result is not None:
+        _notify_provider_fallback(primary, fallback, primary_err)
+        return result
+
+    raise fallback_err
 
 def generate_ai_content(user_data: dict, summary: dict, raw_scores: list, careers: list, country_profile: dict | None = None, coaching_chunks: list[dict] | None = None, locale: str = 'en', career_count: int = 8) -> dict:
     """Split into two independent Gemini calls (personality/values narratives + action plan,
