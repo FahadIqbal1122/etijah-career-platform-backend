@@ -168,3 +168,59 @@ def send_beta_feedback_email(to_email, to_name, beta_feedback_url, locale="en", 
         return  # template not seeded/found — nothing to send
     subject, html_body = render_template(template_row, {"full_name": to_name, "beta_feedback_url": beta_feedback_url}, locale)
     send_email(to=to_email, subject=subject, html_body=html_body, supabase=supabase)
+
+
+ADMIN_ALERT_EMAIL = "business@etijahcoaching.com"
+
+
+def send_failure_alert(feature, error, response_id=None, user_email=None, user_name=None, extra=None, supabase=None):
+    """Notifies ADMIN_ALERT_EMAIL when an AI-backed feature (AI Impact, the
+    coach, PDF report generation) fails for a real user, so we hear about
+    breakage from an internal email instead of a user complaint days later.
+
+    Best-effort and self-contained: looks up the person's name/email from
+    assessment_responses when only a response_id is given, and never lets a
+    failure here mask or replace the original error — swallows its own
+    exceptions and always returns normally so the caller's error handling
+    (re-raising the real exception) is unaffected."""
+    try:
+        name, email, locale, country = user_name, user_email, None, None
+        if response_id and supabase is not None:
+            try:
+                row = supabase.table("assessment_responses") \
+                    .select("full_name,email,locale,country") \
+                    .eq("id", response_id).limit(1).execute()
+                if row.data:
+                    name = name or row.data[0].get("full_name")
+                    email = email or row.data[0].get("email")
+                    locale = row.data[0].get("locale")
+                    country = row.data[0].get("country")
+            except Exception:
+                pass
+
+        when = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+        lines = [
+            f"Feature: {feature}",
+            f"Time: {when}",
+            f"Person: {name or 'unknown'} <{email or 'unknown'}>",
+        ]
+        if response_id:
+            lines.append(f"Response ID: {response_id}")
+        if locale:
+            lines.append(f"Locale: {locale}")
+        if country:
+            lines.append(f"Country: {country}")
+        if extra:
+            lines.append(f"Details: {extra}")
+        lines.append(f"Error: {type(error).__name__}: {str(error)[:500]}")
+
+        body = "<pre style=\"font-family: monospace; font-size: 13px; white-space: pre-wrap;\">" + \
+            _html.escape("\n".join(lines)) + "</pre>"
+        send_email(
+            to=ADMIN_ALERT_EMAIL,
+            subject=f"[Etijahi Alert] {feature} failed for {name or email or 'a user'}",
+            html_body=body,
+            supabase=supabase,
+        )
+    except Exception as e:
+        print("send_failure_alert itself failed (not re-raised):", e)

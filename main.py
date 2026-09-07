@@ -16,7 +16,7 @@ from fastapi.responses import StreamingResponse
 from report_generator import create_report
 from google.api_core.exceptions import GoogleAPICallError
 from requests.exceptions import RequestException
-from smtp_service import send_report_email, send_feedback_email, send_results_ready_email, send_beta_feedback_email, invalidate_smtp_cache
+from smtp_service import send_report_email, send_feedback_email, send_results_ready_email, send_beta_feedback_email, invalidate_smtp_cache, send_failure_alert
 import httpx, hmac, hashlib, json, secrets
 from coaching_methodology import METHODOLOGY_DOC
 from coaching_pipeline import chunk_transcript, embed_and_store_chunks, client, embed_country_profile, sync_country_profile_embedding, sync_career_embedding, _gemini_embed
@@ -929,7 +929,11 @@ def get_ai_impact(response_id: str, force: bool = False, user=Depends(get_option
     top_careers = score_careers(summary, profile_row.data or {}, careers, semantic_scores)[:careers_cap]
 
     from report_generator import generate_ai_impact
-    result = generate_ai_impact(profile_row.data or {}, summary, top_careers, career_count=careers_cap)
+    try:
+        result = generate_ai_impact(profile_row.data or {}, summary, top_careers, career_count=careers_cap)
+    except Exception as e:
+        send_failure_alert("AI Impact generation", e, response_id=response_id, supabase=supabase)
+        raise
 
     supabase.table('assessment_responses') \
         .update({cache_col: result}) \
@@ -951,19 +955,22 @@ def get_report(response_id: str, locale: str | None = None, user=Depends(get_opt
 
     try:
         pdf_bytes = create_report(response_id, supabase, tier=tier, locale_override=locale)
-    except json.JSONDecodeError:
+    except json.JSONDecodeError as e:
         # json.JSONDecodeError subclasses ValueError — must be caught before it so an
         # occasional malformed Gemini response isn't mistaken for the "not found" case below.
+        send_failure_alert("PDF report download", e, response_id=response_id, supabase=supabase)
         raise HTTPException(status_code=502, detail="AI report generation failed, please try again")
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
-    except (GoogleAPICallError, RequestException):
+    except (GoogleAPICallError, RequestException) as e:
         # Gemini's own request deadline (or the raw embedding call's timeout) was
         # hit — surface this as a retryable "still working on it" instead of the
         # confusing "Report generation failed: 504 The request timed out" that
         # GoogleAPICallError's str() otherwise produces.
+        send_failure_alert("PDF report download", e, response_id=response_id, supabase=supabase)
         raise HTTPException(status_code=503, detail="Report generation is taking longer than expected. Please try again in a moment.")
     except Exception as e:
+        send_failure_alert("PDF report download", e, response_id=response_id, supabase=supabase)
         raise HTTPException(status_code=500, detail=f"Report generation failed: {str(e)}")
 
     filename = f"career-report-{response_id[:8]}{'-' + locale if locale else ''}.pdf"
@@ -991,15 +998,18 @@ def email_report(response_id: str, background_tasks: BackgroundTasks, locale: st
 
     try:
         pdf_bytes = create_report(response_id, supabase, tier=tier, locale_override=locale)
-    except json.JSONDecodeError:
+    except json.JSONDecodeError as e:
         # json.JSONDecodeError subclasses ValueError — must be caught before it so an
         # occasional malformed Gemini response isn't mistaken for the "not found" case below.
+        send_failure_alert("Email report", e, response_id=response_id, supabase=supabase)
         raise HTTPException(status_code=502, detail="AI report generation failed, please try again")
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
-    except (GoogleAPICallError, RequestException):
+    except (GoogleAPICallError, RequestException) as e:
+        send_failure_alert("Email report", e, response_id=response_id, supabase=supabase)
         raise HTTPException(status_code=503, detail="Report generation is taking longer than expected. Please try again in a moment.")
     except Exception as e:
+        send_failure_alert("Email report", e, response_id=response_id, supabase=supabase)
         raise HTTPException(status_code=500, detail=f"Report generation failed: {str(e)}")
 
     filename = f"career-report-{response_id[:8]}{'-' + locale if locale else ''}.pdf"
@@ -1883,13 +1893,17 @@ def coach(payload: CoachRequest, user=Depends(get_current_user)):
 
     system_prompt = f"{METHODOLOGY_DOC}\n\n{CULTURAL_GUARDRAIL}\n\nRelevant past examples:\n{examples}{country_context}"
 
-    response = client.messages.create(
-        model="claude-sonnet-4-6",
-        max_tokens=1024,
-        system=system_prompt,
-        messages=payload.conversation_history + [{"role": "user", "content": payload.message}],
-        timeout=30.0,
-    )
+    try:
+        response = client.messages.create(
+            model="claude-sonnet-4-6",
+            max_tokens=1024,
+            system=system_prompt,
+            messages=payload.conversation_history + [{"role": "user", "content": payload.message}],
+            timeout=30.0,
+        )
+    except Exception as e:
+        send_failure_alert("AI Coach chat", e, user_email=user.email, user_name=(user.user_metadata or {}).get("full_name"), supabase=supabase)
+        raise
     return {"reply": response.content[0].text}
 
 
