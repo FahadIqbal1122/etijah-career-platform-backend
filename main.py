@@ -658,14 +658,22 @@ def get_beta_feedback_status(response_id: str, user=Depends(get_optional_user)):
         "stage2_completed": bool(row and row.get('stage2_completed_at')),
     }
 
+@app.get("/beta-feedback/{response_id}/stage2")
+def get_beta_feedback_stage2(response_id: str, user=Depends(get_optional_user)):
+    """Existing stage2 answers, if any, so the form can be re-opened pre-filled
+    for editing rather than starting blank every time."""
+    fields = list(BetaFeedbackStage2Request.model_fields.keys())
+    fields.remove('response_id')
+    existing = supabase.table('beta_feedback') \
+        .select(','.join(fields)) \
+        .eq('response_id', response_id) \
+        .limit(1).execute()
+    if not existing.data:
+        return {}
+    return {k: v for k, v in existing.data[0].items() if v is not None}
+
 @app.post("/beta-feedback/stage2")
 def submit_beta_feedback_stage2(body: BetaFeedbackStage2Request, user=Depends(get_optional_user)):
-    existing = supabase.table('beta_feedback') \
-        .select('stage1_completed_at') \
-        .eq('response_id', body.response_id) \
-        .limit(1).execute()
-    if not existing.data or not existing.data[0].get('stage1_completed_at'):
-        raise HTTPException(status_code=403, detail="Stage 1 feedback must be completed first")
     row = body.model_dump(exclude={'response_id'}, exclude_none=True)
     row['response_id'] = body.response_id
     row['user_id'] = user.id if user else None
