@@ -33,6 +33,14 @@ _alert_supabase = _create_supabase_client(os.getenv("SUPABASE_URL"), os.getenv("
 # for whichever report section happened to be waiting on it.
 GEMINI_TIMEOUT_S = 30
 CLAUDE_TIMEOUT_S = 60
+# generate_ai_content's narrative/career prompts return a much larger structured
+# JSON payload (up to max_tokens=8000) than a typical ai-impact or translation
+# call — the flat 60s budget was cutting off legitimate slow-but-working Claude
+# responses as APITimeoutError, not just genuine failures. Gemini's own timeout
+# stays at GEMINI_TIMEOUT_S: splitting generate_ai_content into concurrent narrative
+# + careers calls (see its docstring) already fixed that side reliably finishing
+# within 30s, so only Claude's budget needs the larger allowance here.
+CLAUDE_CONTENT_TIMEOUT_S = 150
 CLAUDE_REPORT_MODEL = os.getenv("CLAUDE_REPORT_MODEL", "claude-sonnet-4-6")
 
 def _escape_deep(value):
@@ -261,24 +269,26 @@ def _get_gemini_model():
         )
     return _gemini_model
 
-def _call_model(prompt: str, provider: str | None = None) -> str:
+def _call_model(prompt: str, provider: str | None = None, timeout_s: float | None = None) -> str:
     """Dispatches to `provider`, or the app_settings.ai_provider toggle when not given,
-    and returns raw text. Both providers get the same "return only JSON" instructions
-    in the prompt itself — downstream fence-stripping/brace-extraction in
-    _generate_json is provider-agnostic."""
+    and returns raw text. `timeout_s` overrides the provider's default budget (see
+    CLAUDE_CONTENT_TIMEOUT_S) for calls expected to return a much larger response.
+    Both providers get the same "return only JSON" instructions in the prompt
+    itself — downstream fence-stripping/brace-extraction in _generate_json is
+    provider-agnostic."""
     if (provider or get_ai_provider()) == "claude":
         response = anthropic_client.messages.create(
             model=CLAUDE_REPORT_MODEL,
             max_tokens=8000,
             messages=[{"role": "user", "content": prompt}],
-            timeout=CLAUDE_TIMEOUT_S,
+            timeout=timeout_s or CLAUDE_TIMEOUT_S,
         )
         text_block = next((b for b in response.content if b.type == "text"), None)
         if text_block is None:
             raise ValueError(f"Claude response had no text block (stop_reason={response.stop_reason!r})")
         return text_block.text
 
-    response = _get_gemini_model().generate_content(prompt, request_options={"timeout": GEMINI_TIMEOUT_S})
+    response = _get_gemini_model().generate_content(prompt, request_options={"timeout": timeout_s or GEMINI_TIMEOUT_S})
     return response.text
 
 
@@ -292,7 +302,7 @@ _RETRYABLE_ERRORS = (
 )
 
 
-def _notify_provider_fallback(primary: str, fallback: str, error: Exception):
+def _notify_provider_fallback(primary: str, fallback: str, error: Exception, label: str):
     """Best-effort admin heads-up that the configured provider failed and this
     request was automatically served by the other one instead — so a
     misconfigured/outaged provider (a pulled API key, a quota cutoff, an
@@ -303,26 +313,27 @@ def _notify_provider_fallback(primary: str, fallback: str, error: Exception):
         send_failure_alert(
             f"AI provider fallback ({primary} → {fallback})",
             error,
-            extra=(f"{primary} failed (see error below) so this request was automatically "
-                   f"retried with {fallback}, which succeeded. Worth checking whether "
-                   f"{primary} needs attention (API key, quota, outage) — until fixed, "
-                   f"generation is quietly costing more per report on {fallback}."),
+            extra=(f"Call: {label or 'unlabeled'}. {primary} failed (see error below) so this "
+                   f"request was automatically retried with {fallback}, which succeeded. Worth "
+                   f"checking whether {primary} needs attention (API key, quota, outage) — until "
+                   f"fixed, generation is quietly costing more per report on {fallback}."),
             supabase=_alert_supabase,
         )
     except Exception as e:
         print("Provider-fallback alert failed (not re-raised):", e)
 
 
-def _generate_json(prompt: str, retries: int = 1) -> dict:
+def _generate_json(prompt: str, retries: int = 1, timeout_s: float | None = None, label: str = "") -> dict:
     """The active provider's JSON output is reliable but not perfect — an occasional
     stray unescaped character or truncated response yields invalid JSON. Regenerating
     is far more likely to fix it than any repair heuristic, so retry once before
     letting json.JSONDecodeError bubble up.
 
     A report is several of these calls chained (impact, content, translation), each
-    individually capped at its provider's timeout — so a single transient slow
-    response used to fail the whole report immediately with no retry. Retry once on
-    a timeout-shaped failure (deadline hit, or the backing service briefly
+    individually capped at its provider's timeout (`timeout_s` overrides the default —
+    see CLAUDE_CONTENT_TIMEOUT_S for the larger generate_ai_content calls) — so a single
+    transient slow response used to fail the whole report immediately with no retry.
+    Retry once on a timeout-shaped failure (deadline hit, or the backing service briefly
     unavailable) before giving up.
 
     If the configured (primary) provider still fails after those retries — for *any*
@@ -330,22 +341,28 @@ def _generate_json(prompt: str, retries: int = 1) -> dict:
     that would normally raise immediately — this automatically retries the same
     prompt on the other provider before giving up, and emails an admin alert about
     the fallback. A single misconfigured provider then degrades service (temporarily
-    costs more, on the other provider) instead of breaking every AI-backed feature."""
+    costs more, on the other provider) instead of breaking every AI-backed feature.
+
+    `label` identifies the call (e.g. "ai_impact", "content:narrative") in that alert
+    and in the retry/fallback log lines below — before this, a timeout only showed up
+    as an admin email with no trace in `docker logs` of which call it even was."""
     primary = get_ai_provider()
     fallback = "gemini" if primary == "claude" else "claude"
 
     def _attempt(provider: str, catch_broadly: bool):
         last_err: Exception | None = None
-        for _ in range(retries + 1):
+        for attempt in range(retries + 1):
             try:
-                text = _call_model(prompt, provider=provider)
+                text = _call_model(prompt, provider=provider, timeout_s=timeout_s)
             except anthropic.APIStatusError as e:
                 if not catch_broadly and e.status_code < 500:
                     raise
                 last_err = e
+                print(f"[AI call:{label or 'unlabeled'}] {provider} attempt {attempt + 1} failed: {type(e).__name__}: {e}")
                 continue
             except _RETRYABLE_ERRORS as e:
                 last_err = e
+                print(f"[AI call:{label or 'unlabeled'}] {provider} attempt {attempt + 1} failed: {type(e).__name__}: {e}")
                 continue
             except Exception as e:
                 # Only the primary provider gets this wide a net — we want ANY
@@ -356,6 +373,7 @@ def _generate_json(prompt: str, retries: int = 1) -> dict:
                 if not catch_broadly:
                     raise
                 last_err = e
+                print(f"[AI call:{label or 'unlabeled'}] {provider} attempt {attempt + 1} failed: {type(e).__name__}: {e}")
                 continue
             text = text.strip()
             text = re.sub(r'^```[a-z]*\n?', '', text)
@@ -375,9 +393,10 @@ def _generate_json(prompt: str, retries: int = 1) -> dict:
     if result is not None:
         return result
 
+    print(f"[AI call:{label or 'unlabeled'}] {primary} exhausted after {retries + 1} attempt(s), falling back to {fallback}")
     result, fallback_err = _attempt(fallback, catch_broadly=False)
     if result is not None:
-        _notify_provider_fallback(primary, fallback, primary_err)
+        _notify_provider_fallback(primary, fallback, primary_err, label)
         return result
 
     raise fallback_err
@@ -540,8 +559,8 @@ def generate_ai_content(user_data: dict, summary: dict, raw_scores: list, career
     )
 
     with ThreadPoolExecutor(max_workers=2) as pool:
-        narrative_future = pool.submit(_generate_json, narrative_prompt)
-        careers_future = pool.submit(_generate_json, careers_prompt)
+        narrative_future = pool.submit(_generate_json, narrative_prompt, 1, CLAUDE_CONTENT_TIMEOUT_S, "content:narrative")
+        careers_future = pool.submit(_generate_json, careers_prompt, 1, CLAUDE_CONTENT_TIMEOUT_S, "content:careers")
         narrative_result = narrative_future.result()
         careers_result = careers_future.result()
 
@@ -1304,7 +1323,7 @@ def generate_ai_impact(user_data: dict, summary: dict, careers: list, locale: st
     f"Cover all {career_count} careers. Be specific and GCC-aware throughout."
   )
 
-  return _generate_json(prompt)
+  return _generate_json(prompt, label="ai_impact")
 
 def translate_report_json(data: dict, target_locale: str = 'ar') -> dict:
     """Translate a generated report JSON blob (ai_content or ai_impact output) into target_locale,
@@ -1320,7 +1339,7 @@ def translate_report_json(data: dict, target_locale: str = 'ar') -> dict:
         f"=== JSON TO TRANSLATE ===\n{json.dumps(data, ensure_ascii=False)}"
     )
 
-    return _generate_json(prompt)
+    return _generate_json(prompt, label=f"translate:{target_locale}")
 
 def _translate_piece_with_retry(piece: dict, target_locale: str, max_attempts: int = 3) -> dict:
     """translate_report_json already retries once internally inside _generate_json for a fast
