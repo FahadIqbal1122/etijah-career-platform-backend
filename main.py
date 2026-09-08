@@ -438,7 +438,7 @@ def root():
 @app.get("/admin/submissions")
 def get_submissions(_=Depends(require_admin)):
     data = supabase.table('assessment_responses') \
-        .select('id, full_name, email, phone, country, age_bracket, current_stage, completed, created_at') \
+        .select('id, full_name, email, phone, country, nationality, age_bracket, education_field, current_stage, completed, created_at') \
         .order('created_at', desc=True) \
         .execute()
     return data.data or []
