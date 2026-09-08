@@ -1339,7 +1339,7 @@ def translate_report_json(data: dict, target_locale: str = 'ar') -> dict:
         f"=== JSON TO TRANSLATE ===\n{json.dumps(data, ensure_ascii=False)}"
     )
 
-    return _generate_json(prompt, label=f"translate:{target_locale}")
+    return _generate_json(prompt, timeout_s=CLAUDE_CONTENT_TIMEOUT_S, label=f"translate:{target_locale}")
 
 def _translate_piece_with_retry(piece: dict, target_locale: str, max_attempts: int = 3) -> dict:
     """translate_report_json already retries once internally inside _generate_json for a fast
