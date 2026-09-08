@@ -178,6 +178,8 @@ UI_TEXT = {
         'prior_experience': 'Prior Experience', 'risk_tolerance': 'Risk Tolerance', 'portfolio_interest': 'Portfolio Interest',
         'match': 'MATCH', 'development_tip': 'Development tip:',
         'risk_suffix': 'RISK',
+        'protected_skills_label': 'Human skills that stay valuable',
+        'upskilling_label': 'How to prepare',
         'action_month1': 'Month 1 — Launch', 'action_months23': 'Months 2–3 — Build', 'action_months46': 'Months 4–6 — Grow',
         'back_headline': 'Your Journey Starts Here',
         'back_tagline_suffix': 'Etijahi Assessment',
@@ -213,6 +215,8 @@ UI_TEXT = {
         'prior_experience': 'خبرة سابقة', 'risk_tolerance': 'تقبّل المخاطرة', 'portfolio_interest': 'الاهتمام بمشاريع متعددة',
         'match': 'نسبة التوافق', 'development_tip': 'نصيحة للتطوير:',
         'risk_suffix': 'المخاطر',
+        'protected_skills_label': 'مهارات إنسانية تبقى ذات قيمة',
+        'upskilling_label': 'كيف تستعد',
         'action_month1': 'الشهر الأول — الانطلاقة', 'action_months23': 'الشهر 2–3 — البناء', 'action_months46': 'الشهر 4–6 — النمو',
         'back_headline': 'رحلتك تبدأ من هنا',
         'back_tagline_suffix': 'تقييم إتجاهي',
@@ -845,10 +849,18 @@ def build_html_report(user_data: dict, summary: dict, raw_scores: list, ai: dict
             f'<span class="pill" style="{pill_margin}">{s}</span>'
             for s in c.get('protected_skills', [])
         )
+        protected_skills_html = (
+            f'<p class="muted" style="margin:8px 0 4px;font-size:0.75em;text-transform:uppercase;letter-spacing:0.03em;">{T["protected_skills_label"]}</p>'
+            f'<div>{protected_pills}</div>'
+        ) if c.get('protected_skills') else ""
         upskilling_items = "".join(
             f'<li class="action-item" style="border-{border_side}-color:#0770ba;">{tip}</li>'
             for tip in c.get('upskilling', [])
         )
+        upskilling_html = (
+            f'<p class="muted" style="margin:8px 0 4px;font-size:0.75em;text-transform:uppercase;letter-spacing:0.03em;">{T["upskilling_label"]}</p>'
+            f'<ul class="action-list">{upskilling_items}</ul>'
+        ) if c.get('upskilling') else ""
         ai_impact_cards += (
             f'<div class="card" style="margin-bottom:10px;">'
             f'<div class="card-row">'
@@ -856,8 +868,8 @@ def build_html_report(user_data: dict, summary: dict, raw_scores: list, ai: dict
             f'{_risk_badge(c.get("ai_risk_level",""), locale)}'
             f'</div>'
             f'<p class="body-text" style="margin-top:6px;">{c.get("gcc_outlook","")}</p>'
-            f'<div style="margin-top:8px;">{protected_pills}</div>'
-            f'<ul class="action-list" style="margin-top:8px;">{upskilling_items}</ul>'
+            f'{protected_skills_html}'
+            f'{upskilling_html}'
             f'</div>'
         )
     ai_impact_summary = (ai_impact or {}).get('overall_summary', '')
@@ -1392,6 +1404,79 @@ def generate_pdf(
     return HTML(string=html).write_pdf()
 
 # ─── Main orchestrator ─────────────────────────────────────────────────────────
+
+def get_or_generate_ai_content(response_id: str, supabase_client, tier: str = "launchpad") -> dict:
+    """Returns the English ai_content dict (career_recommendations + narrative fields),
+    generating and caching it on first call. Mirrors the equivalent block inside
+    create_report() rather than sharing code with it — create_report additionally needs
+    raw_scores/top_careers/ai_impact for the rest of the PDF, so extracting a shared
+    helper would mean threading all of that through here too for no benefit to this
+    lighter, ai_content-only caller. Both read/write the same cache column, so a PDF
+    download and an in-app view of the same report never pay for generation twice."""
+    profile = supabase_client.table('assessment_responses') \
+        .select('full_name,email,age_bracket,current_stage,education_field,'
+                'sectors_of_interest,geographic_openness,why_here,country,'
+                'ai_content_cache,ai_content_cache_free') \
+        .eq('id', response_id).single().execute()
+    if not profile.data:
+        raise ValueError(f"No assessment found for {response_id}")
+
+    is_free = tier == 'free'
+    content_count = 5 if is_free else 8
+    content_col = 'ai_content_cache_free' if is_free else 'ai_content_cache'
+
+    cached = profile.data.get(content_col)
+    if cached:
+        return cached
+
+    scores_row = supabase_client.table('assessment_results') \
+        .select('*').eq('response_id', response_id).execute()
+    if not scores_row.data:
+        raise ValueError(f"No scores found for {response_id}")
+    raw_scores = scores_row.data
+    summary = build_framework_output(raw_scores)
+    all_careers = supabase_client.table('careers').select('*').execute().data or []
+
+    user_country_code = COUNTRY_CODE_MAP.get(profile.data.get('country') or '')
+    country_profile = None
+    if user_country_code:
+        country_row = supabase_client.table('country_profiles') \
+            .select('*').eq('country_code', user_country_code).limit(1).execute()
+        country_profile = country_row.data[0] if country_row.data else None
+
+    query_text = (
+        f"RIASEC: {', '.join(summary.get('riasec', {}).get('top_types', []))}. "
+        f"Top values: {', '.join(summary.get('values', {}).get('top_values', []))}. "
+        f"Top strengths: {', '.join(summary.get('strengths', {}).get('top_strengths', []))}. "
+        f"Sectors of interest: {', '.join(profile.data.get('sectors_of_interest', []))}. "
+        f"Current stage: {profile.data.get('current_stage', '')}."
+    )
+    query_embedding = _gemini_embed(query_text)
+    coaching_matches = supabase_client.rpc("match_coaching_chunks", {
+        "query_embedding": query_embedding,
+        "match_count": 5,
+    }).execute().data
+
+    try:
+        career_matches = supabase_client.rpc("match_careers", {
+            "query_embedding": query_embedding,
+            "match_count": 250,
+        }).execute().data or []
+        semantic_scores = {m['id']: m['similarity'] for m in career_matches}
+    except Exception:
+        semantic_scores = {}
+    top_careers = score_careers(summary, profile.data, all_careers, semantic_scores)
+
+    value = generate_ai_content(profile.data, summary, raw_scores, top_careers, country_profile, coaching_matches, 'en', career_count=content_count)
+    # Same write-once-then-reread race handling as create_report()'s _generate_and_cache.
+    written = supabase_client.table('assessment_responses') \
+        .update({content_col: value}) \
+        .eq('id', response_id).is_(content_col, 'null').execute()
+    if written.data:
+        return value
+    refreshed = supabase_client.table('assessment_responses').select(content_col).eq('id', response_id).single().execute()
+    return refreshed.data.get(content_col) or value
+
 
 def create_report(response_id: str, supabase_client, tier: str = "launchpad", locale_override: str | None = None) -> bytes:
 

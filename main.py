@@ -1034,6 +1034,24 @@ def get_career_suggestions(response_id: str, user=Depends(get_optional_user)):
         ]
     }
 
+@app.get("/assessment/{response_id}/career-recommendations")
+def get_career_recommendations(response_id: str, user=Depends(get_optional_user)):
+    owner_row = supabase.table('assessment_responses').select('user_id').eq('id', response_id).single().execute()
+    if not owner_row.data:
+        raise HTTPException(status_code=404, detail="No results found for this response")
+    owner_user_id = owner_row.data.get('user_id')
+    _assert_can_view(owner_user_id, user)
+    tier = get_effective_tier(owner_user_id)
+
+    from report_generator import get_or_generate_ai_content
+    try:
+        ai_content = get_or_generate_ai_content(response_id, supabase, tier=tier)
+    except Exception as e:
+        send_failure_alert("Career recommendations generation", e, response_id=response_id, supabase=supabase)
+        raise HTTPException(status_code=500, detail="Career recommendations generation failed, please try again")
+
+    return {"career_recommendations": ai_content.get("career_recommendations") or []}
+
 @app.get("/assessment/{response_id}/ai-impact")
 def get_ai_impact(response_id: str, force: bool = False, user=Depends(get_optional_user)):
     profile_row = supabase.table('assessment_responses') \
