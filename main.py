@@ -43,8 +43,23 @@ class CatchAllMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         try:
             return await call_next(request)
-        except Exception:
+        except Exception as e:
             traceback.print_exc()
+            # Best-effort: these are uncaught 500s that bypass send_failure_alert
+            # entirely (no @app-level try/except reported them), so without this
+            # they'd only ever show up in server logs, never in the admin Bugs tab.
+            try:
+                supabase.table("bug_reports").insert({
+                    "source": "system",
+                    "feature": "unhandled_exception",
+                    "error_type": type(e).__name__,
+                    "error_message": str(e)[:2000],
+                    "stack_trace": traceback.format_exc()[:8000],
+                    "page": request.url.path,
+                    "description": f"{request.method} {request.url.path}",
+                }).execute()
+            except Exception:
+                pass
             return JSONResponse(status_code=500, content={"error": "Internal server error"})
 
 
@@ -312,6 +327,18 @@ class FeedbackRequest(BaseModel):
     ai_outlook: str | None = None
     recommend: str | None = None
     other: str | None = None
+
+class BugReportRequest(BaseModel):
+    description: str = Field(min_length=1, max_length=3000)
+    email: EmailStr | None = None
+    full_name: str | None = Field(default=None, max_length=200)
+    response_id: str | None = Field(default=None, max_length=100)
+    locale: str | None = Field(default=None, max_length=10)
+    device_type: str | None = Field(default=None, max_length=20)
+    page: str | None = Field(default=None, max_length=100)
+
+class BugReportStatusUpdate(BaseModel):
+    status: str
 
 class BetaFeedbackStage1Request(BaseModel):
     response_id: str
@@ -678,6 +705,33 @@ def get_feedback(_=Depends(require_admin)):
         .order('created_at', desc=True) \
         .execute()
     return data.data or []
+
+@app.post("/bug-report")
+def submit_bug_report(body: BugReportRequest, request: Request):
+    row = body.model_dump()
+    row['source'] = 'user'
+    row['user_agent'] = request.headers.get('user-agent', '')[:500] or None
+    result = supabase.table('bug_reports').insert(row).execute()
+    if not result.data:
+        raise HTTPException(status_code=500, detail="Failed to insert bug report")
+    return {"id": result.data[0]["id"]}
+
+@app.get("/admin/bug-reports")
+def get_bug_reports(_=Depends(require_admin)):
+    data = supabase.table('bug_reports') \
+        .select('*') \
+        .order('created_at', desc=True) \
+        .execute()
+    return data.data or []
+
+@app.patch("/admin/bug-reports/{bug_id}")
+def update_bug_report_status(bug_id: str, body: BugReportStatusUpdate, _=Depends(require_admin)):
+    if body.status not in ('open', 'resolved'):
+        raise HTTPException(status_code=400, detail="status must be 'open' or 'resolved'")
+    result = supabase.table('bug_reports').update({'status': body.status}).eq('id', bug_id).execute()
+    if not result.data:
+        raise HTTPException(status_code=404, detail="Bug report not found")
+    return {"ok": True}
 
 @app.post("/beta-feedback/stage1")
 def submit_beta_feedback_stage1(body: BetaFeedbackStage1Request, user=Depends(get_optional_user)):

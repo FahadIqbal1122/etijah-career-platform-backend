@@ -8,6 +8,7 @@ import os
 import re
 import smtplib
 import ssl
+import traceback
 from datetime import datetime, timezone, timedelta
 from email.message import EmailMessage
 from email.utils import formataddr
@@ -182,7 +183,13 @@ def send_failure_alert(feature, error, response_id=None, user_email=None, user_n
     assessment_responses when only a response_id is given, and never lets a
     failure here mask or replace the original error — swallows its own
     exceptions and always returns normally so the caller's error handling
-    (re-raising the real exception) is unaffected."""
+    (re-raising the real exception) is unaffected.
+
+    Also persists a `source='system'` row to bug_reports (best-effort, on its
+    own try/except so a DB hiccup never blocks the email) — this is called
+    from inside the `except` block at every call site, so
+    traceback.format_exc() here still sees the real exception context."""
+    trace = traceback.format_exc()
     try:
         name, email, locale, country = user_name, user_email, None, None
         if response_id and supabase is not None:
@@ -197,6 +204,24 @@ def send_failure_alert(feature, error, response_id=None, user_email=None, user_n
                     country = row.data[0].get("country")
             except Exception:
                 pass
+
+        if supabase is not None:
+            try:
+                supabase.table("bug_reports").insert({
+                    "source": "system",
+                    "feature": feature,
+                    "error_type": type(error).__name__,
+                    "error_message": str(error)[:2000],
+                    "stack_trace": trace[:8000] if trace and trace.strip() != "NoneType: None" else None,
+                    "response_id": response_id,
+                    "full_name": name,
+                    "email": email,
+                    "locale": locale,
+                    "country": country,
+                    "description": extra,
+                }).execute()
+            except Exception as e:
+                print("Failed to persist bug_reports row:", e)
 
         when = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
         lines = [
