@@ -275,6 +275,10 @@ class SubmitRequest(BaseModel):
     answers: dict[str, Any]
     completed: bool
     locale: str | None = 'en'
+    # correlates this submission with any telemetry events sent while the
+    # assessment was in progress (see /assessment/telemetry) — never a real
+    # column on assessment_responses, so it's excluded before the RPC call.
+    telemetry_session_id: str | None = None
 
 APPLICATION_STATUSES = {"saved", "applied", "interview", "offer", "rejected"}
 
@@ -375,6 +379,21 @@ class WaitlistEventRequest(BaseModel):
     locale: str | None = None
     source: str | None = None
 
+TELEMETRY_EVENT_TYPES = {"session_start", "question_view", "break_open", "break_activity"}
+
+class TelemetryEventIn(BaseModel):
+    event_type: str
+    question_id: str | None = None
+    activity_kind: str | None = None
+    duration_ms: int | None = Field(default=None, ge=0)
+    payload: dict[str, Any] | None = None
+
+class TelemetryBatchRequest(BaseModel):
+    session_id: str = Field(max_length=100)
+    device_type: str | None = None
+    locale: str | None = None
+    events: list[TelemetryEventIn] = Field(max_length=50)
+
 class coachingSessionRequest(BaseModel):
     client_label: str | None = None
     topic: str | None = None
@@ -444,9 +463,10 @@ def submit_assessment(body: SubmitRequest, background_tasks: BackgroundTasks, us
         raise HTTPException(status_code=422, detail="No scoreable answers found in payload")
     summary = build_framework_output(results)
 
-    # Save to DB
+    # Save to DB — telemetry_session_id isn't a real column on
+    # assessment_responses, it's only used below to link telemetry rows.
     result = supabase.rpc('insert_assessment_response', {
-        'payload': body.model_dump()
+        'payload': body.model_dump(exclude={'telemetry_session_id'})
     }).execute()
 
     response_id = result.data
@@ -457,6 +477,17 @@ def submit_assessment(body: SubmitRequest, background_tasks: BackgroundTasks, us
         supabase.table('assessment_responses') \
             .update({'user_id': user.id}) \
             .eq('id', response_id).execute()
+
+    # Best-effort: link any telemetry events sent during the assessment (device
+    # type, break-panel plays, per-question pacing) to this submission. Never
+    # allowed to fail the actual submit.
+    if body.telemetry_session_id:
+        try:
+            supabase.table('assessment_telemetry_events') \
+                .update({'response_id': response_id}) \
+                .eq('session_id', body.telemetry_session_id).execute()
+        except Exception as e:
+            print("Failed to link telemetry events:", e)
 
     rows = [{**r, "response_id": response_id} for r in results]
     # Insert results
@@ -741,6 +772,42 @@ def track_waitlist_event(body: WaitlistEventRequest):
     except Exception as e:
         print("Failed to record waitlist event:", e)
     return {"status": "ok"}
+
+@app.post("/assessment/telemetry")
+def track_assessment_telemetry(body: TelemetryBatchRequest):
+    """Best-effort behavioral telemetry for the assessment flow (device type,
+    break-panel plays, per-question pacing) — batched client-side, so one call
+    can carry several events. Never fails the caller: a dropped analytics
+    batch shouldn't interrupt someone mid-assessment."""
+    rows = [
+        {
+            'session_id': body.session_id,
+            'device_type': body.device_type,
+            'locale': body.locale,
+            'event_type': e.event_type,
+            'question_id': e.question_id,
+            'activity_kind': e.activity_kind,
+            'duration_ms': e.duration_ms,
+            'payload': e.payload,
+        }
+        for e in body.events
+        if e.event_type in TELEMETRY_EVENT_TYPES
+    ]
+    if rows:
+        try:
+            supabase.table('assessment_telemetry_events').insert(rows).execute()
+        except Exception as e:
+            print("Failed to record assessment telemetry:", e)
+    return {"status": "ok"}
+
+@app.get("/admin/telemetry-events")
+def get_telemetry_events(_=Depends(require_admin)):
+    data = supabase.table('assessment_telemetry_events') \
+        .select('*, assessment_responses(full_name, email)') \
+        .order('created_at', desc=True) \
+        .limit(20000) \
+        .execute()
+    return data.data or []
 
 def _count(table: str, **filters) -> int:
     query = supabase.table(table).select('id', count='exact')
