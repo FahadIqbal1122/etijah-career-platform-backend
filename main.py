@@ -320,6 +320,7 @@ class BetaFeedbackStage2Request(BaseModel):
     response_id: str
     language_used: str | None = None
     understood_after: int | None = Field(default=None, ge=1, le=5)
+    felt_like_mentor: str | None = None
     personality_accuracy: str | None = None
     values_accuracy: str | None = None
     strengths_accuracy: str | None = None
