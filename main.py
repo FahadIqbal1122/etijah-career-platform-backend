@@ -7,7 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from supabase import create_client, Client
 from dotenv import load_dotenv
 from scoring_engine import compute_scores, build_framework_output, score_careers, get_career_semantic_scores, COUNTRY_CODE_MAP, COUNTRY_NAMES
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, EmailStr, Field, field_validator
 from typing import Any
 import io
 from datetime import datetime, timezone, timedelta
@@ -278,7 +278,7 @@ class SubmitRequest(BaseModel):
     # correlates this submission with any telemetry events sent while the
     # assessment was in progress (see /assessment/telemetry) — never a real
     # column on assessment_responses, so it's excluded before the RPC call.
-    telemetry_session_id: str | None = None
+    telemetry_session_id: str | None = Field(default=None, max_length=100)
 
 APPLICATION_STATUSES = {"saved", "applied", "interview", "offer", "rejected"}
 
@@ -380,18 +380,31 @@ class WaitlistEventRequest(BaseModel):
     source: str | None = None
 
 TELEMETRY_EVENT_TYPES = {"session_start", "question_view", "break_open", "break_activity"}
+# Generous but bounded — these are always short, code-generated values (a
+# question id, an activity name), never free user input. Caps exist purely so
+# an unauthenticated caller can't stuff arbitrarily large strings/JSON into
+# the table (this endpoint takes no auth, matching /waitlist/events).
+TELEMETRY_MAX_FIELD_LEN = 100
+TELEMETRY_MAX_PAYLOAD_JSON_LEN = 2000
 
 class TelemetryEventIn(BaseModel):
-    event_type: str
-    question_id: str | None = None
-    activity_kind: str | None = None
-    duration_ms: int | None = Field(default=None, ge=0)
+    event_type: str = Field(max_length=TELEMETRY_MAX_FIELD_LEN)
+    question_id: str | None = Field(default=None, max_length=TELEMETRY_MAX_FIELD_LEN)
+    activity_kind: str | None = Field(default=None, max_length=TELEMETRY_MAX_FIELD_LEN)
+    duration_ms: int | None = Field(default=None, ge=0, le=24 * 60 * 60 * 1000)
     payload: dict[str, Any] | None = None
 
+    @field_validator('payload')
+    @classmethod
+    def _bound_payload_size(cls, v):
+        if v is not None and len(json.dumps(v)) > TELEMETRY_MAX_PAYLOAD_JSON_LEN:
+            raise ValueError('payload too large')
+        return v
+
 class TelemetryBatchRequest(BaseModel):
-    session_id: str = Field(max_length=100)
-    device_type: str | None = None
-    locale: str | None = None
+    session_id: str = Field(max_length=TELEMETRY_MAX_FIELD_LEN)
+    device_type: str | None = Field(default=None, max_length=TELEMETRY_MAX_FIELD_LEN)
+    locale: str | None = Field(default=None, max_length=TELEMETRY_MAX_FIELD_LEN)
     events: list[TelemetryEventIn] = Field(max_length=50)
 
 class coachingSessionRequest(BaseModel):
@@ -777,8 +790,12 @@ def track_waitlist_event(body: WaitlistEventRequest):
 def track_assessment_telemetry(body: TelemetryBatchRequest):
     """Best-effort behavioral telemetry for the assessment flow (device type,
     break-panel plays, per-question pacing) — batched client-side, so one call
-    can carry several events. Never fails the caller: a dropped analytics
-    batch shouldn't interrupt someone mid-assessment."""
+    can carry several events. A malformed batch still gets a 422 (FastAPI/
+    Pydantic validate the request before this body runs), but the frontend
+    queue (src/lib/telemetry.ts) swallows any error from this call, so a
+    dropped or rejected analytics batch never surfaces to, or interrupts,
+    someone mid-assessment. Unknown event_type values are dropped rather than
+    rejecting the whole batch, so one bad event can't sink the rest."""
     rows = [
         {
             'session_id': body.session_id,
