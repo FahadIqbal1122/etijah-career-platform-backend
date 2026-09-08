@@ -1072,7 +1072,11 @@ def get_ai_impact(response_id: str, force: bool = False, user=Depends(get_option
         result = generate_ai_impact(profile_row.data or {}, summary, top_careers, career_count=careers_cap)
     except Exception as e:
         send_failure_alert("AI Impact generation", e, response_id=response_id, supabase=supabase)
-        raise
+        # Converted from a bare `raise` to HTTPException: a re-raised plain exception
+        # bypasses FastAPI's HTTPException handling and falls through to
+        # CatchAllMiddleware, which would log a second, generically-labeled
+        # bug_reports row for the same failure already recorded above.
+        raise HTTPException(status_code=500, detail="AI Impact generation failed, please try again")
 
     supabase.table('assessment_responses') \
         .update({cache_col: result}) \
@@ -2042,7 +2046,9 @@ def coach(payload: CoachRequest, user=Depends(get_current_user)):
         )
     except Exception as e:
         send_failure_alert("AI Coach chat", e, user_email=user.email, user_name=(user.user_metadata or {}).get("full_name"), supabase=supabase)
-        raise
+        # See the AI Impact generation handler above for why this is an
+        # HTTPException rather than a bare `raise`.
+        raise HTTPException(status_code=500, detail="AI Coach is temporarily unavailable, please try again.")
     return {"reply": response.content[0].text}
 
 
