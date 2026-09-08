@@ -465,10 +465,33 @@ def root():
 @app.get("/admin/submissions")
 def get_submissions(_=Depends(require_admin)):
     data = supabase.table('assessment_responses') \
-        .select('id, full_name, email, phone, country, nationality, age_bracket, education_field, current_stage, completed, created_at') \
+        .select('id, full_name, email, phone, country, nationality, age_bracket, education_field, current_stage, completed, created_at, cohort_override') \
         .order('created_at', desc=True) \
         .execute()
     return data.data or []
+
+
+@app.get("/admin/career-recommendations")
+def get_all_career_recommendations(_=Depends(require_admin)):
+    """One page listing every submission's AI-generated career_recommendations
+    (title/match_score/fit_summary/growth_note), so an admin can review everything
+    that's been generated without opening each submission individually. Reads
+    whatever's already cached (paid or free-tier column) rather than generating on
+    demand for rows that haven't been viewed/downloaded yet — bulk-generating for
+    every submission here would be slow and costly just to render a list."""
+    rows = supabase.table('assessment_responses') \
+        .select('id, full_name, email, created_at, ai_content_cache, ai_content_cache_free') \
+        .order('created_at', desc=True).execute()
+    return [
+        {
+            "id": r["id"],
+            "full_name": r.get("full_name"),
+            "email": r.get("email"),
+            "created_at": r.get("created_at"),
+            "career_recommendations": ((r.get("ai_content_cache") or r.get("ai_content_cache_free")) or {}).get("career_recommendations") or [],
+        }
+        for r in (rows.data or [])
+    ]
 
 
 @app.post("/assessment/check-existing")
@@ -788,7 +811,7 @@ def get_beta_feedback(_=Depends(require_admin)):
     # assessment_responses row (FK on response_id) so the admin list doesn't
     # need a second round-trip per row.
     data = supabase.table('beta_feedback') \
-        .select('*, assessment_responses(full_name, email, locale, country, age_bracket, current_stage)') \
+        .select('*, assessment_responses(full_name, email, locale, country, age_bracket, current_stage, cohort_override)') \
         .order('created_at', desc=True) \
         .execute()
     return data.data or []
