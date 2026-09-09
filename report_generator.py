@@ -1455,7 +1455,7 @@ def get_or_generate_ai_content(response_id: str, supabase_client, tier: str = "l
         raise ValueError(f"No scores found for {response_id}")
     raw_scores = scores_row.data
     summary = build_framework_output(raw_scores)
-    all_careers = _execute_with_retry(supabase_client.table('careers').select('*')).data or []
+    all_careers = _execute_with_retry(supabase_client.table('careers').select('*').eq('is_approved', True)).data or []
 
     user_country_code = COUNTRY_CODE_MAP.get(profile.data.get('country') or '')
     country_profile = None
@@ -1527,7 +1527,7 @@ def create_report(response_id: str, supabase_client, tier: str = "launchpad", lo
 
     raw_scores = scores_row.data
     summary    = build_framework_output(raw_scores)
-    all_careers = _execute_with_retry(supabase_client.table('careers').select('*')).data or []
+    all_careers = _execute_with_retry(supabase_client.table('careers').select('*').eq('is_approved', True)).data or []
 
     query_text = (
         f"RIASEC: {', '.join(summary.get('riasec', {}).get('top_types', []))}. "

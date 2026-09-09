@@ -1040,7 +1040,7 @@ def get_career_suggestions(response_id: str, user=Depends(get_optional_user)):
     _assert_can_view(profile.data.get('user_id'), user)
 
     summary = build_framework_output(rows.data)
-    careers = supabase.table('careers').select('*').execute().data or []
+    careers = supabase.table('careers').select('*').eq('is_approved', True).execute().data or []
     semantic_scores = _get_semantic_scores(response_id, summary, profile.data or {})
     top10   = score_careers(summary, profile.data or {}, careers, semantic_scores)
 
@@ -1103,7 +1103,7 @@ def get_ai_impact(response_id: str, force: bool = False, user=Depends(get_option
         raise HTTPException(status_code=404, detail="No results found for this response")
 
     summary = build_framework_output(rows.data)
-    careers = _execute_with_retry(supabase.table('careers').select('*')).data or []
+    careers = _execute_with_retry(supabase.table('careers').select('*').eq('is_approved', True)).data or []
     semantic_scores = _get_semantic_scores(response_id, summary, profile_row.data or {})
     top_careers = score_careers(summary, profile_row.data or {}, careers, semantic_scores)[:careers_cap]
 
@@ -1358,6 +1358,25 @@ def embed_all_careers(_=Depends(require_admin)):
         sync_career_embedding(c['id'], c)
     return {"embedded": len(careers)}
 
+@app.get("/admin/careers")
+def get_careers_catalog(_=Depends(require_admin)):
+    """Full career catalog with its current approve/reject state — the pool every
+    AI recommendation (career-recommendations, ai-impact, courses, companies,
+    job-listings) is filtered to `is_approved=True` from. Ordered by title so a
+    rejected/re-approved entry doesn't jump around the list between loads."""
+    data = supabase.table('careers').select('*').order('title').execute()
+    return data.data or []
+
+class CareerApprovalUpdate(BaseModel):
+    is_approved: bool
+
+@app.patch("/admin/careers/{career_id}")
+def update_career_approval(career_id: str, body: CareerApprovalUpdate, _=Depends(require_admin)):
+    result = supabase.table('careers').update({'is_approved': body.is_approved}).eq('id', career_id).execute()
+    if not result.data:
+        raise HTTPException(status_code=404, detail="Career not found")
+    return {"ok": True}
+
 @app.get("/admin/courses")
 def get_courses(_=Depends(require_admin)):
     data = supabase.table('courses').select('*').order('created_at', desc=True).execute()
@@ -1393,7 +1412,7 @@ def get_course_recommendations(response_id: str, user=Depends(get_optional_user)
     if get_effective_tier(owner_user_id) == "free":
         return []
     summary = build_framework_output(rows.data)
-    careers = _execute_with_retry(supabase.table('careers').select('*')).data or []
+    careers = _execute_with_retry(supabase.table('careers').select('*').eq('is_approved', True)).data or []
     semantic_scores = _get_semantic_scores(response_id, summary, profile.data)
     top5    = score_careers(summary, profile.data, careers, semantic_scores)[:5]
 
@@ -1711,7 +1730,7 @@ def _search_matching_jobs(response_id: str) -> list[dict] | None:
         return None
 
     summary = build_framework_output(rows.data)
-    careers = supabase.table('careers').select('*').execute().data or []
+    careers = supabase.table('careers').select('*').eq('is_approved', True).execute().data or []
     semantic_scores = _get_semantic_scores(response_id, summary, profile.data)
     top3    = score_careers(summary, profile.data, careers, semantic_scores)[:3]
 
@@ -1986,7 +2005,7 @@ def get_companies_suggestions(response_id: str, user=Depends(get_optional_user))
     company_limit = 50 if tier == "launchpad" else 20
 
     summary = build_framework_output(rows.data)
-    careers = _execute_with_retry(supabase.table('careers').select('*')).data or []
+    careers = _execute_with_retry(supabase.table('careers').select('*').eq('is_approved', True)).data or []
     semantic_scores = _get_semantic_scores(response_id, summary, profile.data)
     top5    = score_careers(summary, profile.data, careers, semantic_scores)[:5]
 
