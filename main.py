@@ -726,6 +726,30 @@ def get_results(response_id: str, user=Depends(get_optional_user)):
         'beta_mode': _is_test_mode_enabled(),
     }
 
+@app.get("/beta-feedback/{response_id}/riasec-summary")
+def get_beta_feedback_riasec_summary(response_id: str):
+    """Public, no-auth lookup of just the top RIASEC type — used to label the
+    stage-2 beta feedback form ('you're an Investigator...'). The full
+    /assessment/{id}/results endpoint requires the caller to be signed in as
+    the response's owner (protecting the actual report), but the feedback
+    link is sent to people who aren't expected to be logged in, so this
+    endpoint intentionally skips that ownership check and returns nothing
+    beyond the one label the page needs."""
+    profile = _execute_with_retry(supabase.table('assessment_responses')
+        .select('id')
+        .eq('id', response_id).single())
+    if not profile.data:
+        raise HTTPException(status_code=404, detail="No results found for this response")
+
+    rows = _execute_with_retry(supabase.table('assessment_results')
+        .select('*')
+        .eq('response_id', response_id))
+    if not rows.data:
+        raise HTTPException(status_code=404, detail="No results found for this response")
+
+    summary = build_framework_output(rows.data)
+    return {'top_type': (summary.get('riasec') or {}).get('top_types', [None])[0]}
+
 @app.post("/feedback")
 def submit_feedback(body: FeedbackRequest):
     result = supabase.table('feedback_responses').insert(body.model_dump()).execute()
