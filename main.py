@@ -1405,7 +1405,12 @@ def _resolve_segment_recipients(segment_key: str) -> list[dict]:
 
             seen_emails.add(email)
             first_name = ((assessment or {}).get('full_name') or w.get('name') or '').split(' ')[0]
-            recipients.append({"email": w['email'], "first_name": first_name})
+            recipient = {"email": w['email'], "first_name": first_name}
+            if assessment:
+                # Lets the sender build a per-recipient beta_feedback_url for
+                # templates that need one (e.g. beta_feedback_stage2).
+                recipient["response_id"] = assessment['id']
+            recipients.append(recipient)
         return recipients
 
     return []
@@ -1466,11 +1471,19 @@ def send_scheduled_emails(request: Request):
             last_error = None
             for i, recipient in enumerate(recipients):
                 try:
+                    recipient_locale = row.get('locale') or 'en'
                     variables = {
                         **(row.get('variables') or {}),
                         "first_name": recipient.get('first_name') or (row.get('variables') or {}).get('first_name', ''),
+                        # Matches the existing convention in /assessment/submit — the
+                        # beta feedback template's {{full_name}} slot is filled with
+                        # just the first name, not the full name.
+                        "full_name": recipient.get('first_name') or (row.get('variables') or {}).get('full_name', ''),
                     }
-                    subject, html_body = render_template(template, variables, row.get('locale') or 'en')
+                    if recipient.get('response_id'):
+                        frontend_base = os.getenv('FRONTEND_URL', '').rstrip('/')
+                        variables['beta_feedback_url'] = f"{frontend_base}/{recipient_locale}/beta-feedback/{recipient['response_id']}"
+                    subject, html_body = render_template(template, variables, recipient_locale)
                     send_email(recipient['email'], subject, html_body, supabase=supabase)
                     sent_count += 1
                 except Exception as e:
