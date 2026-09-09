@@ -1363,8 +1363,14 @@ def get_careers_catalog(_=Depends(require_admin)):
     """Full career catalog with its current approve/reject state — the pool every
     AI recommendation (career-recommendations, ai-impact, courses, companies,
     job-listings) is filtered to `is_approved=True` from. Ordered by title so a
-    rejected/re-approved entry doesn't jump around the list between loads."""
-    data = supabase.table('careers').select('*').order('title').execute()
+    rejected/re-approved entry doesn't jump around the list between loads.
+    Excludes `embedding` — each row's 768-dim vector serializes to several KB of
+    JSON, which was bloating this admin list (~200 rows) for no reason since the
+    page never uses it."""
+    data = _execute_with_retry(supabase.table('careers')
+        .select('id,title,sector,riasec,top_values,top_strengths,work_pace,work_sector,'
+                'entrepreneurship_friendly,education_fields,is_approved,created_at')
+        .order('title'))
     return data.data or []
 
 class CareerApprovalUpdate(BaseModel):
@@ -1372,7 +1378,7 @@ class CareerApprovalUpdate(BaseModel):
 
 @app.patch("/admin/careers/{career_id}")
 def update_career_approval(career_id: str, body: CareerApprovalUpdate, _=Depends(require_admin)):
-    result = supabase.table('careers').update({'is_approved': body.is_approved}).eq('id', career_id).execute()
+    result = _execute_with_retry(supabase.table('careers').update({'is_approved': body.is_approved}).eq('id', career_id))
     if not result.data:
         raise HTTPException(status_code=404, detail="Career not found")
     return {"ok": True}
