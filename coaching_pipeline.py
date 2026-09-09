@@ -3,9 +3,10 @@ import json
 import requests
 from anthropic import Anthropic
 from supabase import create_client, Client
+from db_client import disable_http2
 
 client = Anthropic()
-supabase = create_client(os.getenv("SUPABASE_URL"), os.getenv("SUPABASE_KEY"))
+supabase = disable_http2(create_client(os.getenv("SUPABASE_URL"), os.getenv("SUPABASE_KEY")))
 
 def _gemini_embed(text: str, retries: int = 1) -> list[float]:
     api_key = os.getenv("GEMINI_API_KEY")

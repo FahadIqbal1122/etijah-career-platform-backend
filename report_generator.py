@@ -16,6 +16,7 @@ from google.api_core.exceptions import GoogleAPICallError, DeadlineExceeded, Ser
 from requests.exceptions import RequestException, Timeout, ConnectionError as RequestsConnectionError
 from weasyprint import HTML
 from supabase import create_client as _create_supabase_client
+from db_client import disable_http2
 from scoring_engine import build_framework_output, score_careers, COUNTRY_CODE_MAP
 from coaching_pipeline import _gemini_embed, client as anthropic_client
 from content_policy import is_appropriate, CULTURAL_GUARDRAIL
@@ -25,7 +26,9 @@ from ai_provider import get_ai_provider
 # provider-fallback admin alert — report_generator.py doesn't otherwise touch
 # Supabase directly, and this avoids threading a request-scoped client all the
 # way down through every generate_*/translate_* call for one rare notification.
-_alert_supabase = _create_supabase_client(os.getenv("SUPABASE_URL"), os.getenv("SUPABASE_KEY"))
+# See db_client.disable_http2 for why every module-level client in this app
+# goes through it.
+_alert_supabase = disable_http2(_create_supabase_client(os.getenv("SUPABASE_URL"), os.getenv("SUPABASE_KEY")))
 
 # Without a timeout, a bad/corrupted key or network blip on Gemini's side hangs
 # indefinitely instead of failing fast — which then trips a reverse-proxy

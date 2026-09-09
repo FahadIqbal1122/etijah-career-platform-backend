@@ -8,11 +8,12 @@ to import from main.py, which itself imports report_generator — that would be 
 import os
 from datetime import datetime, timezone, timedelta
 from supabase import create_client
+from db_client import disable_http2
 
 AI_PROVIDER_KEY = "ai_provider"
 VALID_PROVIDERS = ("gemini", "claude")
 
-_supabase = create_client(os.getenv("SUPABASE_URL"), os.getenv("SUPABASE_KEY"))
+_supabase = disable_http2(create_client(os.getenv("SUPABASE_URL"), os.getenv("SUPABASE_KEY")))
 
 _provider_cache = {"value": None, "checked_at": None}
 _PROVIDER_CACHE_TTL = timedelta(seconds=10)

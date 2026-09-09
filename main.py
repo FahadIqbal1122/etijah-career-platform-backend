@@ -8,16 +8,17 @@ from supabase import create_client, Client
 from dotenv import load_dotenv
 from scoring_engine import compute_scores, build_framework_output, score_careers, get_career_semantic_scores, COUNTRY_CODE_MAP, COUNTRY_NAMES
 from pydantic import BaseModel, EmailStr, Field, field_validator
-from typing import Any
+from typing import Any, Literal
 import io
 from datetime import datetime, timezone, timedelta
 from collections import Counter
 from fastapi.responses import StreamingResponse
 from report_generator import create_report, _execute_with_retry
+from db_client import disable_http2
 from google.api_core.exceptions import GoogleAPICallError
 from requests.exceptions import RequestException
-from smtp_service import send_report_email, send_feedback_email, send_results_ready_email, send_beta_feedback_email, invalidate_smtp_cache, send_failure_alert
-import httpx, hmac, hashlib, json, secrets
+from smtp_service import send_report_email, send_feedback_email, send_results_ready_email, send_beta_feedback_email, invalidate_smtp_cache, send_failure_alert, render_template, send_email
+import httpx, hmac, hashlib, json, secrets, time
 from coaching_methodology import METHODOLOGY_DOC
 from coaching_pipeline import chunk_transcript, embed_and_store_chunks, client, embed_country_profile, sync_country_profile_embedding, sync_career_embedding, _gemini_embed
 from content_policy import is_appropriate, is_region_eligible, CULTURAL_GUARDRAIL
@@ -78,10 +79,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-supabase: Client = create_client(
+supabase: Client = disable_http2(create_client(
     os.getenv("SUPABASE_URL"),
     os.getenv("SUPABASE_KEY"),
-)
+))
 
 HUB_API_KEY = os.getenv("HUB_API_KEY")
 SHOP_BASE_URL = os.getenv("SHOP_BASE_URL", "https://shop.etijahcoaching.com")
@@ -369,6 +370,11 @@ class BetaFeedbackStage2Request(BaseModel):
     arabic_natural: str | None = None
     overall_value: int | None = Field(default=None, ge=1, le=6)
     most_valuable_parts: list[str] | None = None
+    # Also collected earlier by the Result Stage (BetaFeedbackResultStageRequest
+    # below) — same beta_feedback columns, so /beta-feedback/{id}/stage2's GET
+    # pre-fills these from whatever the Result Stage already saved; kept here
+    # too so someone who skips/changes their mind at the Result Stage still
+    # gets asked, and so an earlier answer stays editable.
     would_pay: str | None = None
     would_recommend: str | None = None
     device: str | None = None
@@ -377,6 +383,13 @@ class BetaFeedbackStage2Request(BaseModel):
     surprised_text: str | None = None
     not_me_text: str | None = None
     other_text: str | None = None
+
+class BetaFeedbackResultStageRequest(BaseModel):
+    response_id: str
+    result_accuracy: str | None = None
+    would_recommend: str | None = None
+    would_pay: str | None = None
+    locale: str | None = None
 
 class WaitlistRequest(BaseModel):
     email: EmailStr
@@ -767,15 +780,33 @@ def submit_beta_feedback_stage1(body: BetaFeedbackStage1Request, user=Depends(ge
         raise HTTPException(status_code=500, detail="Failed to save feedback")
     return {"ok": True}
 
+@app.post("/beta-feedback/result-stage")
+def submit_beta_feedback_result_stage(body: BetaFeedbackResultStageRequest, user=Depends(get_optional_user)):
+    """Shown on the results page itself (not the loading screen, and not gating
+    anything) — accuracy/would-recommend/would-pay, asked right after someone's
+    actually seen their report, rather than waiting for the full Stage 2 survey.
+    would_recommend/would_pay are the same beta_feedback columns Stage 2 also
+    asks about — not exclusive to this stage, just asked earlier too."""
+    row = body.model_dump(exclude={'response_id'}, exclude_none=True)
+    row['response_id'] = body.response_id
+    row['user_id'] = user.id if user else None
+    if all(row.get(k) is not None for k in ('result_accuracy', 'would_recommend', 'would_pay')):
+        row['result_stage_completed_at'] = datetime.now(timezone.utc).isoformat()
+    result = supabase.table('beta_feedback').upsert(row, on_conflict='response_id').execute()
+    if not result.data:
+        raise HTTPException(status_code=500, detail="Failed to save feedback")
+    return {"ok": True}
+
 @app.get("/beta-feedback/{response_id}/status")
 def get_beta_feedback_status(response_id: str, user=Depends(get_optional_user)):
     existing = supabase.table('beta_feedback') \
-        .select('stage1_completed_at, stage2_completed_at') \
+        .select('stage1_completed_at, result_stage_completed_at, stage2_completed_at') \
         .eq('response_id', response_id) \
         .limit(1).execute()
     row = existing.data[0] if existing.data else None
     return {
         "stage1_completed": bool(row and row.get('stage1_completed_at')),
+        "result_stage_completed": bool(row and row.get('result_stage_completed_at')),
         "stage2_completed": bool(row and row.get('stage2_completed_at')),
     }
 
@@ -1219,6 +1250,228 @@ def update_email_template(key: str, body: dict, _=Depends(require_admin)):
     if not result.data:
         raise HTTPException(status_code=404, detail="Template not found")
     return result.data[0]
+
+
+# Beta cohort start used by the "beta_incomplete" segment below — keep in sync
+# with BETA_COHORT_START in the admin frontend (src/app/admin/page.tsx).
+BETA_COHORT_START_ISO = "2026-09-06T00:00:00Z"
+
+
+# Named audiences an admin can target from the scheduler. Add a new one here
+# (and a matching branch in _resolve_segment_recipients) rather than a migration.
+SEGMENT_KEYS = (
+    'beta_incomplete',
+    'waitlist_all',
+    'waitlist_no_assessment',
+    'waitlist_assessment_completed',
+    'waitlist_assessment_no_feedback',
+)
+
+
+class ScheduledEmailCreate(BaseModel):
+    template_key: str
+    recipient_type: Literal['single', 'segment']
+    recipient_email: str | None = None
+    recipient_name: str | None = None
+    segment_key: str | None = None
+    locale: str = "en"
+    variables: dict = {}
+    scheduled_for: str  # ISO datetime (UTC)
+
+
+@app.get("/admin/scheduled-emails")
+def get_scheduled_emails(_=Depends(require_admin)):
+    data = supabase.table('scheduled_emails').select('*').order('scheduled_for', desc=True).execute()
+    return data.data or []
+
+
+@app.get("/admin/scheduled-emails/segment-preview")
+def preview_segment(segment_key: str, _=Depends(require_admin)):
+    """Lets the admin UI show 'this will email N people' before a segment send
+    is confirmed, plus a few sample addresses to sanity-check the filter."""
+    if segment_key not in SEGMENT_KEYS:
+        raise HTTPException(status_code=400, detail="Unknown segment_key")
+    recipients = _resolve_segment_recipients(segment_key)
+    return {"count": len(recipients), "sample": [r['email'] for r in recipients[:5]]}
+
+
+@app.post("/admin/scheduled-emails")
+def create_scheduled_email(body: ScheduledEmailCreate, _=Depends(require_admin)):
+    if body.recipient_type == 'single' and not body.recipient_email:
+        raise HTTPException(status_code=400, detail="recipient_email is required for a single recipient")
+    if body.recipient_type == 'segment' and body.segment_key not in SEGMENT_KEYS:
+        raise HTTPException(status_code=400, detail="segment_key must be one of: " + ", ".join(SEGMENT_KEYS))
+    result = supabase.table('scheduled_emails').insert(body.model_dump()).execute()
+    return result.data[0]
+
+
+@app.put("/admin/scheduled-emails/{schedule_id}")
+def update_scheduled_email(schedule_id: str, body: dict, _=Depends(require_admin)):
+    result = supabase.table('scheduled_emails').update(body).eq('id', schedule_id).execute()
+    if not result.data:
+        raise HTTPException(status_code=404, detail="Schedule not found")
+    return result.data[0]
+
+
+@app.delete("/admin/scheduled-emails/{schedule_id}")
+def delete_scheduled_email(schedule_id: str, _=Depends(require_admin)):
+    supabase.table('scheduled_emails').delete().eq('id', schedule_id).execute()
+    return {"status": "deleted"}
+
+
+def _resolve_segment_recipients(segment_key: str) -> list[dict]:
+    """Returns [{email, first_name}] for a named admin-facing segment. Keep the
+    'beta_incomplete' cohort window in sync with BETA_COHORT_START in the admin
+    frontend. waitlist_signups has no FK to assessment_responses/beta_feedback,
+    so the waitlist_* segments are joined in Python by lowercased email rather
+    than via a PostgREST embed."""
+    if segment_key == 'beta_incomplete':
+        rows = supabase.table('assessment_responses') \
+            .select('email, full_name') \
+            .eq('completed', False) \
+            .gte('created_at', BETA_COHORT_START_ISO) \
+            .not_.is_('email', 'null') \
+            .execute()
+        recipients = []
+        seen_emails = set()
+        for r in (rows.data or []):
+            email = (r.get('email') or '').strip().lower()
+            if not email or email in seen_emails:
+                continue
+            seen_emails.add(email)
+            recipients.append({"email": r['email'], "first_name": (r.get('full_name') or '').split(' ')[0]})
+        return recipients
+
+    if segment_key in ('waitlist_all', 'waitlist_no_assessment', 'waitlist_assessment_completed', 'waitlist_assessment_no_feedback'):
+        waitlist_rows = supabase.table('waitlist_signups').select('email, name').execute().data or []
+        assessment_rows = supabase.table('assessment_responses').select('id, email, full_name, completed').execute().data or []
+        # A user can retake the assessment, producing multiple rows for the same
+        # email — if any of them is completed, that's the row that should decide
+        # this email's segment membership (not whichever row Supabase happens to
+        # return last).
+        assessment_by_email: dict[str, dict] = {}
+        for r in assessment_rows:
+            email = (r.get('email') or '').strip().lower()
+            if not email:
+                continue
+            existing = assessment_by_email.get(email)
+            if existing is None or (r.get('completed') and not existing.get('completed')):
+                assessment_by_email[email] = r
+
+        stage2_done_ids = set()
+        if segment_key == 'waitlist_assessment_no_feedback':
+            fb_rows = supabase.table('beta_feedback').select('response_id').not_.is_('stage2_completed_at', 'null').execute().data or []
+            stage2_done_ids = {r['response_id'] for r in fb_rows}
+
+        recipients = []
+        seen_emails = set()
+        for w in waitlist_rows:
+            email = (w.get('email') or '').strip().lower()
+            if not email or email in seen_emails:
+                continue
+            assessment = assessment_by_email.get(email)
+            completed = bool(assessment and assessment.get('completed'))
+
+            if segment_key == 'waitlist_no_assessment' and completed:
+                continue
+            if segment_key == 'waitlist_assessment_completed' and not completed:
+                continue
+            if segment_key == 'waitlist_assessment_no_feedback' and (not completed or assessment['id'] in stage2_done_ids):
+                continue
+
+            seen_emails.add(email)
+            first_name = ((assessment or {}).get('full_name') or w.get('name') or '').split(' ')[0]
+            recipients.append({"email": w['email'], "first_name": first_name})
+        return recipients
+
+    return []
+
+
+@app.post("/internal/jobs/send-scheduled-emails")
+def send_scheduled_emails(request: Request):
+    """Sends whatever admin-scheduled emails (see /admin/scheduled-emails) are
+    due. Called by a VPS crontab entry (not a browser), authenticated with a
+    shared secret — same pattern as /internal/jobs/refresh-matches."""
+    if not INTERNAL_JOBS_KEY or not hmac.compare_digest(request.headers.get("X-Internal-Key", ""), INTERNAL_JOBS_KEY):
+        raise HTTPException(status_code=401, detail="Invalid internal key")
+
+    now = datetime.now(timezone.utc)
+    due = supabase.table('scheduled_emails') \
+        .select('*') \
+        .eq('status', 'pending') \
+        .lte('scheduled_for', now.isoformat()) \
+        .execute()
+
+    processed = 0
+    for row in (due.data or []):
+        # Claim it first so an overlapping cron tick can't double-send.
+        claim = supabase.table('scheduled_emails').update({'status': 'sending'}).eq('id', row['id']).eq('status', 'pending').execute()
+        if not claim.data:
+            continue
+        processed += 1
+
+        # Whatever happens below, this row must leave 'sending' — otherwise it's
+        # excluded from the 'pending' query above and silently stuck forever.
+        try:
+            template_row = supabase.table('email_templates').select('*').eq('key', row['template_key']).limit(1).execute()
+            template = template_row.data[0] if template_row.data else None
+            if not template:
+                supabase.table('scheduled_emails').update({
+                    'status': 'failed', 'error': f"template '{row['template_key']}' not found", 'sent_at': datetime.now(timezone.utc).isoformat(),
+                }).eq('id', row['id']).execute()
+                continue
+            if not template.get('is_active'):
+                supabase.table('scheduled_emails').update({
+                    'status': 'failed', 'error': f"template '{row['template_key']}' is not active", 'sent_at': datetime.now(timezone.utc).isoformat(),
+                }).eq('id', row['id']).execute()
+                continue
+
+            if row['recipient_type'] == 'single':
+                recipients = [{"email": row['recipient_email'], "first_name": row.get('recipient_name') or ''}]
+            else:
+                recipients = _resolve_segment_recipients(row['segment_key'])
+
+            if not recipients:
+                supabase.table('scheduled_emails').update({
+                    'status': 'failed', 'error': 'No recipients matched', 'sent_at': datetime.now(timezone.utc).isoformat(),
+                }).eq('id', row['id']).execute()
+                continue
+
+            sent_count = 0
+            failed_count = 0
+            last_error = None
+            for i, recipient in enumerate(recipients):
+                try:
+                    variables = {
+                        **(row.get('variables') or {}),
+                        "first_name": recipient.get('first_name') or (row.get('variables') or {}).get('first_name', ''),
+                    }
+                    subject, html_body = render_template(template, variables, row.get('locale') or 'en')
+                    send_email(recipient['email'], subject, html_body, supabase=supabase)
+                    sent_count += 1
+                except Exception as e:
+                    failed_count += 1
+                    last_error = str(e)
+                if i < len(recipients) - 1:
+                    # send_email opens a fresh SMTP connection + login per call — for a
+                    # large segment, a small gap avoids tripping the mail provider's
+                    # rate/connection limits partway through the batch.
+                    time.sleep(0.3)
+
+            supabase.table('scheduled_emails').update({
+                'status': 'failed' if sent_count == 0 else 'sent',
+                'sent_count': sent_count,
+                'failed_count': failed_count,
+                'error': last_error,
+                'sent_at': datetime.now(timezone.utc).isoformat(),
+            }).eq('id', row['id']).execute()
+        except Exception as e:
+            supabase.table('scheduled_emails').update({
+                'status': 'failed', 'error': f"unexpected error: {e}", 'sent_at': datetime.now(timezone.utc).isoformat(),
+            }).eq('id', row['id']).execute()
+
+    return {"processed": processed}
+
 
 class SmtpSettingsRequest(BaseModel):
     host: str
