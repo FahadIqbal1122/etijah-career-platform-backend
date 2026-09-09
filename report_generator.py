@@ -1405,6 +1405,26 @@ def generate_pdf(
 
 # ─── Main orchestrator ─────────────────────────────────────────────────────────
 
+# Supabase table/rpc calls in this file share one long-lived HTTP/2 connection
+# (supabase-py keeps one persistent httpx client per process); when Supabase's
+# side tears that connection down while several concurrent requests are still
+# multiplexed on it, every one of them fails at once with a bare, unwrapped
+# httpx.RemoteProtocolError (postgrest-py has no retry of its own for this —
+# unlike the AI-provider calls above, see _RETRYABLE_ERRORS). One retry opens
+# a fresh connection and almost always succeeds.
+_SUPABASE_RETRYABLE = (httpx.RemoteProtocolError, httpx.ConnectError, httpx.ReadError)
+
+def _execute_with_retry(query, retries: int = 1):
+    last_err: Exception | None = None
+    for attempt in range(retries + 1):
+        try:
+            return query.execute()
+        except _SUPABASE_RETRYABLE as e:
+            last_err = e
+            print(f"[supabase] transient error, retrying: {type(e).__name__}: {e}")
+    raise last_err
+
+
 def get_or_generate_ai_content(response_id: str, supabase_client, tier: str = "launchpad") -> dict:
     """Returns the English ai_content dict (career_recommendations + narrative fields),
     generating and caching it on first call. Mirrors the equivalent block inside
@@ -1413,11 +1433,11 @@ def get_or_generate_ai_content(response_id: str, supabase_client, tier: str = "l
     helper would mean threading all of that through here too for no benefit to this
     lighter, ai_content-only caller. Both read/write the same cache column, so a PDF
     download and an in-app view of the same report never pay for generation twice."""
-    profile = supabase_client.table('assessment_responses') \
+    profile = _execute_with_retry(supabase_client.table('assessment_responses')
         .select('full_name,email,age_bracket,current_stage,education_field,'
                 'sectors_of_interest,geographic_openness,why_here,country,'
-                'ai_content_cache,ai_content_cache_free') \
-        .eq('id', response_id).single().execute()
+                'ai_content_cache,ai_content_cache_free')
+        .eq('id', response_id).single())
     if not profile.data:
         raise ValueError(f"No assessment found for {response_id}")
 
@@ -1429,19 +1449,19 @@ def get_or_generate_ai_content(response_id: str, supabase_client, tier: str = "l
     if cached:
         return cached
 
-    scores_row = supabase_client.table('assessment_results') \
-        .select('*').eq('response_id', response_id).execute()
+    scores_row = _execute_with_retry(supabase_client.table('assessment_results')
+        .select('*').eq('response_id', response_id))
     if not scores_row.data:
         raise ValueError(f"No scores found for {response_id}")
     raw_scores = scores_row.data
     summary = build_framework_output(raw_scores)
-    all_careers = supabase_client.table('careers').select('*').execute().data or []
+    all_careers = _execute_with_retry(supabase_client.table('careers').select('*')).data or []
 
     user_country_code = COUNTRY_CODE_MAP.get(profile.data.get('country') or '')
     country_profile = None
     if user_country_code:
-        country_row = supabase_client.table('country_profiles') \
-            .select('*').eq('country_code', user_country_code).limit(1).execute()
+        country_row = _execute_with_retry(supabase_client.table('country_profiles')
+            .select('*').eq('country_code', user_country_code).limit(1))
         country_profile = country_row.data[0] if country_row.data else None
 
     query_text = (
@@ -1452,16 +1472,16 @@ def get_or_generate_ai_content(response_id: str, supabase_client, tier: str = "l
         f"Current stage: {profile.data.get('current_stage', '')}."
     )
     query_embedding = _gemini_embed(query_text)
-    coaching_matches = supabase_client.rpc("match_coaching_chunks", {
+    coaching_matches = _execute_with_retry(supabase_client.rpc("match_coaching_chunks", {
         "query_embedding": query_embedding,
         "match_count": 5,
-    }).execute().data
+    })).data
 
     try:
-        career_matches = supabase_client.rpc("match_careers", {
+        career_matches = _execute_with_retry(supabase_client.rpc("match_careers", {
             "query_embedding": query_embedding,
             "match_count": 250,
-        }).execute().data or []
+        })).data or []
         semantic_scores = {m['id']: m['similarity'] for m in career_matches}
     except Exception:
         semantic_scores = {}
@@ -1469,28 +1489,28 @@ def get_or_generate_ai_content(response_id: str, supabase_client, tier: str = "l
 
     value = generate_ai_content(profile.data, summary, raw_scores, top_careers, country_profile, coaching_matches, 'en', career_count=content_count)
     # Same write-once-then-reread race handling as create_report()'s _generate_and_cache.
-    written = supabase_client.table('assessment_responses') \
-        .update({content_col: value}) \
-        .eq('id', response_id).is_(content_col, 'null').execute()
+    written = _execute_with_retry(supabase_client.table('assessment_responses')
+        .update({content_col: value})
+        .eq('id', response_id).is_(content_col, 'null'))
     if written.data:
         return value
-    refreshed = supabase_client.table('assessment_responses').select(content_col).eq('id', response_id).single().execute()
+    refreshed = _execute_with_retry(supabase_client.table('assessment_responses').select(content_col).eq('id', response_id).single())
     return refreshed.data.get(content_col) or value
 
 
 def create_report(response_id: str, supabase_client, tier: str = "launchpad", locale_override: str | None = None) -> bytes:
 
-    profile = supabase_client.table('assessment_responses') \
+    profile = _execute_with_retry(supabase_client.table('assessment_responses')
         .select('full_name,email,age_bracket,current_stage,education_field,'
                 'sectors_of_interest,geographic_openness,why_here,country,'
                 'ai_impact_cache,ai_content_cache,ai_impact_cache_ar,ai_content_cache_ar,'
-                'ai_impact_cache_free,ai_content_cache_free,ai_impact_cache_ar_free,ai_content_cache_ar_free,locale') \
-        .eq('id', response_id).single().execute()
+                'ai_impact_cache_free,ai_content_cache_free,ai_impact_cache_ar_free,ai_content_cache_ar_free,locale')
+        .eq('id', response_id).single())
     if not profile.data:
         raise ValueError(f"No assessment found for {response_id}")
 
-    scores_row = supabase_client.table('assessment_results') \
-        .select('*').eq('response_id', response_id).execute()
+    scores_row = _execute_with_retry(supabase_client.table('assessment_results')
+        .select('*').eq('response_id', response_id))
     if not scores_row.data:
         raise ValueError(f"No scores found for {response_id}")
 
@@ -1501,13 +1521,13 @@ def create_report(response_id: str, supabase_client, tier: str = "launchpad", lo
     user_country_code = COUNTRY_CODE_MAP.get(profile.data.get('country') or '')
     country_profile = None
     if user_country_code:
-        country_row = supabase_client.table('country_profiles') \
-            .select('*').eq('country_code', user_country_code).limit(1).execute()
+        country_row = _execute_with_retry(supabase_client.table('country_profiles')
+            .select('*').eq('country_code', user_country_code).limit(1))
         country_profile = country_row.data[0] if country_row.data else None
 
     raw_scores = scores_row.data
     summary    = build_framework_output(raw_scores)
-    all_careers = supabase_client.table('careers').select('*').execute().data or []
+    all_careers = _execute_with_retry(supabase_client.table('careers').select('*')).data or []
 
     query_text = (
         f"RIASEC: {', '.join(summary.get('riasec', {}).get('top_types', []))}. "
@@ -1517,16 +1537,16 @@ def create_report(response_id: str, supabase_client, tier: str = "launchpad", lo
         f"Current stage: {profile.data.get('current_stage', '')}."
     )
     query_embedding = _gemini_embed(query_text)
-    coaching_matches = supabase_client.rpc("match_coaching_chunks", {
+    coaching_matches = _execute_with_retry(supabase_client.rpc("match_coaching_chunks", {
         "query_embedding": query_embedding,
         "match_count": 5,
-    }).execute().data
+    })).data
 
     try:
-        career_matches = supabase_client.rpc("match_careers", {
+        career_matches = _execute_with_retry(supabase_client.rpc("match_careers", {
             "query_embedding": query_embedding,
             "match_count": 250,
-        }).execute().data or []
+        })).data or []
         semantic_scores = {m['id']: m['similarity'] for m in career_matches}
     except Exception:
         semantic_scores = {}
@@ -1558,12 +1578,12 @@ def create_report(response_id: str, supabase_client, tier: str = "launchpad", lo
         translation pass could translate content that was never the row's
         real English cache, permanently diverging EN/AR content."""
         value = generate()
-        written = supabase_client.table('assessment_responses') \
-            .update({col: value}) \
-            .eq('id', response_id).is_(col, 'null').execute()
+        written = _execute_with_retry(supabase_client.table('assessment_responses')
+            .update({col: value})
+            .eq('id', response_id).is_(col, 'null'))
         if written.data:
             return value
-        refreshed = supabase_client.table('assessment_responses').select(col).eq('id', response_id).single().execute()
+        refreshed = _execute_with_retry(supabase_client.table('assessment_responses').select(col).eq('id', response_id).single())
         return refreshed.data.get(col) or value
 
     ai_impact = profile.data.get(impact_col) or _generate_and_cache(
@@ -1604,7 +1624,7 @@ def create_report(response_id: str, supabase_client, tier: str = "launchpad", lo
     # makes several Gemini calls, and a third-party call here would just be another
     # way for report generation to fail or stall.
     jobs = []
-    cached_jobs = supabase_client.table('job_listings_cache').select('jobs').eq('response_id', response_id).execute()
+    cached_jobs = _execute_with_retry(supabase_client.table('job_listings_cache').select('jobs').eq('response_id', response_id))
     if cached_jobs.data:
         jobs = (cached_jobs.data[0].get('jobs') or [])[:8]
 
@@ -1622,12 +1642,12 @@ def create_report(response_id: str, supabase_client, tier: str = "launchpad", lo
         if company_sectors:
             company_query = company_query.in_('sector', company_sectors)
         company_limit = 50 if tier == 'launchpad' else 20
-        companies_raw = company_query.order('name_en').limit(company_limit).execute().data or []
+        companies_raw = _execute_with_retry(company_query.order('name_en').limit(company_limit)).data or []
         companies = [c for c in companies_raw if is_appropriate(c.get('name_en'), c.get('sector'))][:12]
 
         user_riasec = set(summary.get('riasec', {}).get('top_types', []))
         course_sectors = set(c['sector'] for c in top5)
-        all_courses = supabase_client.table('courses').select('*').execute().data or []
+        all_courses = _execute_with_retry(supabase_client.table('courses').select('*')).data or []
 
         def _score_course(course):
             riasec_overlap = len(set(course.get('riasec_tags') or []) & user_riasec)
