@@ -809,10 +809,9 @@ def get_beta_feedback(_=Depends(require_admin)):
     # beta_feedback has no name/email of its own — embed the owning
     # assessment_responses row (FK on response_id) so the admin list doesn't
     # need a second round-trip per row.
-    data = supabase.table('beta_feedback') \
-        .select('*, assessment_responses(full_name, email, locale, country, age_bracket, current_stage, cohort_override)') \
-        .order('created_at', desc=True) \
-        .execute()
+    data = _execute_with_retry(supabase.table('beta_feedback')
+        .select('*, assessment_responses(full_name, email, locale, country, nationality, age_bracket, current_stage, cohort_override)')
+        .order('created_at', desc=True))
     return data.data or []
 
 @app.post("/waitlist")
