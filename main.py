@@ -13,7 +13,7 @@ import io
 from datetime import datetime, timezone, timedelta
 from collections import Counter
 from fastapi.responses import StreamingResponse
-from report_generator import create_report
+from report_generator import create_report, _execute_with_retry
 from google.api_core.exceptions import GoogleAPICallError
 from requests.exceptions import RequestException
 from smtp_service import send_report_email, send_feedback_email, send_results_ready_email, send_beta_feedback_email, invalidate_smtp_cache, send_failure_alert
@@ -162,15 +162,15 @@ def _get_semantic_scores(response_id: str, summary: dict, profile_data: dict) ->
     courses, and companies each called it fresh on every single request, so every
     "View report" click paid for 3 separate embedding calls with nothing to show for it
     on repeat views. Cached per response_id; never invalidated since the input is fixed."""
-    cached = supabase.table('assessment_responses') \
-        .select('career_semantic_scores_cache').eq('id', response_id).single().execute()
+    cached = _execute_with_retry(supabase.table('assessment_responses')
+        .select('career_semantic_scores_cache').eq('id', response_id).single())
     if cached.data and cached.data.get('career_semantic_scores_cache') is not None:
         return cached.data['career_semantic_scores_cache']
 
     scores = get_career_semantic_scores(supabase, summary, profile_data)
     if scores:
-        supabase.table('assessment_responses') \
-            .update({'career_semantic_scores_cache': scores}).eq('id', response_id).execute()
+        _execute_with_retry(supabase.table('assessment_responses')
+            .update({'career_semantic_scores_cache': scores}).eq('id', response_id))
     return scores
 
 TEST_MODE_KEY = "test_mode_all_plans_unlocked"
@@ -690,17 +690,16 @@ def get_recent_completions():
 
 @app.get("/assessment/{response_id}/results")
 def get_results(response_id: str, user=Depends(get_optional_user)):
-    profile = supabase.table('assessment_responses') \
-        .select('email, user_id, locale') \
-        .eq('id', response_id).single().execute()
+    profile = _execute_with_retry(supabase.table('assessment_responses')
+        .select('email, user_id, locale')
+        .eq('id', response_id).single())
     if not profile.data:
         raise HTTPException(status_code=404, detail="No results found for this response")
     _assert_can_view(profile.data.get('user_id'), user)
 
-    rows = supabase.table('assessment_results') \
-        .select('*') \
-        .eq('response_id', response_id) \
-        .execute()
+    rows = _execute_with_retry(supabase.table('assessment_results')
+        .select('*')
+        .eq('response_id', response_id))
     if not rows.data:
         raise HTTPException(status_code=404, detail="No results found for this response")
 
@@ -1077,9 +1076,9 @@ def get_career_recommendations(response_id: str, user=Depends(get_optional_user)
 
 @app.get("/assessment/{response_id}/ai-impact")
 def get_ai_impact(response_id: str, force: bool = False, user=Depends(get_optional_user)):
-    profile_row = supabase.table('assessment_responses') \
-        .select('full_name,current_stage,country,education_field,sectors_of_interest,ai_impact_cache,ai_impact_cache_free,user_id') \
-        .eq('id', response_id).single().execute()
+    profile_row = _execute_with_retry(supabase.table('assessment_responses')
+        .select('full_name,current_stage,country,education_field,sectors_of_interest,ai_impact_cache,ai_impact_cache_free,user_id')
+        .eq('id', response_id).single())
     if not profile_row.data:
         raise HTTPException(status_code=404, detail="No results found for this response")
     owner_user_id = profile_row.data.get('user_id')
@@ -1098,13 +1097,13 @@ def get_ai_impact(response_id: str, force: bool = False, user=Depends(get_option
     if cached and not force:
         return {**cached, "careers": (cached.get("careers") or [])[:careers_cap]}
 
-    rows = supabase.table('assessment_results') \
-        .select('*').eq('response_id', response_id).execute()
+    rows = _execute_with_retry(supabase.table('assessment_results')
+        .select('*').eq('response_id', response_id))
     if not rows.data:
         raise HTTPException(status_code=404, detail="No results found for this response")
 
     summary = build_framework_output(rows.data)
-    careers = supabase.table('careers').select('*').execute().data or []
+    careers = _execute_with_retry(supabase.table('careers').select('*')).data or []
     semantic_scores = _get_semantic_scores(response_id, summary, profile_row.data or {})
     top_careers = score_careers(summary, profile_row.data or {}, careers, semantic_scores)[:careers_cap]
 
@@ -1119,9 +1118,9 @@ def get_ai_impact(response_id: str, force: bool = False, user=Depends(get_option
         # bug_reports row for the same failure already recorded above.
         raise HTTPException(status_code=500, detail="AI Impact generation failed, please try again")
 
-    supabase.table('assessment_responses') \
-        .update({cache_col: result}) \
-        .eq('id', response_id).execute()
+    _execute_with_retry(supabase.table('assessment_responses')
+        .update({cache_col: result})
+        .eq('id', response_id))
 
     return {**result, "careers": (result.get("careers") or [])[:careers_cap]}
 
@@ -1383,10 +1382,10 @@ def delete_course(course_id: str, _=Depends(require_admin)):
 
 @app.get("/assessment/{response_id}/courses")
 def get_course_recommendations(response_id: str, user=Depends(get_optional_user)):
-    rows = supabase.table('assessment_results').select('*').eq('response_id', response_id).execute()
-    profile = supabase.table('assessment_responses') \
-        .select('country, education_field, sectors_of_interest, user_id') \
-        .eq('id', response_id).single().execute()
+    rows = _execute_with_retry(supabase.table('assessment_results').select('*').eq('response_id', response_id))
+    profile = _execute_with_retry(supabase.table('assessment_responses')
+        .select('country, education_field, sectors_of_interest, user_id')
+        .eq('id', response_id).single())
     if not rows.data or not profile.data:
         raise HTTPException(status_code=404, detail="No results found for this response")
     owner_user_id = profile.data.get('user_id')
@@ -1394,14 +1393,14 @@ def get_course_recommendations(response_id: str, user=Depends(get_optional_user)
     if get_effective_tier(owner_user_id) == "free":
         return []
     summary = build_framework_output(rows.data)
-    careers = supabase.table('careers').select('*').execute().data or []
+    careers = _execute_with_retry(supabase.table('careers').select('*')).data or []
     semantic_scores = _get_semantic_scores(response_id, summary, profile.data)
     top5    = score_careers(summary, profile.data, careers, semantic_scores)[:5]
 
     user_riasec = set(summary.get('riasec', {}).get('top_types', []))
     sectors     = set(c['sector'] for c in top5)
 
-    all_courses = supabase.table('courses').select('*').execute().data or []
+    all_courses = _execute_with_retry(supabase.table('courses').select('*')).data or []
 
     def score_course(course):
         riasec_overlap = len(set(course.get('riasec_tags') or []) & user_riasec)
@@ -1770,14 +1769,14 @@ def _search_matching_jobs(response_id: str) -> list[dict] | None:
 
 @app.get("/assessment/{response_id}/job-listings")
 def get_job_listings(response_id: str, force: bool = False, user=Depends(get_optional_user)):
-    owner_row = supabase.table('assessment_responses').select('user_id').eq('id', response_id).single().execute()
+    owner_row = _execute_with_retry(supabase.table('assessment_responses').select('user_id').eq('id', response_id).single())
     if not owner_row.data:
         raise HTTPException(status_code=404, detail="No results found for this response")
     _assert_can_view(owner_row.data.get('user_id'), user)
     if force:
         _assert_can_force_refresh(owner_row.data.get('user_id'), user)
 
-    cached = supabase.table('job_listings_cache').select('*').eq('response_id', response_id).execute()
+    cached = _execute_with_retry(supabase.table('job_listings_cache').select('*').eq('response_id', response_id))
     if cached.data and not force:
         fetched_at = datetime.fromisoformat(cached.data[0]['fetched_at'])
         if datetime.now(timezone.utc) - fetched_at < JOB_LISTINGS_CACHE_TTL:
@@ -1787,11 +1786,11 @@ def get_job_listings(response_id: str, force: bool = False, user=Depends(get_opt
     if result_jobs is None:
         raise HTTPException(status_code=404, detail="No results found for this response")
 
-    supabase.table('job_listings_cache').upsert({
+    _execute_with_retry(supabase.table('job_listings_cache').upsert({
         'response_id': response_id,
         'jobs': result_jobs,
         'fetched_at': datetime.now(timezone.utc).isoformat(),
-    }).execute()
+    }))
 
     return {"jobs": result_jobs}
 
@@ -1971,12 +1970,12 @@ def delete_application(application_id: str, user=Depends(get_current_user)):
 
 @app.get("/assessment/{response_id}/companies")
 def get_companies_suggestions(response_id: str, user=Depends(get_optional_user)):
-    profile = supabase.table('assessment_responses') \
-        .select('country, education_field, sectors_of_interest, user_id') \
-        .eq('id', response_id).single().execute()
-    rows = supabase.table('assessment_results') \
-        .select('*') \
-        .eq('response_id', response_id).execute()
+    profile = _execute_with_retry(supabase.table('assessment_responses')
+        .select('country, education_field, sectors_of_interest, user_id')
+        .eq('id', response_id).single())
+    rows = _execute_with_retry(supabase.table('assessment_results')
+        .select('*')
+        .eq('response_id', response_id))
     if not rows.data or not profile.data:
         raise HTTPException(status_code=404, detail="No results found for this response")
     owner_user_id = profile.data.get('user_id')
@@ -1987,7 +1986,7 @@ def get_companies_suggestions(response_id: str, user=Depends(get_optional_user))
     company_limit = 50 if tier == "launchpad" else 20
 
     summary = build_framework_output(rows.data)
-    careers = supabase.table('careers').select('*').execute().data or []
+    careers = _execute_with_retry(supabase.table('careers').select('*')).data or []
     semantic_scores = _get_semantic_scores(response_id, summary, profile.data)
     top5    = score_careers(summary, profile.data, careers, semantic_scores)[:5]
 
@@ -2002,7 +2001,7 @@ def get_companies_suggestions(response_id: str, user=Depends(get_optional_user))
     if sectors:
         query = query.in_('sector', sectors)
 
-    result = query.order('name_en').limit(company_limit).execute()
+    result = _execute_with_retry(query.order('name_en').limit(company_limit))
     return [c for c in (result.data or []) if is_appropriate(c.get('name_en'), c.get('sector'))]
 
 @app.post("/assessment/link-by-email")
