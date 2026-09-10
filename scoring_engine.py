@@ -202,6 +202,15 @@ def build_framework_output(scores: list[dict]) -> dict:
             for d in grouped['entrepreneurship']
         }
 
+    # Full per-dimension breakdown for every framework, not just the top-N names/
+    # qualitative labels above — additive so existing consumers (report PDF, submit
+    # response) are unaffected. Lets a caller chart the complete RIASEC/values/
+    # strengths profile instead of only the top 3, without a second round trip.
+    output['dimension_scores'] = {
+        fw: {d['dimension']: round(d['normalized_score'], 1) for d in dims}
+        for fw, dims in grouped.items()
+    }
+
     return output
 
 def get_career_semantic_scores(supabase_client, summary: dict, user_data: dict) -> dict:

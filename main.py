@@ -1143,7 +1143,15 @@ def get_career_recommendations(response_id: str, locale: str | None = None, user
         send_failure_alert("Career recommendations generation", e, response_id=response_id, supabase=supabase)
         raise HTTPException(status_code=500, detail="Career recommendations generation failed, please try again")
 
-    return {"career_recommendations": ai_content.get("career_recommendations") or []}
+    # action_plan is generated in the same call as career_recommendations (see
+    # generate_ai_content) but was previously dropped here — it only ever reached
+    # users inside the downloaded PDF, so admin had no way to review it without
+    # downloading a report. Including it is free (already generated/cached); the
+    # public results page destructures only career_recommendations and ignores it.
+    return {
+        "career_recommendations": ai_content.get("career_recommendations") or [],
+        "action_plan": ai_content.get("action_plan") or {},
+    }
 
 @app.get("/assessment/{response_id}/ai-impact")
 def get_ai_impact(response_id: str, force: bool = False, locale: str | None = None, user=Depends(get_optional_user)):

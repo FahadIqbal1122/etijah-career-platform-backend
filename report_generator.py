@@ -478,7 +478,7 @@ def generate_ai_content(user_data: dict, summary: dict, raw_scores: list, career
         f"Name: {user_data['full_name']}\n"
         f"Age bracket: {user_data.get('age_bracket','N/A')}\n"
         f"Current stage: {user_data.get('current_stage','N/A')}\n"
-        f"Education field: {user_data.get('education_field','N/A')}\n"
+        f"Education field: {', '.join(user_data.get('education_field') or []) or 'N/A'}\n"
         f"Sectors of interest: {', '.join(user_data.get('sectors_of_interest',[]))}\n"
         f"Geographic openness: {user_data.get('geographic_openness','N/A')}\n"
         f"Why taking assessment: {user_data.get('why_here','N/A')}\n\n"
