@@ -17,7 +17,7 @@ from requests.exceptions import RequestException, Timeout, ConnectionError as Re
 from weasyprint import HTML
 from supabase import create_client as _create_supabase_client
 from db_client import disable_http2
-from scoring_engine import build_framework_output, score_careers, COUNTRY_CODE_MAP
+from scoring_engine import build_framework_output, score_careers, get_career_semantic_scores, COUNTRY_CODE_MAP
 from coaching_pipeline import _gemini_embed, client as anthropic_client
 from content_policy import is_appropriate, CULTURAL_GUARDRAIL
 from ai_provider import get_ai_provider
@@ -330,6 +330,43 @@ def _notify_provider_fallback(primary: str, fallback: str, error: Exception, lab
         print("Provider-fallback alert failed (not re-raised):", e)
 
 
+def _extract_json_object(text: str) -> str | None:
+    """Returns the substring spanning the first complete, brace-balanced JSON
+    object in `text` (string/escape aware so braces inside quoted values don't
+    throw off the count), or None if no complete object is found.
+
+    Previously this was `text.find('{'), text.rfind('}')` — taking the LAST
+    '}' anywhere in the response. Any trailing content after the real object
+    (a stray '}' inside translated prose, a trailing note, example code) got
+    swept into the slice, so json.loads() parsed the real object fine and then
+    choked with "Extra data" on the leftover text before that later brace."""
+    start = text.find('{')
+    if start == -1:
+        return None
+    depth = 0
+    in_string = False
+    escape = False
+    for i in range(start, len(text)):
+        ch = text[i]
+        if in_string:
+            if escape:
+                escape = False
+            elif ch == '\\':
+                escape = True
+            elif ch == '"':
+                in_string = False
+            continue
+        if ch == '"':
+            in_string = True
+        elif ch == '{':
+            depth += 1
+        elif ch == '}':
+            depth -= 1
+            if depth == 0:
+                return text[start:i + 1]
+    return None
+
+
 def _generate_json(prompt: str, retries: int = 1, timeout_s: float | None = None, label: str = "") -> dict:
     """The active provider's JSON output is reliable but not perfect — an occasional
     stray unescaped character or truncated response yields invalid JSON. Regenerating
@@ -386,12 +423,12 @@ def _generate_json(prompt: str, retries: int = 1, timeout_s: float | None = None
             text = re.sub(r'^```[a-z]*\n?', '', text)
             text = re.sub(r'\n?```$', '', text)
             text = text.strip()
-            start, end = text.find('{'), text.rfind('}')
-            if start == -1 or end == -1:
+            json_str = _extract_json_object(text)
+            if json_str is None:
                 last_err = ValueError(f"No JSON object found in {provider} response: {text[:200]}")
                 continue
             try:
-                return json.loads(text[start:end + 1]), None
+                return json.loads(json_str), None
             except json.JSONDecodeError as e:
                 last_err = e
         return None, last_err
@@ -1371,6 +1408,28 @@ def _translate_piece_with_retry(piece: dict, target_locale: str, max_attempts: i
             last_err = e
     raise last_err
 
+def _translate_careers_with_retry(careers: list, target_locale: str, max_attempts: int = 3) -> list:
+    """Same retry budget as _translate_piece_with_retry, but additionally treats a
+    malformed response (wrong type, or a different item count than the source list)
+    as a failure to retry rather than silently returning fewer/no careers — a report
+    missing its entire Career Pathways section is worse than one extra retry, and if
+    every attempt still comes back malformed this raises so create_report()'s existing
+    "fall back to the English report" handling kicks in instead of shipping an Arabic
+    PDF with a blank careers section (previously `careers_result.get("career_recommendations",
+    [])` just defaulted to [] with no error, so that fallback never triggered)."""
+    last_err: Exception | None = None
+    for _ in range(max_attempts):
+        try:
+            result = translate_report_json({'career_recommendations': careers}, target_locale)
+            translated = result.get('career_recommendations')
+            if isinstance(translated, list) and len(translated) == len(careers):
+                return translated
+            last_err = ValueError(f"Career-recommendations translation returned {translated!r} for {len(careers)} source careers")
+        except (GoogleAPICallError, RequestException, json.JSONDecodeError, ValueError,
+                anthropic.APIConnectionError, anthropic.RateLimitError, anthropic.APIStatusError) as e:
+            last_err = e
+    raise last_err
+
 def translate_ai_content(data: dict, target_locale: str = 'ar') -> dict:
     """ai_content carries the same ~20 narrative fields + up to 8 career objects that made
     generate_ai_content unreliable as a single call (see its docstring). Translation is worse:
@@ -1380,7 +1439,7 @@ def translate_ai_content(data: dict, target_locale: str = 'ar') -> dict:
     real testing (1 of 3 tries). Split the narrative into three roughly-even pieces instead
     and translate all four pieces (3 narrative + careers) concurrently; wall-clock cost is
     still bounded by the slowest piece, not their sum."""
-    careers = data.get('career_recommendations', [])
+    careers = data.get('career_recommendations') or []
     narrative = {k: v for k, v in data.items() if k != 'career_recommendations'}
     narrative_keys = list(narrative.keys())
     n = len(narrative_keys)
@@ -1390,14 +1449,14 @@ def translate_ai_content(data: dict, target_locale: str = 'ar') -> dict:
 
     with ThreadPoolExecutor(max_workers=len(narrative_pieces) + 1) as pool:
         piece_futures = [pool.submit(_translate_piece_with_retry, piece, target_locale) for piece in narrative_pieces]
-        careers_future = pool.submit(_translate_piece_with_retry, {'career_recommendations': careers}, target_locale)
+        careers_future = pool.submit(_translate_careers_with_retry, careers, target_locale)
         piece_results = [f.result() for f in piece_futures]
-        careers_result = careers_future.result()
+        translated_careers = careers_future.result()
 
     merged: dict = {}
     for piece_result in piece_results:
         merged.update(piece_result)
-    merged["career_recommendations"] = careers_result.get("career_recommendations", [])
+    merged["career_recommendations"] = translated_careers
     return merged
 
 # ─── PDF renderer ──────────────────────────────────────────────────────────────
@@ -1426,6 +1485,40 @@ def _execute_with_retry(query, retries: int = 1):
             last_err = e
             print(f"[supabase] transient error, retrying: {type(e).__name__}: {e}")
     raise last_err
+
+
+def _get_cached_semantic_scores(response_id: str, summary: dict, profile_data: dict, supabase_client) -> dict:
+    """Mirrors main.py's _get_semantic_scores (same career_semantic_scores_cache column,
+    same response_id key) so report generation doesn't pay for its own separate embedding
+    + match_careers RPC call on every single PDF/email request. This used to recompute
+    inline with a query_text that omitted education_field — diverging from
+    scoring_engine.get_career_semantic_scores's canonical text used everywhere else career
+    semantic scores are computed — so the careers ranked into a report could differ from
+    the ones the same user already saw in-app, and every report request paid for its own
+    live Gemini embedding call (a failure point silently swallowed to {} on any error)
+    instead of reusing the cached value.
+
+    The cache read/write themselves are best-effort: a report is still worth
+    generating (with tag-based scoring only) even if a DB hiccup — not just an
+    embedding failure, which get_career_semantic_scores already swallows —
+    makes the cache lookup or write fail, so neither is allowed to raise out
+    of this function."""
+    try:
+        cached = _execute_with_retry(supabase_client.table('assessment_responses')
+            .select('career_semantic_scores_cache').eq('id', response_id).single())
+        if cached.data and cached.data.get('career_semantic_scores_cache') is not None:
+            return cached.data['career_semantic_scores_cache']
+    except Exception as e:
+        print(f"Semantic-scores cache read failed for {response_id} (not re-raised):", e)
+
+    scores = get_career_semantic_scores(supabase_client, summary, profile_data)
+    if scores:
+        try:
+            _execute_with_retry(supabase_client.table('assessment_responses')
+                .update({'career_semantic_scores_cache': scores}).eq('id', response_id))
+        except Exception as e:
+            print(f"Semantic-scores cache write failed for {response_id} (not re-raised):", e)
+    return scores
 
 
 def get_or_generate_ai_content(response_id: str, supabase_client, tier: str = "launchpad") -> dict:
@@ -1480,14 +1573,7 @@ def get_or_generate_ai_content(response_id: str, supabase_client, tier: str = "l
         "match_count": 5,
     })).data
 
-    try:
-        career_matches = _execute_with_retry(supabase_client.rpc("match_careers", {
-            "query_embedding": query_embedding,
-            "match_count": 250,
-        })).data or []
-        semantic_scores = {m['id']: m['similarity'] for m in career_matches}
-    except Exception:
-        semantic_scores = {}
+    semantic_scores = _get_cached_semantic_scores(response_id, summary, profile.data, supabase_client)
     top_careers = score_careers(summary, profile.data, all_careers, semantic_scores)
 
     value = generate_ai_content(profile.data, summary, raw_scores, top_careers, country_profile, coaching_matches, 'en', career_count=content_count)
@@ -1545,14 +1631,7 @@ def create_report(response_id: str, supabase_client, tier: str = "launchpad", lo
         "match_count": 5,
     })).data
 
-    try:
-        career_matches = _execute_with_retry(supabase_client.rpc("match_careers", {
-            "query_embedding": query_embedding,
-            "match_count": 250,
-        })).data or []
-        semantic_scores = {m['id']: m['similarity'] for m in career_matches}
-    except Exception:
-        semantic_scores = {}
+    semantic_scores = _get_cached_semantic_scores(response_id, summary, profile.data, supabase_client)
     top_careers = score_careers(summary, profile.data, all_careers, semantic_scores)
 
     locale = locale_override or profile.data.get('locale') or 'en'

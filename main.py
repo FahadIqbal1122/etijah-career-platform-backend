@@ -600,8 +600,9 @@ def submit_assessment(body: SubmitRequest, background_tasks: BackgroundTasks, us
             beta_feedback_tmpl = beta_feedback_template.data[0] if beta_feedback_template.data else None
             if beta_feedback_tmpl and beta_feedback_tmpl.get('is_active'):
                 beta_feedback_url = f"{frontend_base}/{locale}/beta-feedback/{response_id}"
+                beta_results_url = f"{frontend_base}/{locale}/results/{response_id}"
                 beta_first_name = (body.full_name or '').strip().split(' ')[0]
-                background_tasks.add_task(send_beta_feedback_email, body.email, beta_first_name, beta_feedback_url, locale, beta_feedback_tmpl, supabase)
+                background_tasks.add_task(send_beta_feedback_email, body.email, beta_first_name, beta_feedback_url, locale, beta_feedback_tmpl, supabase, beta_results_url)
         else:
             feedback_template = supabase.table('email_templates').select('*').eq('key', 'feedback_request').limit(1).execute()
             feedback_tmpl = feedback_template.data[0] if feedback_template.data else None
@@ -1483,6 +1484,7 @@ def send_scheduled_emails(request: Request):
                     if recipient.get('response_id'):
                         frontend_base = os.getenv('FRONTEND_URL', '').rstrip('/')
                         variables['beta_feedback_url'] = f"{frontend_base}/{recipient_locale}/beta-feedback/{recipient['response_id']}"
+                        variables['results_url'] = f"{frontend_base}/{recipient_locale}/results/{recipient['response_id']}"
                     subject, html_body = render_template(template, variables, recipient_locale)
                     send_email(recipient['email'], subject, html_body, supabase=supabase)
                     sent_count += 1

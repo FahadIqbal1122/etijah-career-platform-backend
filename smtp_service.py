@@ -164,10 +164,13 @@ def send_results_ready_email(to_email, to_name, results_url, locale="en", templa
     send_email(to=to_email, subject=subject, html_body=html_body, supabase=supabase)
 
 
-def send_beta_feedback_email(to_email, to_name, beta_feedback_url, locale="en", template_row=None, supabase=None):
+def send_beta_feedback_email(to_email, to_name, beta_feedback_url, locale="en", template_row=None, supabase=None, results_url=None):
     if not template_row:
         return  # template not seeded/found — nothing to send
-    subject, html_body = render_template(template_row, {"full_name": to_name, "beta_feedback_url": beta_feedback_url}, locale)
+    variables = {"full_name": to_name, "beta_feedback_url": beta_feedback_url}
+    if results_url:
+        variables["results_url"] = results_url
+    subject, html_body = render_template(template_row, variables, locale)
     send_email(to=to_email, subject=subject, html_body=html_body, supabase=supabase)
 
 
