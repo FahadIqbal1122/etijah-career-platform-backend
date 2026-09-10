@@ -476,10 +476,18 @@ def generate_ai_content(user_data: dict, summary: dict, raw_scores: list, career
         + (ARABIC_LANGUAGE_INSTRUCTION if locale == 'ar' else "")
         + "=== ASSESSMENT DATA ===\n\n"
         f"Name: {user_data['full_name']}\n"
-        f"Age bracket: {user_data.get('age_bracket','N/A')}\n"
-        f"Current stage: {user_data.get('current_stage','N/A')}\n"
+        f"Age: {user_data.get('age') or 'N/A'}\n"
+        f"Work experience: {user_data.get('experience_level') or 'N/A'}\n"
+        f"Current stage: {user_data.get('current_stage') or 'N/A'}\n"
         f"Education field: {', '.join(user_data.get('education_field') or []) or 'N/A'}\n"
-        f"Sectors of interest: {', '.join(user_data.get('sectors_of_interest',[]))}\n"
+        + (
+            f"Note: this field of study was NOT the person's own choice"
+            f"{' (reason: ' + user_data['major_choice_reason'] + ')' if user_data.get('major_choice_reason') else ''}"
+            f" — common for Saudi/GCC students assigned a major via university placement. "
+            "Be sensitive to this in career framing; don't assume passion for this field.\n"
+            if user_data.get('major_was_own_choice') == 'no' else ""
+        )
+        + f"Sectors of interest: {', '.join(user_data.get('sectors_of_interest',[]))}\n"
         f"Geographic openness: {user_data.get('geographic_openness','N/A')}\n"
         f"Why taking assessment: {user_data.get('why_here','N/A')}\n\n"
         f"RIASEC top 3 (0-100):\n{riasec_lines}\n"
@@ -1587,7 +1595,8 @@ def get_or_generate_ai_content(response_id: str, supabase_client, tier: str = "l
     twice. English is always generated/cached first since Arabic translation needs it
     as source."""
     profile = _execute_with_retry(supabase_client.table('assessment_responses')
-        .select('full_name,email,age_bracket,current_stage,education_field,'
+        .select('full_name,email,age,age_bracket,experience_level,current_stage,education_field,'
+                'major_was_own_choice,major_choice_reason,'
                 'sectors_of_interest,geographic_openness,why_here,country,'
                 'ai_content_cache,ai_content_cache_free,ai_content_cache_ar,ai_content_cache_ar_free')
         .eq('id', response_id).single())
@@ -1651,7 +1660,8 @@ def get_or_generate_ai_content(response_id: str, supabase_client, tier: str = "l
 def create_report(response_id: str, supabase_client, tier: str = "launchpad", locale_override: str | None = None) -> bytes:
 
     profile = _execute_with_retry(supabase_client.table('assessment_responses')
-        .select('full_name,email,age_bracket,current_stage,education_field,'
+        .select('full_name,email,age,age_bracket,experience_level,current_stage,education_field,'
+                'major_was_own_choice,major_choice_reason,'
                 'sectors_of_interest,geographic_openness,why_here,country,'
                 'ai_impact_cache,ai_content_cache,ai_impact_cache_ar,ai_content_cache_ar,'
                 'ai_impact_cache_free,ai_content_cache_free,ai_impact_cache_ar_free,ai_content_cache_ar_free,locale')

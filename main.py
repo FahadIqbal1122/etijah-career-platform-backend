@@ -21,7 +21,7 @@ from smtp_service import send_report_email, send_feedback_email, send_results_re
 import httpx, hmac, hashlib, json, secrets, time
 from coaching_methodology import METHODOLOGY_DOC
 from coaching_pipeline import chunk_transcript, embed_and_store_chunks, client, embed_country_profile, sync_country_profile_embedding, sync_career_embedding, _gemini_embed
-from content_policy import is_appropriate, is_region_eligible, CULTURAL_GUARDRAIL
+from content_policy import is_appropriate, is_region_eligible, is_seniority_appropriate, STUDENT_EXPERIENCE_LEVELS, CULTURAL_GUARDRAIL
 from ai_provider import get_ai_provider, invalidate_ai_provider_cache, AI_PROVIDER_KEY, VALID_PROVIDERS
 
 load_dotenv()
@@ -280,9 +280,15 @@ class SubmitRequest(BaseModel):
     phone: str = Field(max_length=40)
     country: str = Field(max_length=100)
     nationality: str = Field(max_length=100)
-    age_bracket: str = Field(max_length=50)
+    age: int = Field(ge=10, le=100)
+    experience_level: str = Field(max_length=50)
     current_stage: str = Field(max_length=100)
     education_field: list[str] = Field(max_length=50)
+    # Whether the user's field of study (education_field) was their own choice —
+    # relevant especially for Saudi users, where university placement is often
+    # not a free choice. major_choice_reason is only meaningful when this is 'no'.
+    major_was_own_choice: str | None = Field(default=None, max_length=10)
+    major_choice_reason: str | None = Field(default=None, max_length=500)
     sectors_of_interest: list[str] = Field(max_length=50)
     career_structure: str = Field(max_length=200)
     languages: list[str] = Field(max_length=50)
@@ -357,6 +363,7 @@ class BetaFeedbackStage2Request(BaseModel):
     values_accuracy: str | None = None
     strengths_accuracy: str | None = None
     career_matches_accuracy: str | None = None
+    careers_seriously_considered: str | None = None
     wrong_career_text: str | None = None
     missing_career_text: str | None = None
     ai_impact_useful: int | None = Field(default=None, ge=1, le=6)
@@ -376,7 +383,9 @@ class BetaFeedbackStage2Request(BaseModel):
     # too so someone who skips/changes their mind at the Result Stage still
     # gets asked, and so an earlier answer stays editable.
     would_pay: str | None = None
+    would_pay_reason: str | None = None
     would_recommend: str | None = None
+    wants_coach_session: str | None = None
     device: str | None = None
     had_issues: str | None = None
     issue_detail: str | None = None
@@ -389,6 +398,7 @@ class BetaFeedbackResultStageRequest(BaseModel):
     result_accuracy: str | None = None
     would_recommend: str | None = None
     would_pay: str | None = None
+    other_text: str | None = None
     locale: str | None = None
 
 class WaitlistRequest(BaseModel):
@@ -478,7 +488,7 @@ def root():
 @app.get("/admin/submissions")
 def get_submissions(_=Depends(require_admin)):
     data = supabase.table('assessment_responses') \
-        .select('id, full_name, email, phone, country, nationality, age_bracket, education_field, current_stage, completed, created_at, cohort_override') \
+        .select('id, full_name, email, phone, country, nationality, age, age_bracket, experience_level, education_field, major_was_own_choice, major_choice_reason, current_stage, completed, created_at, cohort_override') \
         .order('created_at', desc=True) \
         .execute()
     return data.data or []
@@ -882,7 +892,7 @@ def get_beta_feedback(_=Depends(require_admin)):
     # assessment_responses row (FK on response_id) so the admin list doesn't
     # need a second round-trip per row.
     data = _execute_with_retry(supabase.table('beta_feedback')
-        .select('*, assessment_responses(full_name, email, locale, country, nationality, age_bracket, current_stage, cohort_override)')
+        .select('*, assessment_responses(full_name, email, locale, country, nationality, age, age_bracket, experience_level, current_stage, cohort_override)')
         .order('created_at', desc=True))
     return data.data or []
 
@@ -2043,7 +2053,7 @@ def _search_matching_jobs(response_id: str) -> list[dict] | None:
     job-matching refresh job. Returns None (not []) if the response has no
     scored assessment data to match against."""
     profile = supabase.table('assessment_responses') \
-        .select('country, education_field, sectors_of_interest') \
+        .select('country, education_field, sectors_of_interest, experience_level') \
         .eq('id', response_id).single().execute()
     rows = supabase.table('assessment_results') \
         .select('*') \
@@ -2059,6 +2069,8 @@ def _search_matching_jobs(response_id: str) -> list[dict] | None:
     raw_country = profile.data.get('country', '')
     country = COUNTRY_NAMES.get(raw_country, raw_country)
     country_code = COUNTRY_CODE_MAP.get(raw_country)
+    experience_level = profile.data.get('experience_level')
+    is_early_career = experience_level in STUDENT_EXPERIENCE_LEVELS
     rapidapi_key = os.getenv("RAPIDAPI_KEY")
 
     all_jobs = []
@@ -2066,13 +2078,18 @@ def _search_matching_jobs(response_id: str) -> list[dict] | None:
 
     for career in top3:
         try:
+            query_prefix = "entry level graduate " if is_early_career else ""
             resp = httpx.get(
                 "https://jsearch.p.rapidapi.com/search",
                 params={
-                    "query": f"{career['title']} {country}",
+                    "query": f"{query_prefix}{career['title']} {country}",
                     "num_pages": "1",
                     "page": "1",
                     **({"country": country_code.lower()} if country_code else {}),
+                    # Bias JSearch's own results toward entry-level postings for
+                    # students/fresh grads rather than relying only on the
+                    # post-fetch title/description filter below.
+                    **({"job_requirements": "under_3_years_experience,no_experience,no_degree"} if is_early_career else {}),
                 },
                 headers={
                     "X-RapidAPI-Key": rapidapi_key,
@@ -2089,6 +2106,8 @@ def _search_matching_jobs(response_id: str) -> list[dict] | None:
                 if not is_appropriate(job_title, employer_name, job.get("job_description")):
                     continue
                 if not is_region_eligible(job_title, job.get("job_description"), job_country, country_code):
+                    continue
+                if not is_seniority_appropriate(job_title, job.get("job_description"), experience_level):
                     continue
                 if job_id and job_id not in seen_ids:
                     seen_ids.add(job_id)

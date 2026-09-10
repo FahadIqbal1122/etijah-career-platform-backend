@@ -62,6 +62,41 @@ def is_region_eligible(job_title: str | None, job_description: str | None, job_c
     return True
 
 
+# Job source APIs return company-authored titles with no standard seniority
+# field, so "student"/"fresh_grad" users were getting management/director-level
+# postings alongside genuine entry-level roles. Companies also label entry-level
+# programs inconsistently (e.g. "Management Trainee", "Graduate Scheme"), so a
+# title-only block on "manager"/"management" would wrongly hide real trainee
+# programs — check the description too before excluding.
+STUDENT_EXPERIENCE_LEVELS = {"student", "fresh_grad"}
+
+SENIOR_LEVEL_KEYWORDS = [
+    "senior", "sr.", "manager", "director", "head of", "chief", "vp ",
+    "vice president", "principal", "executive", "president",
+    "general manager", "department head", "supervisor", "team lead",
+]
+
+ENTRY_LEVEL_SIGNALS = [
+    "entry level", "entry-level", "intern", "internship", "trainee",
+    "apprentice", "apprenticeship", "graduate program", "graduate scheme",
+    "graduate trainee", "new grad", "fresh graduate", "no experience",
+    "0-1 year", "junior", "management trainee",
+]
+
+
+def is_seniority_appropriate(job_title: str | None, job_description: str | None, experience_level: str | None) -> bool:
+    """For students/fresh grads, exclude management/senior-level roles unless
+    the listing's own text signals it's actually an entry-level program (e.g.
+    a "management trainee" scheme) — company terminology for entry-level roles
+    varies too much to filter on title alone."""
+    if experience_level not in STUDENT_EXPERIENCE_LEVELS:
+        return True
+    text = f"{job_title or ''} {job_description or ''}".lower()
+    if any(kw in text for kw in ENTRY_LEVEL_SIGNALS):
+        return True
+    return not any(kw in text for kw in SENIOR_LEVEL_KEYWORDS)
+
+
 CULTURAL_GUARDRAIL = (
     "Cultural guardrail: this platform serves an Arab/Muslim audience in the GCC. "
     "Never recommend or favorably reference careers, roles, or employers tied to "
