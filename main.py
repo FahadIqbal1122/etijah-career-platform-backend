@@ -282,7 +282,7 @@ class SubmitRequest(BaseModel):
     nationality: str = Field(max_length=100)
     age_bracket: str = Field(max_length=50)
     current_stage: str = Field(max_length=100)
-    education_field: str = Field(max_length=200)
+    education_field: list[str] = Field(max_length=50)
     sectors_of_interest: list[str] = Field(max_length=50)
     career_structure: str = Field(max_length=200)
     languages: list[str] = Field(max_length=50)
@@ -612,6 +612,22 @@ def submit_assessment(body: SubmitRequest, background_tasks: BackgroundTasks, us
 
     # Return summary
     return {"response_id": response_id, "summary": summary}
+
+
+@app.get("/assessment/{response_id}/answers")
+def get_assessment_answers(response_id: str, _=Depends(require_admin)):
+    """Raw per-question answers as submitted, keyed by question id (Q1, QO1, ...).
+    Admin-only — lets staff compare a submission's actual answers against its
+    scored results/AI content, which the question labels/options to render them
+    against (src/data/questions.ts) already live on the frontend."""
+    row = supabase.table('assessment_responses') \
+        .select('answers') \
+        .eq('id', response_id) \
+        .single() \
+        .execute()
+    if not row.data:
+        raise HTTPException(status_code=404, detail="Response not found")
+    return {"answers": row.data.get('answers') or {}}
 
 
 @app.post("/assessment/{response_id}/score")

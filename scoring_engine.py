@@ -219,7 +219,7 @@ def get_career_semantic_scores(supabase_client, summary: dict, user_data: dict) 
             f"Top values: {', '.join(summary.get('values', {}).get('top_values', []))}. "
             f"Top strengths: {', '.join(summary.get('strengths', {}).get('top_strengths', []))}. "
             f"Sectors of interest: {', '.join(user_data.get('sectors_of_interest', []) or [])}. "
-            f"Education field: {user_data.get('education_field', '')}. "
+            f"Education field: {', '.join(user_data.get('education_field', []) or [])}. "
             f"Current stage: {user_data.get('current_stage', '')}."
         )
         embedding = _gemini_embed(query_text)
@@ -256,7 +256,7 @@ def score_careers(summary: dict, user_data: dict, careers: list, semantic_scores
         entrepreneurship.get('portfolio_interest', 0)
     ) / 2
 
-    user_education = user_data.get('education_field', '')
+    user_education = [e for e in (user_data.get('education_field') or []) if e and e != 'not_applicable']
     user_sectors   = user_data.get('sectors_of_interest', [])
 
     sector_map = {
@@ -287,9 +287,9 @@ def score_careers(summary: dict, user_data: dict, careers: list, semantic_scores
             score += 1
         if career.get('entrepreneurship_friendly') and user_entrepreneur_score >= 50:
             score += 2
-        if user_education and user_education != 'not_applicable':
+        if user_education:
             career_fields = career.get('education_fields') or []
-            if user_education in career_fields:
+            if any(e in career_fields for e in user_education):
                 score += 3
             elif career_fields:
                 # The career names specific fields it wants and the user's
