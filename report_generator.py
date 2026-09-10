@@ -1377,6 +1377,42 @@ def generate_ai_impact(user_data: dict, summary: dict, careers: list, locale: st
 
   return _generate_json(prompt, label="ai_impact")
 
+
+def get_or_generate_ai_impact(response_id: str, summary: dict, profile_data: dict, top_careers: list,
+                               careers_cap: int, supabase_client, cache_col: str, cache_col_ar: str,
+                               locale: str = 'en', force: bool = False) -> dict:
+    """Locale-aware sibling of generate_ai_impact(), analogous to get_or_generate_ai_content():
+    generates/caches English first (translation's source), then generates/caches the
+    Arabic translation on request, so a results-page view and a PDF download of the
+    same response+locale never pay for generation twice. force=True bypasses both
+    caches and unconditionally overwrites them (unlike _generate_and_cache's
+    write-once race handling, which only makes sense for an initial, uncontested
+    generation) — matching the original /ai-impact endpoint's forced-refresh semantics."""
+    if force:
+        ai_impact_en = generate_ai_impact(profile_data, summary, top_careers, career_count=careers_cap)
+        _execute_with_retry(supabase_client.table('assessment_responses')
+            .update({cache_col: ai_impact_en}).eq('id', response_id))
+    else:
+        cached_en = profile_data.get(cache_col)
+        ai_impact_en = cached_en or _generate_and_cache(supabase_client, response_id, cache_col,
+            lambda: generate_ai_impact(profile_data, summary, top_careers, career_count=careers_cap))
+
+    if locale != 'ar':
+        return ai_impact_en
+
+    if force:
+        ai_impact_ar = _translate_piece_with_retry(ai_impact_en, 'ar')
+        _execute_with_retry(supabase_client.table('assessment_responses')
+            .update({cache_col_ar: ai_impact_ar}).eq('id', response_id))
+        return ai_impact_ar
+
+    cached_ar = profile_data.get(cache_col_ar)
+    if cached_ar:
+        return cached_ar
+    return _generate_and_cache(supabase_client, response_id, cache_col_ar,
+        lambda: _translate_piece_with_retry(ai_impact_en, 'ar'))
+
+
 def translate_report_json(data: dict, target_locale: str = 'ar') -> dict:
     """Translate a generated report JSON blob (ai_content or ai_impact output) into target_locale,
     preserving structure/keys and fixed enums, without re-running the full generation prompt."""
@@ -1521,18 +1557,39 @@ def _get_cached_semantic_scores(response_id: str, summary: dict, profile_data: d
     return scores
 
 
-def get_or_generate_ai_content(response_id: str, supabase_client, tier: str = "launchpad") -> dict:
-    """Returns the English ai_content dict (career_recommendations + narrative fields),
-    generating and caching it on first call. Mirrors the equivalent block inside
-    create_report() rather than sharing code with it — create_report additionally needs
-    raw_scores/top_careers/ai_impact for the rest of the PDF, so extracting a shared
-    helper would mean threading all of that through here too for no benefit to this
-    lighter, ai_content-only caller. Both read/write the same cache column, so a PDF
-    download and an in-app view of the same report never pay for generation twice."""
+def _generate_and_cache(supabase_client, response_id: str, col: str, generate):
+    """Each write is conditioned on the column still being null, so if two
+    requests race for the same response_id and both generate a value, the
+    second write can't clobber whatever the first one already committed —
+    it just no-ops. When that happens, re-read the column so the caller
+    gets back whatever actually ended up persisted (the winning request's
+    value), not its own discarded generation — otherwise a later Arabic
+    translation pass could translate content that was never the row's
+    real English cache, permanently diverging EN/AR content."""
+    value = generate()
+    written = _execute_with_retry(supabase_client.table('assessment_responses')
+        .update({col: value})
+        .eq('id', response_id).is_(col, 'null'))
+    if written.data:
+        return value
+    refreshed = _execute_with_retry(supabase_client.table('assessment_responses').select(col).eq('id', response_id).single())
+    return refreshed.data.get(col) or value
+
+
+def get_or_generate_ai_content(response_id: str, supabase_client, tier: str = "launchpad", locale: str = 'en') -> dict:
+    """Returns the ai_content dict (career_recommendations + narrative fields) for the
+    given locale, generating and caching it on first call. Mirrors the equivalent block
+    inside create_report() rather than sharing code with it — create_report additionally
+    needs raw_scores/top_careers/ai_impact for the rest of the PDF, so extracting a
+    shared helper would mean threading all of that through here too for no benefit to
+    this lighter, ai_content-only caller. Both read/write the same cache columns, so a
+    PDF download and an in-app view of the same report+locale never pay for generation
+    twice. English is always generated/cached first since Arabic translation needs it
+    as source."""
     profile = _execute_with_retry(supabase_client.table('assessment_responses')
         .select('full_name,email,age_bracket,current_stage,education_field,'
                 'sectors_of_interest,geographic_openness,why_here,country,'
-                'ai_content_cache,ai_content_cache_free')
+                'ai_content_cache,ai_content_cache_free,ai_content_cache_ar,ai_content_cache_ar_free')
         .eq('id', response_id).single())
     if not profile.data:
         raise ValueError(f"No assessment found for {response_id}")
@@ -1540,10 +1597,15 @@ def get_or_generate_ai_content(response_id: str, supabase_client, tier: str = "l
     is_free = tier == 'free'
     content_count = 5 if is_free else 8
     content_col = 'ai_content_cache_free' if is_free else 'ai_content_cache'
+    content_col_ar = 'ai_content_cache_ar_free' if is_free else 'ai_content_cache_ar'
 
-    cached = profile.data.get(content_col)
-    if cached:
-        return cached
+    cached_en = profile.data.get(content_col)
+    if cached_en and locale != 'ar':
+        return cached_en
+    if locale == 'ar':
+        cached_ar = profile.data.get(content_col_ar)
+        if cached_ar:
+            return cached_ar
 
     scores_row = _execute_with_retry(supabase_client.table('assessment_results')
         .select('*').eq('response_id', response_id))
@@ -1576,15 +1638,14 @@ def get_or_generate_ai_content(response_id: str, supabase_client, tier: str = "l
     semantic_scores = _get_cached_semantic_scores(response_id, summary, profile.data, supabase_client)
     top_careers = score_careers(summary, profile.data, all_careers, semantic_scores)
 
-    value = generate_ai_content(profile.data, summary, raw_scores, top_careers, country_profile, coaching_matches, 'en', career_count=content_count)
-    # Same write-once-then-reread race handling as create_report()'s _generate_and_cache.
-    written = _execute_with_retry(supabase_client.table('assessment_responses')
-        .update({content_col: value})
-        .eq('id', response_id).is_(content_col, 'null'))
-    if written.data:
-        return value
-    refreshed = _execute_with_retry(supabase_client.table('assessment_responses').select(content_col).eq('id', response_id).single())
-    return refreshed.data.get(content_col) or value
+    ai_content_en = cached_en or _generate_and_cache(supabase_client, response_id, content_col,
+        lambda: generate_ai_content(profile.data, summary, raw_scores, top_careers, country_profile, coaching_matches, 'en', career_count=content_count))
+
+    if locale != 'ar':
+        return ai_content_en
+
+    return _generate_and_cache(supabase_client, response_id, content_col_ar,
+        lambda: translate_ai_content(ai_content_en, 'ar'))
 
 
 def create_report(response_id: str, supabase_client, tier: str = "launchpad", locale_override: str | None = None) -> bytes:
@@ -1650,28 +1711,10 @@ def create_report(response_id: str, supabase_client, tier: str = "launchpad", lo
     impact_col_ar = 'ai_impact_cache_ar_free' if is_free else 'ai_impact_cache_ar'
     content_col_ar = 'ai_content_cache_ar_free' if is_free else 'ai_content_cache_ar'
 
-    def _generate_and_cache(col: str, generate):
-        """Each write is conditioned on the column still being null, so if two
-        requests race for the same response_id and both generate a value, the
-        second write can't clobber whatever the first one already committed —
-        it just no-ops. When that happens, re-read the column so the caller
-        gets back whatever actually ended up persisted (the winning request's
-        value), not its own discarded generation — otherwise a later Arabic
-        translation pass could translate content that was never the row's
-        real English cache, permanently diverging EN/AR content."""
-        value = generate()
-        written = _execute_with_retry(supabase_client.table('assessment_responses')
-            .update({col: value})
-            .eq('id', response_id).is_(col, 'null'))
-        if written.data:
-            return value
-        refreshed = _execute_with_retry(supabase_client.table('assessment_responses').select(col).eq('id', response_id).single())
-        return refreshed.data.get(col) or value
-
-    ai_impact = profile.data.get(impact_col) or _generate_and_cache(
+    ai_impact = profile.data.get(impact_col) or _generate_and_cache(supabase_client, response_id,
         impact_col, lambda: generate_ai_impact(profile.data, summary, top_careers[:impact_count], 'en', career_count=impact_count))
 
-    ai_content = profile.data.get(content_col) or _generate_and_cache(
+    ai_content = profile.data.get(content_col) or _generate_and_cache(supabase_client, response_id,
         content_col, lambda: generate_ai_content(profile.data, summary, raw_scores, top_careers, country_profile, coaching_matches, 'en', career_count=content_count))
 
     if locale == 'ar':
@@ -1680,10 +1723,10 @@ def create_report(response_id: str, supabase_client, tier: str = "launchpad", lo
             # (same reasoning as generate_ai_content's split) instead of back-to-back.
             with ThreadPoolExecutor(max_workers=2) as pool:
                 impact_future = pool.submit(
-                    lambda: profile.data.get(impact_col_ar) or _generate_and_cache(
+                    lambda: profile.data.get(impact_col_ar) or _generate_and_cache(supabase_client, response_id,
                         impact_col_ar, lambda: _translate_piece_with_retry(ai_impact, 'ar')))
                 content_future = pool.submit(
-                    lambda: profile.data.get(content_col_ar) or _generate_and_cache(
+                    lambda: profile.data.get(content_col_ar) or _generate_and_cache(supabase_client, response_id,
                         content_col_ar, lambda: translate_ai_content(ai_content, 'ar')))
                 ai_impact_ar = impact_future.result()
                 ai_content_ar = content_future.result()

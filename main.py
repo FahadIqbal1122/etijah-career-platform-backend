@@ -1112,7 +1112,7 @@ def get_career_suggestions(response_id: str, user=Depends(get_optional_user)):
     }
 
 @app.get("/assessment/{response_id}/career-recommendations")
-def get_career_recommendations(response_id: str, user=Depends(get_optional_user)):
+def get_career_recommendations(response_id: str, locale: str | None = None, user=Depends(get_optional_user)):
     owner_row = supabase.table('assessment_responses').select('user_id').eq('id', response_id).single().execute()
     if not owner_row.data:
         raise HTTPException(status_code=404, detail="No results found for this response")
@@ -1122,7 +1122,7 @@ def get_career_recommendations(response_id: str, user=Depends(get_optional_user)
 
     from report_generator import get_or_generate_ai_content
     try:
-        ai_content = get_or_generate_ai_content(response_id, supabase, tier=tier)
+        ai_content = get_or_generate_ai_content(response_id, supabase, tier=tier, locale=locale or 'en')
     except Exception as e:
         send_failure_alert("Career recommendations generation", e, response_id=response_id, supabase=supabase)
         raise HTTPException(status_code=500, detail="Career recommendations generation failed, please try again")
@@ -1130,9 +1130,10 @@ def get_career_recommendations(response_id: str, user=Depends(get_optional_user)
     return {"career_recommendations": ai_content.get("career_recommendations") or []}
 
 @app.get("/assessment/{response_id}/ai-impact")
-def get_ai_impact(response_id: str, force: bool = False, user=Depends(get_optional_user)):
+def get_ai_impact(response_id: str, force: bool = False, locale: str | None = None, user=Depends(get_optional_user)):
     profile_row = _execute_with_retry(supabase.table('assessment_responses')
-        .select('full_name,current_stage,country,education_field,sectors_of_interest,ai_impact_cache,ai_impact_cache_free,user_id')
+        .select('full_name,current_stage,country,education_field,sectors_of_interest,'
+                'ai_impact_cache,ai_impact_cache_free,ai_impact_cache_ar,ai_impact_cache_ar_free,user_id')
         .eq('id', response_id).single())
     if not profile_row.data:
         raise HTTPException(status_code=404, detail="No results found for this response")
@@ -1147,8 +1148,11 @@ def get_ai_impact(response_id: str, force: bool = False, user=Depends(get_option
     is_free = tier == "free"
     careers_cap = 2 if is_free else 5
     cache_col = 'ai_impact_cache_free' if is_free else 'ai_impact_cache'
+    cache_col_ar = 'ai_impact_cache_ar_free' if is_free else 'ai_impact_cache_ar'
+    locale = locale or 'en'
 
-    cached = profile_row.data.get(cache_col)
+    cache_col_active = cache_col_ar if locale == 'ar' else cache_col
+    cached = profile_row.data.get(cache_col_active)
     if cached and not force:
         return {**cached, "careers": (cached.get("careers") or [])[:careers_cap]}
 
@@ -1162,9 +1166,10 @@ def get_ai_impact(response_id: str, force: bool = False, user=Depends(get_option
     semantic_scores = _get_semantic_scores(response_id, summary, profile_row.data or {})
     top_careers = score_careers(summary, profile_row.data or {}, careers, semantic_scores)[:careers_cap]
 
-    from report_generator import generate_ai_impact
+    from report_generator import get_or_generate_ai_impact
     try:
-        result = generate_ai_impact(profile_row.data or {}, summary, top_careers, career_count=careers_cap)
+        result = get_or_generate_ai_impact(response_id, summary, profile_row.data or {}, top_careers,
+            careers_cap, supabase, cache_col, cache_col_ar, locale=locale, force=force)
     except Exception as e:
         send_failure_alert("AI Impact generation", e, response_id=response_id, supabase=supabase)
         # Converted from a bare `raise` to HTTPException: a re-raised plain exception
@@ -1172,10 +1177,6 @@ def get_ai_impact(response_id: str, force: bool = False, user=Depends(get_option
         # CatchAllMiddleware, which would log a second, generically-labeled
         # bug_reports row for the same failure already recorded above.
         raise HTTPException(status_code=500, detail="AI Impact generation failed, please try again")
-
-    _execute_with_retry(supabase.table('assessment_responses')
-        .update({cache_col: result})
-        .eq('id', response_id))
 
     return {**result, "careers": (result.get("careers") or [])[:careers_cap]}
 
