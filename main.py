@@ -21,7 +21,7 @@ from smtp_service import send_report_email, send_feedback_email, send_results_re
 import httpx, hmac, hashlib, json, secrets, time
 from coaching_methodology import METHODOLOGY_DOC
 from coaching_pipeline import chunk_transcript, embed_and_store_chunks, client, embed_country_profile, sync_country_profile_embedding, sync_career_embedding, _gemini_embed
-from content_policy import is_appropriate, is_region_eligible, is_seniority_appropriate, STUDENT_EXPERIENCE_LEVELS, CULTURAL_GUARDRAIL
+from content_policy import is_appropriate, is_region_eligible, is_seniority_appropriate, STUDENT_EXPERIENCE_LEVELS, STILL_ENROLLED_STAGES, CULTURAL_GUARDRAIL
 from ai_provider import get_ai_provider, invalidate_ai_provider_cache, AI_PROVIDER_KEY, VALID_PROVIDERS
 
 load_dotenv()
@@ -289,6 +289,10 @@ class SubmitRequest(BaseModel):
     # not a free choice. major_choice_reason is only meaningful when this is 'no'.
     major_was_own_choice: str | None = Field(default=None, max_length=10)
     major_choice_reason: str | None = Field(default=None, max_length=500)
+    # Whether the user wants to stay close to education_field/current work, or
+    # move into something different — used to weight the field-overlap scoring
+    # in scoring_engine.score_careers() (see career_direction there).
+    career_direction: str | None = Field(default=None, max_length=20)
     sectors_of_interest: list[str] = Field(max_length=50)
     career_structure: str = Field(max_length=200)
     languages: list[str] = Field(max_length=50)
@@ -355,43 +359,30 @@ class BetaFeedbackStage1Request(BaseModel):
     locale: str | None = None
 
 class BetaFeedbackStage2Request(BaseModel):
+    """Redesigned per the 10 Sept beta-strategy doc: ~12 questions, replacing
+    the old ~30-field form. language_used/device are no longer asked as
+    questions — the frontend auto-detects and includes them silently — kept
+    here (rather than dropped) so the admin dashboard's existing language/
+    device breakdowns keep working without changes on their read side."""
     response_id: str
     language_used: str | None = None
+    device: str | None = None
     understood_after: int | None = Field(default=None, ge=1, le=5)
     felt_like_mentor: str | None = None
-    personality_accuracy: str | None = None
-    values_accuracy: str | None = None
-    strengths_accuracy: str | None = None
-    career_matches_accuracy: str | None = None
     careers_seriously_considered: str | None = None
-    wrong_career_text: str | None = None
-    missing_career_text: str | None = None
-    ai_impact_useful: int | None = Field(default=None, ge=1, le=6)
-    ai_impact_credible: int | None = Field(default=None, ge=1, le=6)
-    ai_impact_changed_thinking: str | None = None
-    jobs_relevant: int | None = Field(default=None, ge=1, le=6)
-    companies_fit: int | None = Field(default=None, ge=1, le=6)
-    courses_useful: int | None = Field(default=None, ge=1, le=6)
-    plan_would_follow: str | None = None
-    clear_next_step: str | None = None
-    arabic_natural: str | None = None
-    overall_value: int | None = Field(default=None, ge=1, le=6)
-    most_valuable_parts: list[str] | None = None
-    # Also collected earlier by the Result Stage (BetaFeedbackResultStageRequest
-    # below) — same beta_feedback columns, so /beta-feedback/{id}/stage2's GET
-    # pre-fills these from whatever the Result Stage already saved; kept here
-    # too so someone who skips/changes their mind at the Result Stage still
-    # gets asked, and so an earlier answer stays editable.
-    would_pay: str | None = None
-    would_pay_reason: str | None = None
-    would_recommend: str | None = None
+    career_explained: str | None = None
+    most_useful_part: str | None = None
+    least_useful_part: str | None = None
+    first_action_text: str | None = None
+    would_pay_at_price: str | None = None
+    pay_blockers: list[str] | None = None
+    pay_blocker_other_text: str | None = None
+    pay_blocker_priority: str | None = None
+    worth_paying_for: list[str] | None = None
     wants_coach_session: str | None = None
-    device: str | None = None
+    would_recommend: str | None = None
     had_issues: str | None = None
     issue_detail: str | None = None
-    surprised_text: str | None = None
-    not_me_text: str | None = None
-    other_text: str | None = None
 
 class BetaFeedbackResultStageRequest(BaseModel):
     response_id: str
@@ -488,7 +479,7 @@ def root():
 @app.get("/admin/submissions")
 def get_submissions(_=Depends(require_admin)):
     data = supabase.table('assessment_responses') \
-        .select('id, full_name, email, phone, country, nationality, age, age_bracket, experience_level, education_field, major_was_own_choice, major_choice_reason, current_stage, completed, created_at, cohort_override') \
+        .select('id, full_name, email, phone, country, nationality, age, age_bracket, experience_level, education_field, major_was_own_choice, major_choice_reason, career_direction, current_stage, completed, created_at, cohort_override') \
         .order('created_at', desc=True) \
         .execute()
     return data.data or []
@@ -731,7 +722,7 @@ def get_recent_completions():
 @app.get("/assessment/{response_id}/results")
 def get_results(response_id: str, user=Depends(get_optional_user)):
     profile = _execute_with_retry(supabase.table('assessment_responses')
-        .select('email, user_id, locale')
+        .select('email, user_id, locale, current_stage')
         .eq('id', response_id).single())
     if not profile.data:
         raise HTTPException(status_code=404, detail="No results found for this response")
@@ -748,6 +739,7 @@ def get_results(response_id: str, user=Depends(get_optional_user)):
     return {
         'results': rows.data, 'summary': summary, 'email': profile.data.get('email'),
         'tier': tier, 'locale': profile.data.get('locale') or 'en',
+        'is_still_enrolled': profile.data.get('current_stage') in STILL_ENROLLED_STAGES,
         # Drives the beta feedback form on the frontend — only shown during the
         # beta window, distinct from a genuine paying launchpad tier.
         'beta_mode': _is_test_mode_enabled(),
@@ -836,8 +828,11 @@ def submit_beta_feedback_result_stage(body: BetaFeedbackResultStageRequest, user
     """Shown on the results page itself (not the loading screen, and not gating
     anything) — accuracy/would-recommend/would-pay, asked right after someone's
     actually seen their report, rather than waiting for the full Stage 2 survey.
-    would_recommend/would_pay are the same beta_feedback columns Stage 2 also
-    asks about — not exclusive to this stage, just asked earlier too."""
+    would_recommend is the same beta_feedback column the redesigned Stage 2 also
+    asks about — not exclusive to this stage, just asked earlier too. would_pay
+    here is this stage's own quick pulse (no price shown); Stage 2's
+    would_pay_at_price is a separate, richer question shown with a real price —
+    intentionally two different columns, not shared."""
     row = body.model_dump(exclude={'response_id'}, exclude_none=True)
     row['response_id'] = body.response_id
     row['user_id'] = user.id if user else None
@@ -1114,7 +1109,7 @@ def get_career_suggestions(response_id: str, user=Depends(get_optional_user)):
         raise HTTPException(status_code=404, detail="No results found for this response")
 
     profile = supabase.table('assessment_responses') \
-        .select('education_field, sectors_of_interest, user_id') \
+        .select('education_field, career_direction, sectors_of_interest, user_id') \
         .eq('id', response_id).single().execute()
     if not profile.data:
         raise HTTPException(status_code=404, detail="No results found for this response")
@@ -1154,10 +1149,8 @@ def get_career_recommendations(response_id: str, locale: str | None = None, user
         raise HTTPException(status_code=500, detail="Career recommendations generation failed, please try again")
 
     # action_plan is generated in the same call as career_recommendations (see
-    # generate_ai_content) but was previously dropped here — it only ever reached
-    # users inside the downloaded PDF, so admin had no way to review it without
-    # downloading a report. Including it is free (already generated/cached); the
-    # public results page destructures only career_recommendations and ignores it.
+    # generate_ai_content). Now rendered on the live results page's Action Plan
+    # card, in addition to admin review and the downloaded PDF.
     return {
         "career_recommendations": ai_content.get("career_recommendations") or [],
         "action_plan": ai_content.get("action_plan") or {},
@@ -1166,7 +1159,7 @@ def get_career_recommendations(response_id: str, locale: str | None = None, user
 @app.get("/assessment/{response_id}/ai-impact")
 def get_ai_impact(response_id: str, force: bool = False, locale: str | None = None, user=Depends(get_optional_user)):
     profile_row = _execute_with_retry(supabase.table('assessment_responses')
-        .select('full_name,current_stage,country,education_field,sectors_of_interest,'
+        .select('full_name,current_stage,country,education_field,career_direction,sectors_of_interest,'
                 'ai_impact_cache,ai_impact_cache_free,ai_impact_cache_ar,ai_impact_cache_ar_free,user_id')
         .eq('id', response_id).single())
     if not profile_row.data:
@@ -1735,7 +1728,7 @@ def delete_course(course_id: str, _=Depends(require_admin)):
 def get_course_recommendations(response_id: str, user=Depends(get_optional_user)):
     rows = _execute_with_retry(supabase.table('assessment_results').select('*').eq('response_id', response_id))
     profile = _execute_with_retry(supabase.table('assessment_responses')
-        .select('country, education_field, sectors_of_interest, user_id')
+        .select('country, education_field, career_direction, sectors_of_interest, user_id')
         .eq('id', response_id).single())
     if not rows.data or not profile.data:
         raise HTTPException(status_code=404, detail="No results found for this response")
@@ -2053,7 +2046,7 @@ def _search_matching_jobs(response_id: str) -> list[dict] | None:
     job-matching refresh job. Returns None (not []) if the response has no
     scored assessment data to match against."""
     profile = supabase.table('assessment_responses') \
-        .select('country, education_field, sectors_of_interest, experience_level') \
+        .select('country, education_field, career_direction, sectors_of_interest, experience_level, current_stage') \
         .eq('id', response_id).single().execute()
     rows = supabase.table('assessment_results') \
         .select('*') \
@@ -2071,6 +2064,11 @@ def _search_matching_jobs(response_id: str) -> list[dict] | None:
     country_code = COUNTRY_CODE_MAP.get(raw_country)
     experience_level = profile.data.get('experience_level')
     is_early_career = experience_level in STUDENT_EXPERIENCE_LEVELS
+    # Still-enrolled users (high school/university) can't act on most "entry
+    # level" job postings either — they need internships, not jobs. A fresh
+    # grad who has already left school (current_stage == recent_graduate)
+    # still gets real entry-level jobs via the is_early_career branch above.
+    is_still_enrolled = profile.data.get('current_stage') in STILL_ENROLLED_STAGES
     rapidapi_key = os.getenv("RAPIDAPI_KEY")
 
     all_jobs = []
@@ -2078,7 +2076,15 @@ def _search_matching_jobs(response_id: str) -> list[dict] | None:
 
     for career in top3:
         try:
-            query_prefix = "entry level graduate " if is_early_career else ""
+            if is_still_enrolled:
+                query_prefix = "internship "
+                job_requirements = "internship"
+            elif is_early_career:
+                query_prefix = "entry level graduate "
+                job_requirements = "under_3_years_experience,no_experience,no_degree"
+            else:
+                query_prefix = ""
+                job_requirements = None
             resp = httpx.get(
                 "https://jsearch.p.rapidapi.com/search",
                 params={
@@ -2086,10 +2092,10 @@ def _search_matching_jobs(response_id: str) -> list[dict] | None:
                     "num_pages": "1",
                     "page": "1",
                     **({"country": country_code.lower()} if country_code else {}),
-                    # Bias JSearch's own results toward entry-level postings for
-                    # students/fresh grads rather than relying only on the
-                    # post-fetch title/description filter below.
-                    **({"job_requirements": "under_3_years_experience,no_experience,no_degree"} if is_early_career else {}),
+                    # Bias JSearch's own results toward entry-level/internship
+                    # postings for students/fresh grads rather than relying
+                    # only on the post-fetch title/description filter below.
+                    **({"job_requirements": job_requirements} if job_requirements else {}),
                 },
                 headers={
                     "X-RapidAPI-Key": rapidapi_key,
@@ -2107,7 +2113,10 @@ def _search_matching_jobs(response_id: str) -> list[dict] | None:
                     continue
                 if not is_region_eligible(job_title, job.get("job_description"), job_country, country_code):
                     continue
-                if not is_seniority_appropriate(job_title, job.get("job_description"), experience_level):
+                # Internship postings are inherently entry-level, so the
+                # senior-title filter (built for regular job postings) doesn't
+                # apply to them.
+                if not is_still_enrolled and not is_seniority_appropriate(job_title, job.get("job_description"), experience_level):
                     continue
                 if job_id and job_id not in seen_ids:
                     seen_ids.add(job_id)
@@ -2119,6 +2128,7 @@ def _search_matching_jobs(response_id: str) -> list[dict] | None:
                         "source": job.get("job_publisher"),
                         "url": job.get("job_apply_link"),
                         "matched_career": career['title'],
+                        "is_internship": is_still_enrolled,
                     })
         except Exception as e:
             print("JSearch error:", e)
@@ -2331,7 +2341,7 @@ def delete_application(application_id: str, user=Depends(get_current_user)):
 @app.get("/assessment/{response_id}/companies")
 def get_companies_suggestions(response_id: str, user=Depends(get_optional_user)):
     profile = _execute_with_retry(supabase.table('assessment_responses')
-        .select('country, education_field, sectors_of_interest, user_id')
+        .select('country, education_field, career_direction, sectors_of_interest, user_id')
         .eq('id', response_id).single())
     rows = _execute_with_retry(supabase.table('assessment_results')
         .select('*')

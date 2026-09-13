@@ -70,6 +70,13 @@ def is_region_eligible(job_title: str | None, job_description: str | None, job_c
 # programs — check the description too before excluding.
 STUDENT_EXPERIENCE_LEVELS = {"student", "fresh_grad"}
 
+# current_stage values (QO4) for users still enrolled in school/university —
+# distinct from experience_level: a fresh_grad who has already graduated
+# (current_stage == "recent_graduate") should still see real entry-level jobs,
+# not internships. Only these two stages get internship listings instead of
+# the jobs section.
+STILL_ENROLLED_STAGES = {"high_school", "university"}
+
 SENIOR_LEVEL_KEYWORDS = [
     "senior", "sr.", "manager", "director", "head of", "chief", "vp ",
     "vice president", "principal", "executive", "president",

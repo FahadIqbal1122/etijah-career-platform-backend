@@ -268,6 +268,17 @@ def score_careers(summary: dict, user_data: dict, careers: list, semantic_scores
     user_education = [e for e in (user_data.get('education_field') or []) if e and e != 'not_applicable']
     user_sectors   = user_data.get('sectors_of_interest', [])
 
+    # career_direction ('stay_in_field' / 'change_field' / 'not_sure' / None)
+    # scales how hard the education-field overlap below pulls the ranking:
+    # someone who wants to stay in their field should see that overlap weighted
+    # more heavily, someone who wants out shouldn't be held back by a lack of
+    # overlap. 'not_sure'/None keeps the original (+3/-2) weights unchanged so
+    # historical responses without an answer score exactly as before.
+    field_match_boost, field_mismatch_penalty = {
+        'stay_in_field': (5, -4),
+        'change_field':  (1, 0),
+    }.get(user_data.get('career_direction'), (3, -2))
+
     sector_map = {
         'technology': 'Technology', 'healthcare': 'Healthcare',
         'finance': 'Finance', 'government': 'Government',
@@ -299,7 +310,7 @@ def score_careers(summary: dict, user_data: dict, careers: list, semantic_scores
         if user_education:
             career_fields = career.get('education_fields') or []
             if any(e in career_fields for e in user_education):
-                score += 3
+                score += field_match_boost
             elif career_fields:
                 # The career names specific fields it wants and the user's
                 # isn't one of them — don't veto it outright (legitimate
@@ -307,7 +318,7 @@ def score_careers(summary: dict, user_data: dict, careers: list, semantic_scores
                 # RIASEC/semantic match alone carry a field-specific career
                 # (e.g. IT roles) to the top for someone with no relevant
                 # background.
-                score -= 2
+                score += field_mismatch_penalty
         if career.get('sector') in user_sector_names:
             score += 2
         # Similarity is 0-1; weighted to be comparable to the tag signals above

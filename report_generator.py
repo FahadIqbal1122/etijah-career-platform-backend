@@ -19,7 +19,7 @@ from supabase import create_client as _create_supabase_client
 from db_client import disable_http2
 from scoring_engine import build_framework_output, score_careers, get_career_semantic_scores, COUNTRY_CODE_MAP
 from coaching_pipeline import _gemini_embed, client as anthropic_client
-from content_policy import is_appropriate, CULTURAL_GUARDRAIL
+from content_policy import is_appropriate, CULTURAL_GUARDRAIL, STILL_ENROLLED_STAGES
 from ai_provider import get_ai_provider
 
 # Self-contained client (like ai_provider.py / smtp_service.py) purely for the
@@ -164,7 +164,8 @@ UI_TEXT = {
         'sec04': 'Core Values', 'sec05': 'Strengths Profile', 'sec06': 'Work Style & Resilience',
         'sec07': 'Entrepreneurial Profile', 'sec08': 'Career Pathways',
         'sec09': 'AI Impact & Future-Proofing',
-        'sec_jobs': 'Job Listings', 'sec_companies': 'Companies to Target', 'sec_courses': 'Recommended Courses',
+        'sec_jobs': 'Job Listings', 'sec_jobs_internships': 'Internships & Exposure',
+        'sec_companies': 'Companies to Target', 'sec_courses': 'Recommended Courses',
         'sec_action_plan': 'Your 90-Day Action Plan',
         'matched_to': 'Matched to', 'government': 'Government',
         'exec_summary': 'Executive Summary',
@@ -201,7 +202,8 @@ UI_TEXT = {
         'sec04': 'القيم الجوهرية', 'sec05': 'ملف نقاط القوة', 'sec06': 'أسلوب العمل والمرونة',
         'sec07': 'الملف الريادي', 'sec08': 'المسارات المهنية',
         'sec09': 'تأثير الذكاء الاصطناعي واستشراف المستقبل',
-        'sec_jobs': 'فرص وظيفية', 'sec_companies': 'شركات مستهدفة', 'sec_courses': 'دورات موصى بها',
+        'sec_jobs': 'فرص وظيفية', 'sec_jobs_internships': 'فرص تدريب وتعرّف على المجال',
+        'sec_companies': 'شركات مستهدفة', 'sec_courses': 'دورات موصى بها',
         'sec_action_plan': 'خطة عملك لمدة 90 يوماً',
         'matched_to': 'مطابقة لـ', 'government': 'حكومي',
         'exec_summary': 'الملخص التنفيذي',
@@ -235,6 +237,12 @@ def _format_date(locale: str) -> str:
     return now.strftime("%B %d, %Y")
 
 # ─── Gemini content generation ────────────────────────────────────────────────
+
+CAREER_DIRECTION_LABELS = {
+    'stay_in_field': "Wants to stay close to their current field/education",
+    'change_field':  "Wants to move into something different from their current field/education",
+    'not_sure':      "Not sure whether to stay in their field or change direction",
+}
 
 ARABIC_LANGUAGE_INSTRUCTION = (
     "Write the ENTIRE output in Arabic — every string value in the JSON, with no English text at all.\n"
@@ -487,6 +495,7 @@ def generate_ai_content(user_data: dict, summary: dict, raw_scores: list, career
             "Be sensitive to this in career framing; don't assume passion for this field.\n"
             if user_data.get('major_was_own_choice') == 'no' else ""
         )
+        + f"Career direction preference: {CAREER_DIRECTION_LABELS.get(user_data.get('career_direction'), 'Not specified')}\n"
         + f"Sectors of interest: {', '.join(user_data.get('sectors_of_interest',[]))}\n"
         f"Geographic openness: {user_data.get('geographic_openness','N/A')}\n"
         f"Why taking assessment: {user_data.get('why_here','N/A')}\n\n"
@@ -593,6 +602,22 @@ def generate_ai_content(user_data: dict, summary: dict, raw_scores: list, career
             "If a career is low-demand or restricted by nationalisation quotas in this country, note that in fit_summary. "
             "If it aligns with strategic priorities, highlight that as an advantage.\n\n"
             if country_profile else ""
+        )
+        + (
+            "\n\nIMPORTANT: The person's career direction preference is "
+            f"'{CAREER_DIRECTION_LABELS.get(user_data.get('career_direction'))}'. "
+            + (
+                "Weight recommendations toward careers close to their education field/current work, "
+                "and in fit_summary explain the fit in terms of building on what they already know.\n\n"
+                if user_data.get('career_direction') == 'stay_in_field' else
+                "They want to move away from their education field/current work — do not penalize or "
+                "avoid a career just because it doesn't match their field, and in fit_summary explain the "
+                "fit in terms of their personality/values/strengths results rather than their field.\n\n"
+                if user_data.get('career_direction') == 'change_field' else
+                "Show a balanced mix of careers close to their field and careers outside it, and in "
+                "fit_summary note whether each one builds on their background or represents a new direction.\n\n"
+            )
+            if user_data.get('career_direction') else ""
         )
         + "=== OUTPUT ===\n\n"
         "Return ONLY a valid JSON object (no markdown, no code fences) with exactly this key:\n\n"
@@ -1084,8 +1109,9 @@ def build_html_report(user_data: dict, summary: dict, raw_scores: list, ai: dict
     # gap or a blank page, and the Action Plan's own number/page shift to follow.
     extra_section_pages = ""
     next_sec_num, next_page_num = 10, 9
+    jobs_section_title = T['sec_jobs_internships'] if user_data.get('current_stage') in STILL_ENROLLED_STAGES else T['sec_jobs']
     for title, cards_html in [
-        (T['sec_jobs'], job_cards),
+        (jobs_section_title, job_cards),
         (T['sec_companies'], company_cards),
         (T['sec_courses'], course_cards),
     ]:
@@ -1596,7 +1622,7 @@ def get_or_generate_ai_content(response_id: str, supabase_client, tier: str = "l
     as source."""
     profile = _execute_with_retry(supabase_client.table('assessment_responses')
         .select('full_name,email,age,age_bracket,experience_level,current_stage,education_field,'
-                'major_was_own_choice,major_choice_reason,'
+                'major_was_own_choice,major_choice_reason,career_direction,'
                 'sectors_of_interest,geographic_openness,why_here,country,'
                 'ai_content_cache,ai_content_cache_free,ai_content_cache_ar,ai_content_cache_ar_free')
         .eq('id', response_id).single())
@@ -1661,7 +1687,7 @@ def create_report(response_id: str, supabase_client, tier: str = "launchpad", lo
 
     profile = _execute_with_retry(supabase_client.table('assessment_responses')
         .select('full_name,email,age,age_bracket,experience_level,current_stage,education_field,'
-                'major_was_own_choice,major_choice_reason,'
+                'major_was_own_choice,major_choice_reason,career_direction,'
                 'sectors_of_interest,geographic_openness,why_here,country,'
                 'ai_impact_cache,ai_content_cache,ai_impact_cache_ar,ai_content_cache_ar,'
                 'ai_impact_cache_free,ai_content_cache_free,ai_impact_cache_ar_free,ai_content_cache_ar_free,locale')
