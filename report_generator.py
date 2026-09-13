@@ -188,6 +188,7 @@ UI_TEXT = {
         'direction_tag_builds_on_background': 'Builds on your background', 'direction_tag_new_direction': 'New direction',
         'protected_skills_label': 'Human skills that stay valuable',
         'upskilling_label': 'How to prepare',
+        'what_this_means_label': 'What this means for you',
         'action_month1': 'Month 1 — Launch', 'action_months23': 'Months 2–3 — Build', 'action_months46': 'Months 4–6 — Grow',
         'back_headline': 'Your Journey Starts Here',
         'back_tagline_suffix': 'Etijahi Assessment',
@@ -230,6 +231,7 @@ UI_TEXT = {
         'direction_tag_builds_on_background': 'يبني على خلفيتك', 'direction_tag_new_direction': 'اتجاه جديد',
         'protected_skills_label': 'مهارات إنسانية تبقى ذات قيمة',
         'upskilling_label': 'كيف تستعد',
+        'what_this_means_label': 'ما الذي يعنيه هذا لك',
         'action_month1': 'الشهر الأول — الانطلاقة', 'action_months23': 'الشهر 2–3 — البناء', 'action_months46': 'الشهر 4–6 — النمو',
         'back_headline': 'رحلتك تبدأ من هنا',
         'back_tagline_suffix': 'تقييم إتجاهي',
@@ -995,6 +997,12 @@ def build_html_report(user_data: dict, summary: dict, raw_scores: list, ai: dict
             f'<p class="muted" style="margin:8px 0 4px;font-size:0.75em;text-transform:uppercase;letter-spacing:0.03em;">{T["upskilling_label"]}</p>'
             f'<ul class="action-list">{upskilling_items}</ul>'
         ) if c.get('upskilling') else ""
+        what_this_means_html = (
+            f'<p class="body-text" style="margin-top:8px;padding-{border_side}:10px;'
+            f'border-{border_side}:3px solid #00c9a7;">'
+            f'<span style="font-weight:600;">{T["what_this_means_label"]}:</span> '
+            f'{c.get("what_this_means_for_you","")}</p>'
+        ) if c.get('what_this_means_for_you') else ""
         ai_impact_cards += (
             f'<div class="card" style="margin-bottom:10px;">'
             f'<div class="card-row">'
@@ -1004,6 +1012,7 @@ def build_html_report(user_data: dict, summary: dict, raw_scores: list, ai: dict
             f'<p class="body-text" style="margin-top:6px;">{c.get("gcc_outlook","")}</p>'
             f'{protected_skills_html}'
             f'{upskilling_html}'
+            f'{what_this_means_html}'
             f'</div>'
         )
     ai_impact_summary = (ai_impact or {}).get('overall_summary', '')
@@ -1466,7 +1475,10 @@ def generate_ai_impact(user_data: dict, summary: dict, careers: list, locale: st
     '      "at_risk_tasks": ["task 1", "task 2"],\n'
     '      "protected_skills": ["skill 1", "skill 2"],\n'
     '      "upskilling": ["1 specific recommendation", "1 specific recommendation"],\n'
-    '      "gcc_outlook": "1 sentence on AI adoption pace in this career in the GCC specifically."\n'
+    '      "gcc_outlook": "1 sentence on AI adoption pace in this career in the GCC specifically.",\n'
+    '      "what_this_means_for_you": "1-2 sentences, written directly to the person (you/your), '
+    'turning the above into a personal takeaway and a concrete next action — not a summary of '
+    'what was already said, but what they should actually do with it."\n'
     '    }\n'
     '  ]\n'
     "}\n\n"
