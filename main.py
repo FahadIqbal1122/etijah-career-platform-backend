@@ -21,7 +21,7 @@ from smtp_service import send_report_email, send_feedback_email, send_results_re
 import httpx, hmac, hashlib, json, secrets, time
 from coaching_methodology import METHODOLOGY_DOC
 from coaching_pipeline import chunk_transcript, embed_and_store_chunks, client, embed_country_profile, sync_country_profile_embedding, sync_career_embedding, _gemini_embed
-from content_policy import is_appropriate, is_region_eligible, is_seniority_appropriate, STUDENT_EXPERIENCE_LEVELS, STILL_ENROLLED_STAGES, CULTURAL_GUARDRAIL
+from content_policy import is_appropriate, is_region_eligible, is_seniority_appropriate, STUDENT_EXPERIENCE_LEVELS, STILL_ENROLLED_STAGES, ENTERING_MARKET_STAGES, PROFESSIONAL_STAGES, CULTURAL_GUARDRAIL
 from ai_provider import get_ai_provider, invalidate_ai_provider_cache, AI_PROVIDER_KEY, VALID_PROVIDERS
 
 load_dotenv()
@@ -282,8 +282,18 @@ class SubmitRequest(BaseModel):
     nationality: str = Field(max_length=100)
     age: int = Field(ge=10, le=100)
     experience_level: str = Field(max_length=50)
-    current_stage: str = Field(max_length=100)
-    education_field: list[str] = Field(max_length=50)
+    # Constrained to QO4's exact option set: content_policy.py's stage-set
+    # gating (STILL_ENROLLED_STAGES/ENTERING_MARKET_STAGES/PROFESSIONAL_STAGES)
+    # and the AI prompts that interpolate this value both assume one of these
+    # 7 known values — an arbitrary string would silently fail every stage
+    # check (no track ever generated) rather than erroring loudly.
+    current_stage: Literal["high_school", "university", "recent_graduate",
+        "working_exploring", "career_changer", "returning", "between_roles"]
+    # Matches QO5's exact option set — also interpolated raw into LLM prompts
+    # (student-track/certifications/ai-impact/ai-content), so constraining it
+    # here closes that off as a prompt-injection surface, not just a length cap.
+    education_field: list[Literal["business", "engineering", "computer_science", "medicine",
+        "sciences", "humanities", "arts", "education", "law", "not_applicable"]] = Field(max_length=2)
     # Whether the user's field of study (education_field) was their own choice —
     # relevant especially for Saudi users, where university placement is often
     # not a free choice. major_choice_reason is only meaningful when this is 'no'.
@@ -292,7 +302,7 @@ class SubmitRequest(BaseModel):
     # Whether the user wants to stay close to education_field/current work, or
     # move into something different — used to weight the field-overlap scoring
     # in scoring_engine.score_careers() (see career_direction there).
-    career_direction: str | None = Field(default=None, max_length=20)
+    career_direction: Literal["stay_in_field", "change_field", "not_sure"] | None = None
     sectors_of_interest: list[str] = Field(max_length=50)
     career_structure: str = Field(max_length=200)
     languages: list[str] = Field(max_length=50)
@@ -356,6 +366,12 @@ class BetaFeedbackStage1Request(BaseModel):
     s1_clarity: int | None = Field(default=None, ge=1, le=5)
     s1_feeling: int | None = Field(default=None, ge=1, le=5)
     s1_understood: int | None = Field(default=None, ge=1, le=5)
+    # What the person wants from their results (confirm path / discover options /
+    # choose a major / plan a change / get a job faster / understand AI impact) —
+    # analytics-only for now, segments Beta 2 by stated intent; not wired into
+    # report generation since the report is already being built by the time
+    # this loading-screen pulse fires.
+    s1_intent: str | None = None
     locale: str | None = None
 
 class BetaFeedbackStage2Request(BaseModel):
@@ -816,7 +832,7 @@ def submit_beta_feedback_stage1(body: BetaFeedbackStage1Request, user=Depends(ge
     row = body.model_dump(exclude={'response_id'}, exclude_none=True)
     row['response_id'] = body.response_id
     row['user_id'] = user.id if user else None
-    if all(row.get(k) is not None for k in ('s1_clarity', 's1_feeling', 's1_understood')):
+    if all(row.get(k) is not None for k in ('s1_clarity', 's1_feeling', 's1_understood', 's1_intent')):
         row['stage1_completed_at'] = datetime.now(timezone.utc).isoformat()
     result = supabase.table('beta_feedback').upsert(row, on_conflict='response_id').execute()
     if not result.data:
@@ -1206,6 +1222,136 @@ def get_ai_impact(response_id: str, force: bool = False, locale: str | None = No
         raise HTTPException(status_code=500, detail="AI Impact generation failed, please try again")
 
     return {**result, "careers": (result.get("careers") or [])[:careers_cap]}
+
+@app.get("/assessment/{response_id}/student-track")
+def get_student_track(response_id: str, force: bool = False, locale: str | None = None, user=Depends(get_optional_user)):
+    """Majors guidance + exposure ideas for still-enrolled students — the
+    doc's replacement for job listings in that track. Returns {} for anyone
+    else (mirrors _search_matching_jobs's is_still_enrolled gate) rather than
+    404ing, so the frontend can just check for an empty response."""
+    profile_row = _execute_with_retry(supabase.table('assessment_responses')
+        .select('current_stage,country,education_field,career_direction,sectors_of_interest,'
+                'student_track_cache,student_track_cache_ar,user_id')
+        .eq('id', response_id).single())
+    if not profile_row.data:
+        raise HTTPException(status_code=404, detail="No results found for this response")
+    owner_user_id = profile_row.data.get('user_id')
+    _assert_can_view(owner_user_id, user)
+    if force:
+        _assert_can_force_refresh(owner_user_id, user)
+
+    if profile_row.data.get('current_stage') not in STILL_ENROLLED_STAGES:
+        return {}
+
+    locale = locale or 'en'
+    cache_col_active = 'student_track_cache_ar' if locale == 'ar' else 'student_track_cache'
+    cached = profile_row.data.get(cache_col_active)
+    if cached and not force:
+        return cached
+
+    rows = _execute_with_retry(supabase.table('assessment_results').select('*').eq('response_id', response_id))
+    if not rows.data:
+        raise HTTPException(status_code=404, detail="No results found for this response")
+
+    summary = build_framework_output(rows.data)
+    careers = _execute_with_retry(supabase.table('careers').select('*').eq('is_approved', True)).data or []
+    semantic_scores = _get_semantic_scores(response_id, summary, profile_row.data or {})
+    top_careers = score_careers(summary, profile_row.data or {}, careers, semantic_scores)[:5]
+
+    from report_generator import get_or_generate_student_track
+    try:
+        result = get_or_generate_student_track(response_id, summary, profile_row.data or {}, top_careers,
+            supabase, locale=locale, force=force)
+    except Exception as e:
+        send_failure_alert("Student track generation", e, response_id=response_id, supabase=supabase)
+        raise HTTPException(status_code=500, detail="Student track generation failed, please try again")
+    return result
+
+@app.get("/assessment/{response_id}/certifications")
+def get_certifications(response_id: str, force: bool = False, locale: str | None = None, user=Depends(get_optional_user)):
+    """Certifications to pursue for recent grads entering the market — entry
+    roles/employers are already covered by job-listings/companies, unchanged.
+    Returns {} for anyone else, same pattern as /student-track."""
+    profile_row = _execute_with_retry(supabase.table('assessment_responses')
+        .select('current_stage,country,education_field,career_direction,sectors_of_interest,'
+                'certifications_cache,certifications_cache_ar,user_id')
+        .eq('id', response_id).single())
+    if not profile_row.data:
+        raise HTTPException(status_code=404, detail="No results found for this response")
+    owner_user_id = profile_row.data.get('user_id')
+    _assert_can_view(owner_user_id, user)
+    if force:
+        _assert_can_force_refresh(owner_user_id, user)
+
+    if profile_row.data.get('current_stage') not in ENTERING_MARKET_STAGES:
+        return {}
+
+    locale = locale or 'en'
+    cache_col_active = 'certifications_cache_ar' if locale == 'ar' else 'certifications_cache'
+    cached = profile_row.data.get(cache_col_active)
+    if cached and not force:
+        return cached
+
+    rows = _execute_with_retry(supabase.table('assessment_results').select('*').eq('response_id', response_id))
+    if not rows.data:
+        raise HTTPException(status_code=404, detail="No results found for this response")
+
+    summary = build_framework_output(rows.data)
+    careers = _execute_with_retry(supabase.table('careers').select('*').eq('is_approved', True)).data or []
+    semantic_scores = _get_semantic_scores(response_id, summary, profile_row.data or {})
+    top_careers = score_careers(summary, profile_row.data or {}, careers, semantic_scores)[:5]
+
+    from report_generator import get_or_generate_certifications
+    try:
+        result = get_or_generate_certifications(response_id, summary, profile_row.data or {}, top_careers,
+            supabase, locale=locale, force=force)
+    except Exception as e:
+        send_failure_alert("Certifications generation", e, response_id=response_id, supabase=supabase)
+        raise HTTPException(status_code=500, detail="Certifications generation failed, please try again")
+    return result
+
+@app.get("/assessment/{response_id}/career-path")
+def get_career_path(response_id: str, force: bool = False, locale: str | None = None, user=Depends(get_optional_user)):
+    """Progression (stay_in_field) or transition (change_field) write-up for
+    working professionals. Returns {} for anyone else, same pattern as
+    /student-track."""
+    profile_row = _execute_with_retry(supabase.table('assessment_responses')
+        .select('current_stage,country,experience_level,career_direction,sectors_of_interest,'
+                'career_path_cache,career_path_cache_ar,user_id')
+        .eq('id', response_id).single())
+    if not profile_row.data:
+        raise HTTPException(status_code=404, detail="No results found for this response")
+    owner_user_id = profile_row.data.get('user_id')
+    _assert_can_view(owner_user_id, user)
+    if force:
+        _assert_can_force_refresh(owner_user_id, user)
+
+    if profile_row.data.get('current_stage') not in PROFESSIONAL_STAGES:
+        return {}
+
+    locale = locale or 'en'
+    cache_col_active = 'career_path_cache_ar' if locale == 'ar' else 'career_path_cache'
+    cached = profile_row.data.get(cache_col_active)
+    if cached and not force:
+        return cached
+
+    rows = _execute_with_retry(supabase.table('assessment_results').select('*').eq('response_id', response_id))
+    if not rows.data:
+        raise HTTPException(status_code=404, detail="No results found for this response")
+
+    summary = build_framework_output(rows.data)
+    careers = _execute_with_retry(supabase.table('careers').select('*').eq('is_approved', True)).data or []
+    semantic_scores = _get_semantic_scores(response_id, summary, profile_row.data or {})
+    top_careers = score_careers(summary, profile_row.data or {}, careers, semantic_scores)[:5]
+
+    from report_generator import get_or_generate_career_path
+    try:
+        result = get_or_generate_career_path(response_id, summary, profile_row.data or {}, top_careers,
+            supabase, locale=locale, force=force)
+    except Exception as e:
+        send_failure_alert("Career path generation", e, response_id=response_id, supabase=supabase)
+        raise HTTPException(status_code=500, detail="Career path generation failed, please try again")
+    return result
 
 @app.get("/assessment/{response_id}/report")
 def get_report(response_id: str, locale: str | None = None, user=Depends(get_optional_user)):

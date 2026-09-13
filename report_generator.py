@@ -19,7 +19,7 @@ from supabase import create_client as _create_supabase_client
 from db_client import disable_http2
 from scoring_engine import build_framework_output, score_careers, get_career_semantic_scores, COUNTRY_CODE_MAP
 from coaching_pipeline import _gemini_embed, client as anthropic_client
-from content_policy import is_appropriate, CULTURAL_GUARDRAIL, STILL_ENROLLED_STAGES
+from content_policy import is_appropriate, CULTURAL_GUARDRAIL, STILL_ENROLLED_STAGES, ENTERING_MARKET_STAGES, PROFESSIONAL_STAGES
 from ai_provider import get_ai_provider
 
 # Self-contained client (like ai_provider.py / smtp_service.py) purely for the
@@ -165,6 +165,8 @@ UI_TEXT = {
         'sec07': 'Entrepreneurial Profile', 'sec08': 'Career Pathways',
         'sec09': 'AI Impact & Future-Proofing',
         'sec_jobs': 'Job Listings', 'sec_jobs_internships': 'Internships & Exposure',
+        'sec_student_track': 'Majors & Exposure',
+        'sec_certifications': 'Certifications to Pursue', 'sec_career_path': 'Your Path Forward',
         'sec_companies': 'Companies to Target', 'sec_courses': 'Recommended Courses',
         'sec_action_plan': 'Your 90-Day Action Plan',
         'matched_to': 'Matched to', 'government': 'Government',
@@ -182,6 +184,8 @@ UI_TEXT = {
         'prior_experience': 'Prior Experience', 'risk_tolerance': 'Risk Tolerance', 'portfolio_interest': 'Portfolio Interest',
         'match': 'MATCH', 'development_tip': 'Development tip:',
         'risk_suffix': 'RISK',
+        'fit_tag_strong_fit': 'Strong fit', 'fit_tag_worth_exploring': 'Worth exploring',
+        'direction_tag_builds_on_background': 'Builds on your background', 'direction_tag_new_direction': 'New direction',
         'protected_skills_label': 'Human skills that stay valuable',
         'upskilling_label': 'How to prepare',
         'action_month1': 'Month 1 — Launch', 'action_months23': 'Months 2–3 — Build', 'action_months46': 'Months 4–6 — Grow',
@@ -203,6 +207,8 @@ UI_TEXT = {
         'sec07': 'الملف الريادي', 'sec08': 'المسارات المهنية',
         'sec09': 'تأثير الذكاء الاصطناعي واستشراف المستقبل',
         'sec_jobs': 'فرص وظيفية', 'sec_jobs_internships': 'فرص تدريب وتعرّف على المجال',
+        'sec_student_track': 'التخصصات والتعرّف على المجال',
+        'sec_certifications': 'شهادات يُنصح بها', 'sec_career_path': 'مسارك المهني القادم',
         'sec_companies': 'شركات مستهدفة', 'sec_courses': 'دورات موصى بها',
         'sec_action_plan': 'خطة عملك لمدة 90 يوماً',
         'matched_to': 'مطابقة لـ', 'government': 'حكومي',
@@ -220,6 +226,8 @@ UI_TEXT = {
         'prior_experience': 'خبرة سابقة', 'risk_tolerance': 'تقبّل المخاطرة', 'portfolio_interest': 'الاهتمام بمشاريع متعددة',
         'match': 'نسبة التوافق', 'development_tip': 'نصيحة للتطوير:',
         'risk_suffix': 'المخاطر',
+        'fit_tag_strong_fit': 'تطابق قوي', 'fit_tag_worth_exploring': 'يستحق الاستكشاف',
+        'direction_tag_builds_on_background': 'يبني على خلفيتك', 'direction_tag_new_direction': 'اتجاه جديد',
         'protected_skills_label': 'مهارات إنسانية تبقى ذات قيمة',
         'upskilling_label': 'كيف تستعد',
         'action_month1': 'الشهر الأول — الانطلاقة', 'action_months23': 'الشهر 2–3 — البناء', 'action_months46': 'الشهر 4–6 — النمو',
@@ -605,7 +613,7 @@ def generate_ai_content(user_data: dict, summary: dict, raw_scores: list, career
         )
         + (
             "\n\nIMPORTANT: The person's career direction preference is "
-            f"'{CAREER_DIRECTION_LABELS.get(user_data.get('career_direction'))}'. "
+            f"'{CAREER_DIRECTION_LABELS.get(user_data.get('career_direction'), 'Not specified')}'. "
             + (
                 "Weight recommendations toward careers close to their education field/current work, "
                 "and in fit_summary explain the fit in terms of building on what they already know.\n\n"
@@ -628,10 +636,18 @@ def generate_ai_content(user_data: dict, summary: dict, raw_scores: list, career
         '      "sector": "sector name",\n'
         '      "match_score": 88,\n'
         '      "fit_summary": "2 sentences on exactly why this fits this specific person.",\n'
-        '      "growth_note": "1 sentence on career growth potential."\n'
+        '      "growth_note": "1 sentence on career growth potential.",\n'
+        '      "fit_tag": "strong_fit or worth_exploring — fixed code, not narrative text",\n'
+        '      "direction_tag": "builds_on_background or new_direction — fixed code, not narrative text"\n'
         '    }\n'
         '  ]\n'
         "}\n\n"
+        "fit_tag: use 'strong_fit' for your top, most confident matches (typically the first ones by "
+        "match_score) and 'worth_exploring' for solid but less certain or more speculative matches — "
+        "don't make every career 'strong_fit'.\n"
+        "direction_tag: use 'builds_on_background' if the career overlaps with the person's education "
+        "field/current work or sectors of interest, and 'new_direction' if it doesn't but is justified "
+        "by their personality/values/strengths results instead.\n\n"
         f"Provide exactly {career_count} career recommendations. Be specific, insightful, and empowering throughout."
     )
 
@@ -681,7 +697,7 @@ def _badge(level: str, locale: str = 'en') -> str:
 
 # ─── HTML report builder ───────────────────────────────────────────────────────
 
-def build_html_report(user_data: dict, summary: dict, raw_scores: list, ai: dict, careers: list, ai_impact: dict | None = None, locale: str = 'en', tier: str = 'launchpad', jobs: list | None = None, companies: list | None = None, courses: list | None = None) -> str:
+def build_html_report(user_data: dict, summary: dict, raw_scores: list, ai: dict, careers: list, ai_impact: dict | None = None, locale: str = 'en', tier: str = 'launchpad', jobs: list | None = None, companies: list | None = None, courses: list | None = None, student_track: dict | None = None, certifications: dict | None = None, career_path: dict | None = None) -> str:
     # user_data/ai/ai_impact all carry user-supplied or AI-generated free text that could
     # otherwise inject markup (or, via WeasyPrint's URL fetcher, trigger SSRF) into this HTML.
     # jobs additionally comes from a third-party API (JSearch) — external content is the
@@ -693,6 +709,9 @@ def build_html_report(user_data: dict, summary: dict, raw_scores: list, ai: dict
     jobs       = _escape_deep(jobs or [])
     companies  = _escape_deep(companies or [])
     courses    = _escape_deep(courses or [])
+    student_track  = _escape_deep(student_track) if student_track else student_track
+    certifications = _escape_deep(certifications) if certifications else certifications
+    career_path    = _escape_deep(career_path) if career_path else career_path
     career_rec_cap = 5 if tier == 'free' else 8
     ai_impact_cap  = 2 if tier == 'free' else 5
     T = UI_TEXT.get(locale, UI_TEXT['en'])
@@ -862,12 +881,17 @@ def build_html_report(user_data: dict, summary: dict, raw_scores: list, ai: dict
     for rec in _as_list(ai.get('career_recommendations'))[:career_rec_cap]:
         rec = _as_dict(rec)
         ms = rec.get('match_score', 0)
+        tag_pills = ""
+        if rec.get('fit_tag') in ('strong_fit', 'worth_exploring'):
+            tag_pills += f'<span class="pill" style="margin-left:4px;">{T["fit_tag_" + rec["fit_tag"]]}</span>'
+        if rec.get('direction_tag') in ('builds_on_background', 'new_direction'):
+            tag_pills += f'<span class="pill" style="margin-left:4px;">{T["direction_tag_" + rec["direction_tag"]]}</span>'
         career_cards += (
             f'<div class="card" style="margin-bottom:10px;">'
             f'<div class="card-row">'
             f'<div>'
             f'<h4 class="card-title">{rec.get("title","")}</h4>'
-            f'<span class="pill">{rec.get("sector","")}</span>'
+            f'<span class="pill">{rec.get("sector","")}</span>{tag_pills}'
             f'</div>'
             f'<div style="text-align:center;flex-shrink:0;">'
             f'<div style="font-size:20pt;font-weight:900;color:#0770ba;line-height:1;">{ms}%</div>'
@@ -901,6 +925,43 @@ def build_html_report(user_data: dict, summary: dict, raw_scores: list, ai: dict
             f'<span class="pill">{c.get("sector","")}</span>{gov_pill}'
             f'</div>'
         )
+
+    # ── Student track cards (majors guidance + exposure ideas) ─────────────────
+    student_track_cards = ""
+    if student_track:
+        if student_track.get('majors_guidance'):
+            student_track_cards += f'<p class="body-text" style="margin-bottom:10px;">{student_track["majors_guidance"]}</p>'
+        for idea in (student_track.get('exposure_ideas') or []):
+            student_track_cards += (
+                f'<div class="card" style="margin-bottom:10px;">'
+                f'<h4 class="card-title">{idea.get("title","")}</h4>'
+                f'<p class="body-text" style="margin-top:6px;">{idea.get("why","")}</p>'
+                f'</div>'
+            )
+
+    # ── Certifications cards ("entering the market" track) ─────────────────────
+    certification_cards = ""
+    for cert in (certifications.get('certifications') or []) if certifications else []:
+        provider_pill = f'<span class="pill">{cert.get("provider_type","")}</span>' if cert.get("provider_type") else ""
+        certification_cards += (
+            f'<div class="card" style="margin-bottom:10px;">'
+            f'<h4 class="card-title">{cert.get("title","")}</h4>'
+            f'{provider_pill}'
+            f'<p class="body-text" style="margin-top:6px;">{cert.get("why","")}</p>'
+            f'</div>'
+        )
+
+    # ── Career path card ("working professionals" track) ────────────────────────
+    career_path_cards = ""
+    if career_path:
+        career_path_cards += f'<p class="body-text" style="margin-bottom:10px;">{career_path.get("narrative","")}</p>'
+        steps = career_path.get('next_steps') or []
+        if steps:
+            items = "".join(
+                f'<li class="action-item" style="border-{border_side}-color:#0770ba;">{step}</li>'
+                for step in steps
+            )
+            career_path_cards += f'<ul class="action-list">{items}</ul>'
 
     # ── Course cards ───────────────────────────────────────────────────────────
     course_cards = ""
@@ -1112,6 +1173,9 @@ def build_html_report(user_data: dict, summary: dict, raw_scores: list, ai: dict
     jobs_section_title = T['sec_jobs_internships'] if user_data.get('current_stage') in STILL_ENROLLED_STAGES else T['sec_jobs']
     for title, cards_html in [
         (jobs_section_title, job_cards),
+        (T['sec_student_track'], student_track_cards),
+        (T['sec_certifications'], certification_cards),
+        (T['sec_career_path'], career_path_cards),
         (T['sec_companies'], company_cards),
         (T['sec_courses'], course_cards),
     ]:
@@ -1447,6 +1511,231 @@ def get_or_generate_ai_impact(response_id: str, summary: dict, profile_data: dic
         lambda: _translate_piece_with_retry(ai_impact_en, 'ar'))
 
 
+def generate_student_track(user_data: dict, summary: dict, careers: list, locale: str = 'en', career_count: int = 5) -> dict:
+    """Students' practical track per the beta-strategy doc: majors guidance +
+    exposure ideas (competitions, societies, shadowing) — the doc's fix for
+    'no job listings for students', they get this instead of jobs/companies."""
+    riasec_types  = summary.get('riasec', {}).get('top_types', [])
+    top_strengths = summary.get('strengths', {}).get('top_strengths', [])
+    top_values    = summary.get('values', {}).get('top_values', [])
+    careers_text  = "\n".join(f" - {c['title']} ({c['sector']})" for c in careers[:career_count])
+    education_field = ', '.join(user_data.get('education_field') or []) or 'not yet decided'
+
+    prompt = (
+        "You are a career coach helping a student in the GCC figure out their next practical "
+        "steps — majors, and ways to explore their matched careers before committing to a job.\n\n"
+        f"{CULTURAL_GUARDRAIL}\n\n"
+        + (ARABIC_LANGUAGE_INSTRUCTION if locale == 'ar' else "")
+        + "=== USER PROFILE ===\n"
+        f"Stage: {user_data.get('current_stage', 'N/A')} (high_school = not yet in university; "
+        "university = currently studying)\n"
+        f"Current/declared field of study: {education_field}\n"
+        f"RIASEC top types: {', '.join(riasec_types)}\n"
+        f"Top strengths: {', '.join(top_strengths)}\n"
+        f"Top values: {', '.join(top_values)}\n"
+        f"Country: {user_data.get('country', 'GCC')}\n\n"
+        "=== TOP MATCHED CAREERS ===\n"
+        f"{careers_text}\n\n"
+        "=== OUTPUT ===\n"
+        "Return ONLY valid JSON (no markdown, no code fences):\n"
+        "{\n"
+        '  "majors_guidance": "2-3 sentences: if stage is high_school, suggest which majors best '
+        'fit these career matches and why; if stage is university and a field is already declared, '
+        'advise how to make the most of or supplement that field given the matches (e.g. minors, '
+        'electives, projects) rather than suggesting an unrelated major.",\n'
+        '  "exposure_ideas": [\n'
+        '    {"title": "short name of the activity/competition/programme", '
+        '"why": "1 sentence on how it connects to their matched careers"}\n'
+        '  ]\n'
+        "}\n\n"
+        "Provide exactly 4 exposure_ideas: a mix of competitions, student societies/clubs, "
+        "shadowing/volunteering, and short online/personal projects — concrete and specific to the "
+        "GCC where possible (real or realistic programme types, e.g. national hackathons, "
+        "professional-body student chapters), not generic advice like 'network more'."
+    )
+    return _generate_json(prompt, label="student_track")
+
+
+def get_or_generate_student_track(response_id: str, summary: dict, profile_data: dict, top_careers: list,
+                                   supabase_client, locale: str = 'en', force: bool = False) -> dict:
+    """Locale-aware sibling of generate_student_track(), same shape as
+    get_or_generate_ai_impact() but not tier-split — this is free for
+    everyone, like internships, not a paid-tier upsell."""
+    cache_col = 'student_track_cache'
+    cache_col_ar = 'student_track_cache_ar'
+
+    if force:
+        track_en = generate_student_track(profile_data, summary, top_careers)
+        _execute_with_retry(supabase_client.table('assessment_responses')
+            .update({cache_col: track_en}).eq('id', response_id))
+    else:
+        cached_en = profile_data.get(cache_col)
+        track_en = cached_en or _generate_and_cache(supabase_client, response_id, cache_col,
+            lambda: generate_student_track(profile_data, summary, top_careers))
+
+    if locale != 'ar':
+        return track_en
+
+    if force:
+        track_ar = _translate_piece_with_retry(track_en, 'ar')
+        _execute_with_retry(supabase_client.table('assessment_responses')
+            .update({cache_col_ar: track_ar}).eq('id', response_id))
+        return track_ar
+
+    cached_ar = profile_data.get(cache_col_ar)
+    if cached_ar:
+        return cached_ar
+    return _generate_and_cache(supabase_client, response_id, cache_col_ar,
+        lambda: _translate_piece_with_retry(track_en, 'ar'))
+
+
+def generate_certifications(user_data: dict, summary: dict, careers: list, locale: str = 'en', career_count: int = 5) -> dict:
+    """'Entering the market' track: certifications to pursue — entry roles and
+    employers are already covered by the existing job listings/companies
+    sections for this stage, this is the net-new content."""
+    top_strengths = summary.get('strengths', {}).get('top_strengths', [])
+    careers_text  = "\n".join(f" - {c['title']} ({c['sector']})" for c in careers[:career_count])
+    education_field = ', '.join(user_data.get('education_field') or []) or 'not specified'
+
+    prompt = (
+        "You are a career coach helping a recent graduate in the GCC become more competitive "
+        "for entry-level roles in their matched careers.\n\n"
+        f"{CULTURAL_GUARDRAIL}\n\n"
+        + (ARABIC_LANGUAGE_INSTRUCTION if locale == 'ar' else "")
+        + "=== USER PROFILE ===\n"
+        f"Education field: {education_field}\n"
+        f"Top strengths: {', '.join(top_strengths)}\n"
+        f"Country: {user_data.get('country', 'GCC')}\n\n"
+        "=== TOP MATCHED CAREERS ===\n"
+        f"{careers_text}\n\n"
+        "=== OUTPUT ===\n"
+        "Return ONLY valid JSON (no markdown, no code fences):\n"
+        "{\n"
+        '  "certifications": [\n'
+        '    {"title": "certification or short course name", "provider_type": '
+        '"e.g. Coursera, PMI, Google, a professional body, or a local institution", '
+        '"why": "1 sentence on how it makes them more competitive for these careers"}\n'
+        '  ]\n'
+        "}\n\n"
+        "Provide exactly 4 certifications, real and specific where possible (actual well-known "
+        "providers/programmes), covering a mix of the matched careers rather than all for one."
+    )
+    return _generate_json(prompt, label="certifications")
+
+
+def get_or_generate_certifications(response_id: str, summary: dict, profile_data: dict, top_careers: list,
+                                    supabase_client, locale: str = 'en', force: bool = False) -> dict:
+    """Same shape as get_or_generate_student_track()."""
+    cache_col, cache_col_ar = 'certifications_cache', 'certifications_cache_ar'
+
+    if force:
+        result_en = generate_certifications(profile_data, summary, top_careers)
+        _execute_with_retry(supabase_client.table('assessment_responses')
+            .update({cache_col: result_en}).eq('id', response_id))
+    else:
+        cached_en = profile_data.get(cache_col)
+        result_en = cached_en or _generate_and_cache(supabase_client, response_id, cache_col,
+            lambda: generate_certifications(profile_data, summary, top_careers))
+
+    if locale != 'ar':
+        return result_en
+
+    if force:
+        result_ar = _translate_piece_with_retry(result_en, 'ar')
+        _execute_with_retry(supabase_client.table('assessment_responses')
+            .update({cache_col_ar: result_ar}).eq('id', response_id))
+        return result_ar
+
+    cached_ar = profile_data.get(cache_col_ar)
+    if cached_ar:
+        return cached_ar
+    return _generate_and_cache(supabase_client, response_id, cache_col_ar,
+        lambda: _translate_piece_with_retry(result_en, 'ar'))
+
+
+def generate_career_path(user_data: dict, summary: dict, careers: list, locale: str = 'en', career_count: int = 5) -> dict:
+    """'Working professionals' track: progression (stay_in_field) or transition
+    (change_field) write-up — framed by career_direction, same as the fit_tag/
+    direction_tag reasoning already used in career_recommendations."""
+    top_strengths = summary.get('strengths', {}).get('top_strengths', [])
+    top_values    = summary.get('values', {}).get('top_values', [])
+    careers_text  = "\n".join(f" - {c['title']} ({c['sector']})" for c in careers[:career_count])
+    direction = user_data.get('career_direction')
+    path_type = 'progression' if direction == 'stay_in_field' else 'transition' if direction == 'change_field' else 'balanced'
+
+    framing = {
+        'progression': (
+            "This person wants to stay close to their current field/work — write this as a "
+            "PROGRESSION path: how to move up or deepen expertise from where they are now, "
+            "toward their matched careers, in their current field."
+        ),
+        'transition': (
+            "This person wants to move into something different from their current field/work — "
+            "write this as a TRANSITION path: how to credibly pivot from their current experience "
+            "toward their matched careers, leaning on transferable skills rather than starting over."
+        ),
+        'balanced': (
+            "This person hasn't stated a clear preference to stay or change direction — write a "
+            "BALANCED path that works whether they stay in their current field or pivot, focusing "
+            "on transferable next steps that keep both options open."
+        ),
+    }[path_type]
+
+    prompt = (
+        "You are a career coach in the GCC advising a working professional on their next move.\n\n"
+        f"{CULTURAL_GUARDRAIL}\n\n"
+        + (ARABIC_LANGUAGE_INSTRUCTION if locale == 'ar' else "")
+        + "=== USER PROFILE ===\n"
+        f"Stage: {user_data.get('current_stage', 'N/A')}\n"
+        f"Work experience: {user_data.get('experience_level', 'N/A')}\n"
+        f"Top strengths: {', '.join(top_strengths)}\n"
+        f"Top values: {', '.join(top_values)}\n"
+        f"Country: {user_data.get('country', 'GCC')}\n\n"
+        "=== TOP MATCHED CAREERS ===\n"
+        f"{careers_text}\n\n"
+        f"=== FRAMING ===\n{framing}\n\n"
+        "=== OUTPUT ===\n"
+        "Return ONLY valid JSON (no markdown, no code fences):\n"
+        "{\n"
+        f'  "path_type": "{path_type}",\n'
+        '  "narrative": "2-3 sentences on this specific path given their profile.",\n'
+        '  "next_steps": ["specific action 1", "specific action 2", "specific action 3"]\n'
+        "}\n\n"
+        "Be concrete and specific to the GCC market, not generic career advice."
+    )
+    return _generate_json(prompt, label="career_path")
+
+
+def get_or_generate_career_path(response_id: str, summary: dict, profile_data: dict, top_careers: list,
+                                 supabase_client, locale: str = 'en', force: bool = False) -> dict:
+    """Same shape as get_or_generate_student_track()."""
+    cache_col, cache_col_ar = 'career_path_cache', 'career_path_cache_ar'
+
+    if force:
+        result_en = generate_career_path(profile_data, summary, top_careers)
+        _execute_with_retry(supabase_client.table('assessment_responses')
+            .update({cache_col: result_en}).eq('id', response_id))
+    else:
+        cached_en = profile_data.get(cache_col)
+        result_en = cached_en or _generate_and_cache(supabase_client, response_id, cache_col,
+            lambda: generate_career_path(profile_data, summary, top_careers))
+
+    if locale != 'ar':
+        return result_en
+
+    if force:
+        result_ar = _translate_piece_with_retry(result_en, 'ar')
+        _execute_with_retry(supabase_client.table('assessment_responses')
+            .update({cache_col_ar: result_ar}).eq('id', response_id))
+        return result_ar
+
+    cached_ar = profile_data.get(cache_col_ar)
+    if cached_ar:
+        return cached_ar
+    return _generate_and_cache(supabase_client, response_id, cache_col_ar,
+        lambda: _translate_piece_with_retry(result_en, 'ar'))
+
+
 def translate_report_json(data: dict, target_locale: str = 'ar') -> dict:
     """Translate a generated report JSON blob (ai_content or ai_impact output) into target_locale,
     preserving structure/keys and fixed enums, without re-running the full generation prompt."""
@@ -1456,7 +1745,10 @@ def translate_report_json(data: dict, target_locale: str = 'ar') -> dict:
         "the tone a Gulf-based coach or business report would use. No Levantine/Egyptian colloquialisms.\n"
         "Preserve the JSON structure and every key exactly as-is — translate only string values.\n"
         "Do NOT translate: numbers, ai_risk_level values (must stay exactly low/medium/high), "
-        "match_score values, or any field that is a fixed code/enum rather than narrative text.\n"
+        "match_score values, fit_tag values (must stay exactly strong_fit/worth_exploring), "
+        "direction_tag values (must stay exactly builds_on_background/new_direction), "
+        "path_type values (must stay exactly progression/transition/balanced), "
+        "or any field that is a fixed code/enum rather than narrative text.\n"
         "Return ONLY the translated JSON object, no markdown, no code fences.\n\n"
         f"=== JSON TO TRANSLATE ===\n{json.dumps(data, ensure_ascii=False)}"
     )
@@ -1690,7 +1982,9 @@ def create_report(response_id: str, supabase_client, tier: str = "launchpad", lo
                 'major_was_own_choice,major_choice_reason,career_direction,'
                 'sectors_of_interest,geographic_openness,why_here,country,'
                 'ai_impact_cache,ai_content_cache,ai_impact_cache_ar,ai_content_cache_ar,'
-                'ai_impact_cache_free,ai_content_cache_free,ai_impact_cache_ar_free,ai_content_cache_ar_free,locale')
+                'ai_impact_cache_free,ai_content_cache_free,ai_impact_cache_ar_free,ai_content_cache_ar_free,'
+                'student_track_cache,student_track_cache_ar,'
+                'certifications_cache,certifications_cache_ar,career_path_cache,career_path_cache_ar,locale')
         .eq('id', response_id).single())
     if not profile.data:
         raise ValueError(f"No assessment found for {response_id}")
@@ -1779,6 +2073,20 @@ def create_report(response_id: str, supabase_client, tier: str = "launchpad", lo
             # English body text in an Arabic-labeled, right-to-left document.
             locale = 'en'
 
+    # Students' practical track (majors guidance + exposure ideas) — replaces jobs/
+    # companies/courses for still-enrolled students on the live site, so mirror that
+    # here rather than generating it (and paying for it) for everyone.
+    student_track, certifications, career_path = None, None, None
+    if profile.data.get('current_stage') in STILL_ENROLLED_STAGES:
+        student_track = get_or_generate_student_track(response_id, summary, profile.data, top_careers,
+            supabase_client, locale=locale)
+    elif profile.data.get('current_stage') in ENTERING_MARKET_STAGES:
+        certifications = get_or_generate_certifications(response_id, summary, profile.data, top_careers,
+            supabase_client, locale=locale)
+    elif profile.data.get('current_stage') in PROFESSIONAL_STAGES:
+        career_path = get_or_generate_career_path(response_id, summary, profile.data, top_careers,
+            supabase_client, locale=locale)
+
     # Job listings have no free-tier gate on the live site (unlike companies/courses
     # below) — matching that here, so read the cache regardless of tier. Reads the
     # cache directly rather than calling the live JSearch API: PDF generation already
@@ -1819,5 +2127,5 @@ def create_report(response_id: str, supabase_client, tier: str = "launchpad", lo
         matched_courses = [c for c in scored_courses if _score_course(c) > 0][:8]
         courses = matched_courses if matched_courses else scored_courses[:8]
 
-    html = build_html_report(profile.data, summary, raw_scores, ai_content, top_careers, ai_impact, locale, tier=tier, jobs=jobs, companies=companies, courses=courses)
+    html = build_html_report(profile.data, summary, raw_scores, ai_content, top_careers, ai_impact, locale, tier=tier, jobs=jobs, companies=companies, courses=courses, student_track=student_track, certifications=certifications, career_path=career_path)
     return generate_pdf(html)

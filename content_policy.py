@@ -77,6 +77,14 @@ STUDENT_EXPERIENCE_LEVELS = {"student", "fresh_grad"}
 # the jobs section.
 STILL_ENROLLED_STAGES = {"high_school", "university"}
 
+# current_stage values for the other two practical tracks from the beta-
+# strategy doc: "entering the market" (entry roles/certifications/employers)
+# and "working professionals" (progression/transition). Entry roles and
+# employers already exist (job listings + companies, unchanged); certifications
+# and the progression/transition write-up are the net-new content per track.
+ENTERING_MARKET_STAGES = {"recent_graduate"}
+PROFESSIONAL_STAGES = {"working_exploring", "career_changer", "returning", "between_roles"}
+
 SENIOR_LEVEL_KEYWORDS = [
     "senior", "sr.", "manager", "director", "head of", "chief", "vp ",
     "vice president", "principal", "executive", "president",
