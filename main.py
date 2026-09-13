@@ -1519,14 +1519,18 @@ def delete_scheduled_email(schedule_id: str, _=Depends(require_admin)):
 
 
 def _resolve_segment_recipients(segment_key: str) -> list[dict]:
-    """Returns [{email, first_name}] for a named admin-facing segment. Keep the
-    'beta_incomplete' cohort window in sync with BETA_COHORT_START in the admin
+    """Returns [{email, first_name, locale}] for a named admin-facing segment. Keep
+    the 'beta_incomplete' cohort window in sync with BETA_COHORT_START in the admin
     frontend. waitlist_signups has no FK to assessment_responses/beta_feedback,
     so the waitlist_* segments are joined in Python by lowercased email rather
-    than via a PostgREST embed."""
+    than via a PostgREST embed. Each recipient carries their own locale (from
+    their assessment if completed, else their waitlist signup) so the sender
+    renders each person's actual language rather than one language per batch —
+    both email_templates and render_template() already support per-call locale,
+    this was just never threaded through from here."""
     if segment_key == 'beta_incomplete':
         rows = supabase.table('assessment_responses') \
-            .select('email, full_name') \
+            .select('email, full_name, locale') \
             .eq('completed', False) \
             .gte('created_at', BETA_COHORT_START_ISO) \
             .not_.is_('email', 'null') \
@@ -1538,12 +1542,15 @@ def _resolve_segment_recipients(segment_key: str) -> list[dict]:
             if not email or email in seen_emails:
                 continue
             seen_emails.add(email)
-            recipients.append({"email": r['email'], "first_name": (r.get('full_name') or '').split(' ')[0]})
+            recipients.append({
+                "email": r['email'], "first_name": (r.get('full_name') or '').split(' ')[0],
+                "locale": r.get('locale') or 'en',
+            })
         return recipients
 
     if segment_key in ('waitlist_all', 'waitlist_no_assessment', 'waitlist_assessment_completed', 'waitlist_assessment_no_feedback'):
-        waitlist_rows = supabase.table('waitlist_signups').select('email, name').execute().data or []
-        assessment_rows = supabase.table('assessment_responses').select('id, email, full_name, completed').execute().data or []
+        waitlist_rows = supabase.table('waitlist_signups').select('email, name, locale').execute().data or []
+        assessment_rows = supabase.table('assessment_responses').select('id, email, full_name, completed, locale').execute().data or []
         # A user can retake the assessment, producing multiple rows for the same
         # email — if any of them is completed, that's the row that should decide
         # this email's segment membership (not whichever row Supabase happens to
@@ -1580,7 +1587,12 @@ def _resolve_segment_recipients(segment_key: str) -> list[dict]:
 
             seen_emails.add(email)
             first_name = ((assessment or {}).get('full_name') or w.get('name') or '').split(' ')[0]
-            recipient = {"email": w['email'], "first_name": first_name}
+            # Prefer the locale they actually used to take the assessment (more
+            # reliable signal of language ability than the waitlist form, which
+            # may default from browser locale) — fall back to their waitlist
+            # signup locale, then 'en'.
+            locale = ((assessment or {}).get('locale') or w.get('locale') or 'en')
+            recipient = {"email": w['email'], "first_name": first_name, "locale": locale}
             if assessment:
                 # Lets the sender build a per-recipient beta_feedback_url for
                 # templates that need one (e.g. beta_feedback_stage2).
@@ -1646,7 +1658,12 @@ def send_scheduled_emails(request: Request):
             last_error = None
             for i, recipient in enumerate(recipients):
                 try:
-                    recipient_locale = row.get('locale') or 'en'
+                    # Segment recipients carry their own locale (see
+                    # _resolve_segment_recipients); a single-recipient send has
+                    # no such signal, so it falls back to the schedule's own
+                    # locale field, which is exactly what the admin picked for
+                    # that one person.
+                    recipient_locale = recipient.get('locale') or row.get('locale') or 'en'
                     variables = {
                         **(row.get('variables') or {}),
                         "first_name": recipient.get('first_name') or (row.get('variables') or {}).get('first_name', ''),
