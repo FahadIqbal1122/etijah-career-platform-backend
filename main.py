@@ -1612,11 +1612,10 @@ def send_scheduled_emails(request: Request):
         raise HTTPException(status_code=401, detail="Invalid internal key")
 
     now = datetime.now(timezone.utc)
-    due = supabase.table('scheduled_emails') \
-        .select('*') \
-        .eq('status', 'pending') \
-        .lte('scheduled_for', now.isoformat()) \
-        .execute()
+    due = _execute_with_retry(supabase.table('scheduled_emails')
+        .select('*')
+        .eq('status', 'pending')
+        .lte('scheduled_for', now.isoformat()))
 
     processed = 0
     for row in (due.data or []):
