@@ -21,7 +21,7 @@ from smtp_service import send_report_email, send_feedback_email, send_results_re
 import httpx, hmac, hashlib, json, secrets, time
 from coaching_methodology import METHODOLOGY_DOC
 from coaching_pipeline import chunk_transcript, embed_and_store_chunks, client, embed_country_profile, sync_country_profile_embedding, sync_career_embedding, _gemini_embed
-from content_policy import is_appropriate, is_region_eligible, is_seniority_appropriate, STUDENT_EXPERIENCE_LEVELS, STILL_ENROLLED_STAGES, ENTERING_MARKET_STAGES, PROFESSIONAL_STAGES, CULTURAL_GUARDRAIL
+from content_policy import is_appropriate, is_region_eligible, is_seniority_appropriate, STILL_ENROLLED_STAGES, ENTERING_MARKET_STAGES, PROFESSIONAL_STAGES, CULTURAL_GUARDRAIL
 from ai_provider import get_ai_provider, invalidate_ai_provider_cache, AI_PROVIDER_KEY, VALID_PROVIDERS
 
 load_dotenv()
@@ -2224,8 +2224,10 @@ def _search_matching_jobs(response_id: str) -> list[dict] | None:
     raw_country = profile.data.get('country', '')
     country = COUNTRY_NAMES.get(raw_country, raw_country)
     country_code = COUNTRY_CODE_MAP.get(raw_country)
-    experience_level = profile.data.get('experience_level')
-    is_early_career = experience_level in STUDENT_EXPERIENCE_LEVELS
+    # "Early career" is a current_stage (QO4) signal, not experience_level
+    # (QO3B) — QO3B only asks actual years of experience for people who have
+    # some, so it can't signal "no experience yet" on its own.
+    is_early_career = profile.data.get('current_stage') in ENTERING_MARKET_STAGES
     # Still-enrolled users (high school/university) can't act on most "entry
     # level" job postings either — they need internships, not jobs. A fresh
     # grad who has already left school (current_stage == recent_graduate)
@@ -2278,7 +2280,7 @@ def _search_matching_jobs(response_id: str) -> list[dict] | None:
                 # Internship postings are inherently entry-level, so the
                 # senior-title filter (built for regular job postings) doesn't
                 # apply to them.
-                if not is_still_enrolled and not is_seniority_appropriate(job_title, job.get("job_description"), experience_level):
+                if not is_still_enrolled and not is_seniority_appropriate(job_title, job.get("job_description"), is_early_career):
                     continue
                 if job_id and job_id not in seen_ids:
                     seen_ids.add(job_id)

@@ -63,18 +63,22 @@ def is_region_eligible(job_title: str | None, job_description: str | None, job_c
 
 
 # Job source APIs return company-authored titles with no standard seniority
-# field, so "student"/"fresh_grad" users were getting management/director-level
+# field, so early-career users were getting management/director-level
 # postings alongside genuine entry-level roles. Companies also label entry-level
 # programs inconsistently (e.g. "Management Trainee", "Graduate Scheme"), so a
 # title-only block on "manager"/"management" would wrongly hide real trainee
 # programs — check the description too before excluding.
-STUDENT_EXPERIENCE_LEVELS = {"student", "fresh_grad"}
+#
+# "Early career" here is a current_stage (QO4) signal, not experience_level
+# (QO3B) — QO3B only asks actual years of experience for people who have
+# some, so it can't tell you "no experience yet" on its own. See
+# ENTERING_MARKET_STAGES below.
 
 # current_stage values (QO4) for users still enrolled in school/university —
-# distinct from experience_level: a fresh_grad who has already graduated
-# (current_stage == "recent_graduate") should still see real entry-level jobs,
-# not internships. Only these two stages get internship listings instead of
-# the jobs section.
+# distinct from ENTERING_MARKET_STAGES below: a fresh grad who has already
+# graduated (current_stage == "recent_graduate") should still see real
+# entry-level jobs, not internships. Only these two stages get internship
+# listings instead of the jobs section.
 STILL_ENROLLED_STAGES = {"high_school", "university"}
 
 # current_stage values for the other two practical tracks from the beta-
@@ -99,12 +103,13 @@ ENTRY_LEVEL_SIGNALS = [
 ]
 
 
-def is_seniority_appropriate(job_title: str | None, job_description: str | None, experience_level: str | None) -> bool:
-    """For students/fresh grads, exclude management/senior-level roles unless
-    the listing's own text signals it's actually an entry-level program (e.g.
-    a "management trainee" scheme) — company terminology for entry-level roles
-    varies too much to filter on title alone."""
-    if experience_level not in STUDENT_EXPERIENCE_LEVELS:
+def is_seniority_appropriate(job_title: str | None, job_description: str | None, is_early_career: bool) -> bool:
+    """For early-career users (recent grads with no experience yet), exclude
+    management/senior-level roles unless the listing's own text signals it's
+    actually an entry-level program (e.g. a "management trainee" scheme) —
+    company terminology for entry-level roles varies too much to filter on
+    title alone."""
+    if not is_early_career:
         return True
     text = f"{job_title or ''} {job_description or ''}".lower()
     if any(kw in text for kw in ENTRY_LEVEL_SIGNALS):
