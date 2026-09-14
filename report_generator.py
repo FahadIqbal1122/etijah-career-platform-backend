@@ -956,12 +956,15 @@ def build_html_report(user_data: dict, summary: dict, raw_scores: list, ai: dict
     # ── Career path card ("working professionals" track) ────────────────────────
     career_path_cards = ""
     if career_path:
-        career_path_cards += f'<p class="body-text" style="margin-bottom:10px;">{career_path.get("narrative","")}</p>'
+        narrative = career_path.get("narrative","")
+        if narrative:
+            career_path_cards += f'<div class="callout-box">{narrative}</div>'
         steps = career_path.get('next_steps') or []
         if steps:
             items = "".join(
-                f'<li class="action-item" style="border-{border_side}-color:#0770ba;">{step}</li>'
-                for step in steps
+                f'<li class="action-item numbered" style="border-{border_side}-color:#0770ba;">'
+                f'<span class="step-num">{i+1}</span><span>{step}</span></li>'
+                for i, step in enumerate(steps)
             )
             career_path_cards += f'<ul class="action-list">{items}</ul>'
 
@@ -1020,22 +1023,25 @@ def build_html_report(user_data: dict, summary: dict, raw_scores: list, ai: dict
     # ── Action plan ───────────────────────────────────────────────────────────
     ap = _as_dict(ai.get('action_plan'))
 
-    def render_phase(items: list, color: str, title: str) -> str:
+    def render_phase(items: list, color: str, title: str, num: int) -> str:
         lis = "".join(
             f'<li class="action-item" style="border-{border_side}-color:{color};">{item}</li>'
             for item in items
         )
         return (
             f'<div class="action-phase">'
+            f'<div class="phase-title-row">'
+            f'<span class="phase-num" style="background:{color};">{num}</span>'
             f'<h4 class="phase-title" style="color:{color};">{title}</h4>'
+            f'</div>'
             f'<ul class="action-list">{lis}</ul>'
             f'</div>'
         )
 
     action_html = (
-        render_phase(_as_list(ap.get('month_1')),    '#2a9d5c', T['action_month1']) +
-        render_phase(_as_list(ap.get('months_2_3')), '#00c9a7', T['action_months23']) +
-        render_phase(_as_list(ap.get('months_4_6')), '#0770ba', T['action_months46'])
+        render_phase(_as_list(ap.get('month_1')),    '#2a9d5c', T['action_month1'], 1) +
+        render_phase(_as_list(ap.get('months_2_3')), '#00c9a7', T['action_months23'], 2) +
+        render_phase(_as_list(ap.get('months_4_6')), '#0770ba', T['action_months46'], 3)
     )
 
     if locale == 'ar':
@@ -1140,10 +1146,17 @@ def build_html_report(user_data: dict, summary: dict, raw_scores: list, ai: dict
   .narr-box { background:#f7f8fc; border:1px solid #e0e3ea; border-radius:8px; padding:12px 15px; margin-top:14px; font-size:9pt; color:#555; line-height:1.7; }
 
   /* Action plan */
-  .action-phase { margin-bottom:18px; }
-  .phase-title  { font-size:11pt; font-weight:700; margin-bottom:9px; }
+  .action-phase { margin-bottom:18px; border-left:2px solid #e8eaf0; padding-left:14px; }
+  .phase-title-row { display:flex; align-items:center; gap:8px; margin-bottom:9px; }
+  .phase-num    { display:inline-flex; align-items:center; justify-content:center; width:20px; height:20px; border-radius:50%; color:#fff; font-size:8pt; font-weight:800; flex-shrink:0; }
+  .phase-title  { font-size:11pt; font-weight:700; margin-bottom:0; }
   .action-list  { list-style:none; display:flex; flex-direction:column; gap:7px; }
   .action-item  { background:#f7f8fc; border-left:3px solid #00c9a7; border-radius:0 6px 6px 0; padding:8px 12px; font-size:9pt; color:#333; line-height:1.5; page-break-inside:avoid; break-inside:avoid; }
+  .action-item.numbered { display:flex; align-items:flex-start; gap:8px; }
+  .step-num     { display:inline-flex; align-items:center; justify-content:center; width:16px; height:16px; border-radius:50%; background:rgba(0,201,167,.18); color:#00937d; font-size:7pt; font-weight:800; flex-shrink:0; margin-top:1px; }
+
+  /* Callout (career path narrative) */
+  .callout-box { background:rgba(7,112,186,.06); border-left:3px solid #0770ba; padding:12px 15px; border-radius:0 6px 6px 0; font-size:9pt; color:#444; line-height:1.7; margin-bottom:14px; }
 
   /* Back cover */
   .back-cover { background:linear-gradient(145deg,#075288,#0770ba); height:297mm; display:flex; flex-direction:column; justify-content:center; align-items:center; text-align:center; padding:20mm;        
@@ -1164,6 +1177,8 @@ def build_html_report(user_data: dict, summary: dict, raw_scores: list, ai: dict
   .intro-box   { border-left:none; border-right:3px solid #00c9a7; border-radius:6px 0 0 6px; }
   .strength-card { border-left:none !important; border-right:4px solid #40916c !important; border-radius:8px 0 0 8px !important; }
   .action-item { border-left:none; border-right:3px solid #00c9a7; border-radius:6px 0 0 6px; }
+  .action-phase { border-left:none; border-right:2px solid #e8eaf0; padding-left:0; padding-right:14px; }
+  .callout-box { border-left:none; border-right:3px solid #0770ba; border-radius:6px 0 0 6px; }
   .value-rank  { text-align: right; }
   .bar-num     { text-align: left; }
   .cover-eyebrow, .mini-badge, .stat-lbl, .sec-num, .all-bars-label, .page-hdr-brand, .cover-brand, .back-brand, .back-tagline { letter-spacing: 0; }
