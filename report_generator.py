@@ -15,6 +15,7 @@ import httpx
 from google.api_core.exceptions import GoogleAPICallError, DeadlineExceeded, ServiceUnavailable
 from requests.exceptions import RequestException, Timeout, ConnectionError as RequestsConnectionError
 from weasyprint import HTML
+from postgrest.exceptions import APIError
 from supabase import create_client as _create_supabase_client
 from db_client import disable_http2
 from scoring_engine import build_framework_output, score_careers, get_career_semantic_scores, COUNTRY_CODE_MAP
@@ -547,6 +548,14 @@ def generate_ai_content(user_data: dict, summary: dict, raw_scores: list, career
         "Reference actual scores and combinations. Do not write boilerplate.\n\n"
         + shared_header
         + coaching_block
+        + "=== MATCHED CAREERS (this person will see these elsewhere in the same report) ===\n"
+        f"{careers_text}\n\n"
+        "IMPORTANT: The action_plan below must build toward THESE specific matched careers — this "
+        "person will read a Suggested Careers section listing exactly these titles, so the action plan "
+        "has to feel like the natural next step toward them, not a separate or contradictory path. Every "
+        "action_plan step should reference one or more of these career titles, their shared sector, or "
+        "concrete employers/certifications/roles that plausibly lead to them. Do not invent unrelated "
+        "sectors, job titles, or industries that aren't represented in this list.\n\n"
         + "=== OUTPUT ===\n\n"
         "Return ONLY a valid JSON object (no markdown, no code fences) with exactly these keys:\n\n"
         "{\n"
@@ -580,13 +589,14 @@ def generate_ai_content(user_data: dict, summary: dict, raw_scores: list, career
         '  "work_style_narrative": "2-3 sentences describing ideal work environment from all work style scores.",\n'
         '  "entrepreneurship_narrative": "2-3 sentences on entrepreneurial profile and whether/how to explore it.",\n\n'
         '  "action_plan": {\n'
-        '    "month_1":    ["Specific action 1", "Specific action 2", "Specific action 3"],\n'
-        '    "months_2_3": ["Specific action 1", "Specific action 2", "Specific action 3"],\n'
-        '    "months_4_6": ["Specific action 1", "Specific action 2", "Specific action 3"]\n'
+        '    "month_1":    ["Specific action 1 (toward the matched careers above)", "Specific action 2", "Specific action 3"],\n'
+        '    "months_2_3": ["Specific action 1 (toward the matched careers above)", "Specific action 2", "Specific action 3"],\n'
+        '    "months_4_6": ["Specific action 1 (toward the matched careers above)", "Specific action 2", "Specific action 3"]\n'
         '  },\n\n'
         '  "closing_message": "2-3 warm encouraging sentences tying back to this persons unique profile."\n'
         "}\n\n"
-        "Be specific, insightful, and empowering throughout."
+        "Be specific, insightful, and empowering throughout. Remember: action_plan must stay grounded in "
+        "the matched careers list above, not a different sector or set of job titles."
     )
 
     careers_prompt = (
@@ -1725,12 +1735,46 @@ def generate_career_path(user_data: dict, summary: dict, careers: list, locale: 
         "Return ONLY valid JSON (no markdown, no code fences):\n"
         "{\n"
         f'  "path_type": "{path_type}",\n'
-        '  "narrative": "2-3 sentences on this specific path given their profile.",\n'
-        '  "next_steps": ["specific action 1", "specific action 2", "specific action 3"]\n'
+        '  "narrative": "2-3 sentences on this specific path given their profile — MUST explicitly name '
+        'at least one of the exact career titles listed above; do not describe a different sector, '
+        'industry, or role that isn\'t on that list.",\n'
+        '  "next_steps": ["specific action 1 toward one of the listed careers", "specific action 2", "specific action 3"]\n'
         "}\n\n"
-        "Be concrete and specific to the GCC market, not generic career advice."
+        "Be concrete and specific to the GCC market, not generic career advice. Do not invent a career "
+        "path outside the matched careers list above, even if a different sector seems like a more "
+        "obvious GCC growth story — this person will see the exact list above elsewhere in the same "
+        "report, so the path must connect to it."
     )
-    return _generate_json(prompt, label="career_path")
+    result = _generate_json(prompt, label="career_path")
+    if not _career_path_mentions_matched_career(result, careers, career_count):
+        # The model ignored the matched-careers list and invented an unrelated sector —
+        # one retry with a sharper, non-negotiable instruction fixes this in practice;
+        # if it still misses, ship what we have rather than fail the whole report.
+        retry_prompt = prompt + (
+            "\n\nYour previous attempt described a path unrelated to the matched careers list — "
+            "this time, the \"narrative\" field MUST literally contain the exact text of at least "
+            "one of the career titles from === TOP MATCHED CAREERS === above."
+        )
+        retried = _generate_json(retry_prompt, label="career_path:retry")
+        if _career_path_mentions_matched_career(retried, careers, career_count):
+            return retried
+    return result
+
+
+def _career_path_mentions_matched_career(result: dict, careers: list, career_count: int = 5) -> bool:
+    """Guards against the model ignoring the matched-careers list and inventing an
+    unrelated sector (observed in production — see career_path narrative QA pass)."""
+    narrative = (result.get('narrative') or '').lower()
+    if not narrative:
+        return False
+    for c in careers[:career_count]:
+        title = (c.get('title') or '').lower()
+        # Strip a trailing "(Sector)" qualifier some career titles carry, and match on
+        # the core title words so partial phrasing ("clinical researcher role") still counts.
+        title = re.sub(r'\s*\([^)]*\)\s*$', '', title).strip()
+        if title and title in narrative:
+            return True
+    return False
 
 
 def get_or_generate_career_path(response_id: str, summary: dict, profile_data: dict, top_careers: list,
@@ -1865,6 +1909,15 @@ def generate_pdf(
 # a fresh connection and almost always succeeds.
 _SUPABASE_RETRYABLE = (httpx.RemoteProtocolError, httpx.ConnectError, httpx.ReadError)
 
+# Postgres error codes are 5-char strings like '42703' or '22P02'. A bare int/int-string
+# code (502/503/504) instead means the error never reached Postgres at all — it's the
+# gateway in front of PostgREST (Cloudflare et al) timing out or bouncing the request —
+# so it's transient the same way the httpx-level errors above are, and worth one retry.
+_TRANSIENT_GATEWAY_CODES = {"502", "503", "504"}
+
+def _is_transient_gateway_error(e: APIError) -> bool:
+    return str(e.code) in _TRANSIENT_GATEWAY_CODES
+
 def _execute_with_retry(query, retries: int = 1):
     last_err: Exception | None = None
     for attempt in range(retries + 1):
@@ -1873,6 +1926,11 @@ def _execute_with_retry(query, retries: int = 1):
         except _SUPABASE_RETRYABLE as e:
             last_err = e
             print(f"[supabase] transient error, retrying: {type(e).__name__}: {e}")
+        except APIError as e:
+            if not _is_transient_gateway_error(e):
+                raise
+            last_err = e
+            print(f"[supabase] transient gateway error, retrying: {e.code}: {e.message}")
     raise last_err
 
 
