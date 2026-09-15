@@ -1,5 +1,5 @@
 """
-AI-Powered PDF career report generator.
+Intelligent PDF career report generator.
 WeasyPrint renders the HTML template; Gemini fills in all narrative content.
 """
 
