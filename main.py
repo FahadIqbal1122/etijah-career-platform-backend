@@ -373,6 +373,7 @@ class BetaFeedbackStage1Request(BaseModel):
     # this loading-screen pulse fires.
     s1_intent: str | None = None
     locale: str | None = None
+    stage1_form_version: str | None = None
 
 class BetaFeedbackStage2Request(BaseModel):
     """Redesigned per the 10 Sept beta-strategy doc: ~12 questions, replacing
@@ -399,6 +400,7 @@ class BetaFeedbackStage2Request(BaseModel):
     would_recommend: str | None = None
     had_issues: str | None = None
     issue_detail: str | None = None
+    stage2_form_version: str | None = None
 
 class BetaFeedbackResultStageRequest(BaseModel):
     response_id: str
@@ -406,6 +408,7 @@ class BetaFeedbackResultStageRequest(BaseModel):
     would_recommend: str | None = None
     would_pay: str | None = None
     other_text: str | None = None
+    result_stage_form_version: str | None = None
     locale: str | None = None
 
 class WaitlistRequest(BaseModel):
