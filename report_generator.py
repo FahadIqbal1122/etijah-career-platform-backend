@@ -673,6 +673,27 @@ def generate_ai_content(user_data: dict, summary: dict, raw_scores: list, career
 
 # ─── HTML helpers ──────────────────────────────────────────────────────────────
 
+def _logomark_svg(grad_id: str, size: int, path_color: str, mid_color: str, star_color: str = "#00C9A7", extra_style: str = "") -> str:
+    # Etijahi "Constellation" mark — rising line through graded nodes to a haloed star.
+    # Mirrors etijah-career-platform-frontend/src/components/brand/Logomark.tsx.
+    return (
+        f'<svg width="{size}" height="{size}" viewBox="0 0 120 120" style="{extra_style}">'
+        f'<defs><linearGradient id="{grad_id}" x1="18" y1="102" x2="100" y2="20" gradientUnits="userSpaceOnUse">'
+        f'<stop offset="0" stop-color="{path_color}"/><stop offset="1" stop-color="{star_color}"/></linearGradient></defs>'
+        f'<path d="M20 100 L44 68 L72 78 L98 22" stroke="url(#{grad_id})" stroke-width="7" fill="none" stroke-linecap="round" stroke-linejoin="round"/>'
+        f'<circle cx="20" cy="100" r="9" fill="{path_color}" opacity="0.45"/>'
+        f'<circle cx="44" cy="68" r="11" fill="{path_color}" opacity="0.7"/>'
+        f'<circle cx="72" cy="78" r="10" fill="{mid_color}" opacity="0.85"/>'
+        f'<circle cx="98" cy="22" r="22" stroke="{star_color}" stroke-width="4" fill="none" opacity="0.4"/>'
+        f'<circle cx="98" cy="22" r="14" fill="{star_color}"/>'
+        f'</svg>'
+    )
+
+# White-on-blue mark for the cover and back cover; blue-on-white for content page headers.
+COVER_LOGO_SVG = _logomark_svg("coverLogoGrad", 46, "#FFFFFF", "#FFFFFF", extra_style="display:block;margin:0 auto;")
+BACK_LOGO_SVG = _logomark_svg("backLogoGrad", 34, "#FFFFFF", "#FFFFFF", extra_style="display:block;margin:0 auto;")
+PAGE_HDR_LOGO_SVG = _logomark_svg("pageHdrLogoGrad", 12, "#0052CC", "#0091C2", extra_style="vertical-align:middle;flex-shrink:0;")
+
 def _bar(score: float, color: str = "#00c9a7") -> str:
     pct = min(100, max(0, float(score)))
     return (
@@ -1071,6 +1092,7 @@ def build_html_report(user_data: dict, summary: dict, raw_scores: list, ai: dict
   .cover { width:100%; height:297mm; background:linear-gradient(145deg,#075288 0%,#0770ba 60%,#075288 100%); display:flex; flex-direction:column; justify-content:space-between; page-break-after:always; }
   .cover-accent { height:6px; background:linear-gradient(90deg,#00c9a7,#5eead4,#00c9a7); }
   .cover-body { flex:1; display:flex; flex-direction:column; justify-content:center; align-items:center; text-align:center; padding:40mm 20mm; }
+  .cover-logo { margin-bottom:18px; }
   .cover-eyebrow { display:inline-block; background:rgba(0,201,167,.15); border:1px solid rgba(0,201,167,.4); color:#00c9a7; font-size:8pt; letter-spacing:3px; text-transform:uppercase; padding:6px    
   18px; border-radius:20px; margin-bottom:24px; }
   .cover-headline { font-size:36pt; font-weight:900; color:#fff; line-height:1.1; margin-bottom:8px; }
@@ -1091,6 +1113,7 @@ def build_html_report(user_data: dict, summary: dict, raw_scores: list, ai: dict
   .page { padding:12mm 16mm 20mm; page-break-after:always; min-height:270mm; position:relative; }
   .page:last-child { page-break-after:avoid; }
   .page-hdr { display:flex; justify-content:space-between; align-items:center; padding-bottom:7px; border-bottom:2px solid #075288; margin-bottom:18px; }
+  .page-hdr-brand-wrap { display:flex; align-items:center; gap:5px; }
   .page-hdr-brand { font-size:7pt; font-weight:700; color:#00c9a7; letter-spacing:2px; text-transform:uppercase; }
   .page-hdr-name  { font-size:7pt; color:#aaa; }
   .page-ftr { position:absolute; bottom:10mm; left:16mm; right:16mm; display:flex; justify-content:space-between; border-top:1px solid #eee; padding-top:5px; }
@@ -1175,6 +1198,7 @@ def build_html_report(user_data: dict, summary: dict, raw_scores: list, ai: dict
   .back-headline { font-size:22pt; font-weight:800; color:#fff; margin-bottom:18px; }
   .back-message  { font-size:11pt; color:rgba(255,255,255,.7); line-height:1.85; max-width:130mm; margin-bottom:36px; }
   .back-rule     { width:48px; height:2px; background:#00c9a7; margin:0 auto 22px; }
+  .back-logo     { margin-bottom:14px; }
   .back-brand    { font-size:10pt; font-weight:700; color:#00c9a7; letter-spacing:3px; text-transform:uppercase; margin-bottom:7px; }
   .back-tagline  { font-size:8pt; color:rgba(255,255,255,.35); letter-spacing:2px; }
   """
@@ -1218,7 +1242,7 @@ def build_html_report(user_data: dict, summary: dict, raw_scores: list, ai: dict
         extra_section_pages += f"""
   <div class="page">
     <div class="page-hdr">
-      <span class="page-hdr-brand">{T['brand_header']}</span>
+      <span class="page-hdr-brand-wrap">{PAGE_HDR_LOGO_SVG}<span class="page-hdr-brand">{T['brand_header']}</span></span>
       <span class="page-hdr-name">{name}</span>
     </div>
     <div class="sec-heading">
@@ -1245,6 +1269,7 @@ def build_html_report(user_data: dict, summary: dict, raw_scores: list, ai: dict
   <div class="cover">
     <div class="cover-accent"></div>
     <div class="cover-body">
+      <div class="cover-logo">{COVER_LOGO_SVG}</div>
       <div class="cover-eyebrow">{T['cover_eyebrow']}</div>
       <div class="cover-headline">{T['cover_headline1']}<br>{T['cover_headline2']}</div>
       <div class="cover-sub">{T['cover_sub']}</div>
@@ -1265,7 +1290,7 @@ def build_html_report(user_data: dict, summary: dict, raw_scores: list, ai: dict
   <!-- PAGE 1 — CAREER PROFILE -->
   <div class="page">
     <div class="page-hdr">
-      <span class="page-hdr-brand">{T['brand_header']}</span>
+      <span class="page-hdr-brand-wrap">{PAGE_HDR_LOGO_SVG}<span class="page-hdr-brand">{T['brand_header']}</span></span>
       <span class="page-hdr-name">{name}</span>
     </div>
     <div class="sec-heading">
@@ -1295,7 +1320,7 @@ def build_html_report(user_data: dict, summary: dict, raw_scores: list, ai: dict
   <!-- PAGE 2 — RIASEC CAREER PERSONALITY -->
   <div class="page">
     <div class="page-hdr">
-      <span class="page-hdr-brand">{T['brand_header']}</span>
+      <span class="page-hdr-brand-wrap">{PAGE_HDR_LOGO_SVG}<span class="page-hdr-brand">{T['brand_header']}</span></span>
       <span class="page-hdr-name">{name}</span>
     </div>
     <div class="sec-heading">
@@ -1316,7 +1341,7 @@ def build_html_report(user_data: dict, summary: dict, raw_scores: list, ai: dict
   <!-- PAGE 3 — BIG FIVE PERSONALITY -->
   <div class="page">
     <div class="page-hdr">
-      <span class="page-hdr-brand">{T['brand_header']}</span>
+      <span class="page-hdr-brand-wrap">{PAGE_HDR_LOGO_SVG}<span class="page-hdr-brand">{T['brand_header']}</span></span>
       <span class="page-hdr-name">{name}</span>
     </div>
     <div class="sec-heading">
@@ -1334,7 +1359,7 @@ def build_html_report(user_data: dict, summary: dict, raw_scores: list, ai: dict
   <!-- PAGE 4 — CORE VALUES -->
   <div class="page">
     <div class="page-hdr">
-      <span class="page-hdr-brand">{T['brand_header']}</span>
+      <span class="page-hdr-brand-wrap">{PAGE_HDR_LOGO_SVG}<span class="page-hdr-brand">{T['brand_header']}</span></span>
       <span class="page-hdr-name">{name}</span>
     </div>
     <div class="sec-heading">
@@ -1352,7 +1377,7 @@ def build_html_report(user_data: dict, summary: dict, raw_scores: list, ai: dict
   <!-- PAGE 5 — STRENGTHS PROFILE -->
   <div class="page">
     <div class="page-hdr">
-      <span class="page-hdr-brand">{T['brand_header']}</span>
+      <span class="page-hdr-brand-wrap">{PAGE_HDR_LOGO_SVG}<span class="page-hdr-brand">{T['brand_header']}</span></span>
       <span class="page-hdr-name">{name}</span>
     </div>
     <div class="sec-heading">
@@ -1370,7 +1395,7 @@ def build_html_report(user_data: dict, summary: dict, raw_scores: list, ai: dict
   <!-- PAGE 6 — WORK STYLE, RESILIENCE & ENTREPRENEURSHIP -->
   <div class="page">
     <div class="page-hdr">
-      <span class="page-hdr-brand">{T['brand_header']}</span>
+      <span class="page-hdr-brand-wrap">{PAGE_HDR_LOGO_SVG}<span class="page-hdr-brand">{T['brand_header']}</span></span>
       <span class="page-hdr-name">{name}</span>
     </div>
     <div class="sec-heading">
@@ -1406,7 +1431,7 @@ def build_html_report(user_data: dict, summary: dict, raw_scores: list, ai: dict
   <!-- PAGE 7 — CAREER PATHWAYS -->
   <div class="page">
     <div class="page-hdr">
-      <span class="page-hdr-brand">{T['brand_header']}</span>
+      <span class="page-hdr-brand-wrap">{PAGE_HDR_LOGO_SVG}<span class="page-hdr-brand">{T['brand_header']}</span></span>
       <span class="page-hdr-name">{name}</span>
     </div>
     <div class="sec-heading">
@@ -1423,7 +1448,7 @@ def build_html_report(user_data: dict, summary: dict, raw_scores: list, ai: dict
   <!-- PAGE 8 — AI IMPACT & FUTURE-PROOFING -->
   <div class="page">
     <div class="page-hdr">
-      <span class="page-hdr-brand">{T['brand_header']}</span>
+      <span class="page-hdr-brand-wrap">{PAGE_HDR_LOGO_SVG}<span class="page-hdr-brand">{T['brand_header']}</span></span>
       <span class="page-hdr-name">{name}</span>
     </div>
     <div class="sec-heading">
@@ -1441,7 +1466,7 @@ def build_html_report(user_data: dict, summary: dict, raw_scores: list, ai: dict
   <!-- 90-DAY ACTION PLAN -->
   <div class="page">
     <div class="page-hdr">
-      <span class="page-hdr-brand">{T['brand_header']}</span>
+      <span class="page-hdr-brand-wrap">{PAGE_HDR_LOGO_SVG}<span class="page-hdr-brand">{T['brand_header']}</span></span>
       <span class="page-hdr-name">{name}</span>
     </div>
     <div class="sec-heading">
@@ -1458,6 +1483,7 @@ def build_html_report(user_data: dict, summary: dict, raw_scores: list, ai: dict
   <!-- BACK COVER -->
   <div class="back-cover">
     <div class="back-top"></div>
+    <div class="back-logo">{BACK_LOGO_SVG}</div>
     <div class="back-headline">{T['back_headline']}</div>
     <div class="back-message">{ai.get('closing_message','')}</div>
     <div class="back-rule"></div>
