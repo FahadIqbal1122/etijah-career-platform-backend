@@ -88,6 +88,10 @@ HUB_API_KEY = os.getenv("HUB_API_KEY")
 SHOP_BASE_URL = os.getenv("SHOP_BASE_URL", "https://shop.etijahcoaching.com")
 BILLING_RETURN_URL = "https://myetijahi.com/account/billing"
 
+META_PIXEL_ID = os.getenv("META_PIXEL_ID")          # "dataset ID" — same as your Pixel ID
+META_ACCESS_TOKEN = os.getenv("META_ACCESS_TOKEN")
+META_TEST_EVENT_CODE = os.getenv("META_TEST_EVENT_CODE")  # optional, only while testing in Events Manager
+
 INTERNAL_JOBS_KEY = os.getenv("INTERNAL_JOBS_KEY")
 DASHBOARD_SHARE_TOKEN = os.getenv("DASHBOARD_SHARE_TOKEN")
 
@@ -2743,6 +2747,53 @@ def _activate_plan(user_id: str, plan_code: str):
     }, on_conflict='user_id').execute()
 
 
+def _send_meta_purchase_event(user_id: str, order_ref: str, amount: float, currency: str, tap_charge_id: str | None):
+    """Server-side Purchase event to Meta's Conversions API. Best-effort — must
+    never fail or delay the webhook response that confirms payment to the user."""
+    if not META_PIXEL_ID or not META_ACCESS_TOKEN:
+        return
+    try:
+        email = None
+        try:
+            user_resp = supabase.auth.admin.get_user_by_id(user_id)
+            email = getattr(user_resp.user, "email", None) if user_resp else None
+        except Exception:
+            pass
+
+        user_data = {}
+        if email:
+            user_data["em"] = [hashlib.sha256(email.strip().lower().encode()).hexdigest()]
+
+        payload = {
+            "data": [{
+                "event_name": "Purchase",
+                "event_time": int(time.time()),
+                "event_id": order_ref,  # dedup key if you ever also fire the browser Pixel
+                "action_source": "website",
+                "user_data": user_data,
+                "custom_data": {
+                    "currency": currency,
+                    "value": amount,
+                    "content_ids": [order_ref],
+                    "content_type": "product",
+                    **({"tap_charge_id": tap_charge_id} if tap_charge_id else {}),
+                },
+            }],
+            "access_token": META_ACCESS_TOKEN,
+        }
+        if META_TEST_EVENT_CODE:
+            payload["test_event_code"] = META_TEST_EVENT_CODE
+
+        resp = httpx.post(
+            f"https://graph.facebook.com/v21.0/{META_PIXEL_ID}/events",
+            json=payload, timeout=10.0,
+        )
+        if resp.status_code >= 400:
+            print(f"Meta CAPI rejected purchase event for order_ref={order_ref}: {resp.status_code} {resp.text}")
+    except Exception as e:
+        print(f"Meta CAPI purchase event failed for order_ref={order_ref}:", e)
+
+
 @app.post("/hub/transactions")
 async def receive_hub_transaction(request: Request):
     if not HUB_API_KEY:
@@ -2784,5 +2835,6 @@ async def receive_hub_transaction(request: Request):
 
     if result.data:
         _activate_plan(body.external_user_id, body.plan_code)
+        _send_meta_purchase_event(body.external_user_id, body.order_ref, body.amount, body.currency, body.tap_charge_id)
 
     return {"received": True}
