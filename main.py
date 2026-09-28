@@ -2834,7 +2834,9 @@ async def receive_hub_transaction(request: Request):
         raise HTTPException(status_code=500, detail="Failed to record transaction")
 
     if result.data:
-        _activate_plan(body.external_user_id, body.plan_code)
+        # Meta first: it's best-effort and never raises, so a failure in the plan
+        # write below can't stop the Purchase event from being sent.
         _send_meta_purchase_event(body.external_user_id, body.order_ref, body.amount, body.currency, body.tap_charge_id)
+        _activate_plan(body.external_user_id, body.plan_code)
 
     return {"received": True}
