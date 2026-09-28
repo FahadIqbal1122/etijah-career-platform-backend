@@ -483,6 +483,10 @@ class CoachRequest(BaseModel):
 
 class CheckoutRequest(BaseModel):
     plan_code: str
+    # Meta browser identifiers (the _fbp / _fbc cookies), passed through to the
+    # server-side Purchase event to improve match quality.
+    fbp: str | None = Field(default=None, max_length=200)
+    fbc: str | None = Field(default=None, max_length=300)
 
 class HubTransactionBody(BaseModel):
     external_user_id: str
@@ -2634,7 +2638,8 @@ def coach(payload: CoachRequest, user=Depends(get_current_user)):
 
 
 @app.post("/billing/checkout")
-def create_checkout(body: CheckoutRequest, user=Depends(get_current_user)):
+def create_checkout(body: CheckoutRequest, request: Request, user=Depends(get_current_user)):
+    _save_checkout_context(user.id, request, body.fbp, body.fbc)
     plan = PLAN_CATALOG.get(body.plan_code)
     if not plan:
         raise HTTPException(status_code=400, detail=f"Unknown plan_code: {body.plan_code}")
@@ -2747,22 +2752,72 @@ def _activate_plan(user_id: str, plan_code: str):
     }, on_conflict='user_id').execute()
 
 
+def _save_checkout_context(user_id: str, request: Request, fbp: str | None, fbc: str | None):
+    """Remembers the buyer's IP / user agent / Meta cookies at checkout time. The
+    payment webhook is server-to-server (from the shop), so this is the only moment
+    those browser-side values are visible. Best-effort — never blocks checkout."""
+    try:
+        fwd = request.headers.get("x-forwarded-for", "")
+        ip = fwd.split(",")[0].strip() or (request.client.host if request.client else None)
+        supabase.table('checkout_context').upsert({
+            'user_id': user_id,
+            'client_ip': ip,
+            'client_user_agent': request.headers.get("user-agent"),
+            'fbp': fbp,
+            'fbc': fbc,
+            'updated_at': datetime.now(timezone.utc).isoformat(),
+        }, on_conflict='user_id').execute()
+    except Exception as e:
+        print("checkout_context save failed:", e)
+
+
+def _load_checkout_context(user_id: str) -> dict:
+    """Latest checkout context for this user, if recent enough to belong to the
+    payment being confirmed (a webhook lands within minutes of checkout)."""
+    try:
+        row = supabase.table('checkout_context').select('*').eq('user_id', user_id).execute()
+        if not row.data:
+            return {}
+        ctx = row.data[0]
+        if datetime.now(timezone.utc) - datetime.fromisoformat(ctx['updated_at']) > timedelta(hours=24):
+            return {}
+        return ctx
+    except Exception as e:
+        print("checkout_context load failed:", e)
+        return {}
+
+
 def _send_meta_purchase_event(user_id: str, order_ref: str, amount: float, currency: str, tap_charge_id: str | None):
     """Server-side Purchase event to Meta's Conversions API. Best-effort — must
     never fail or delay the webhook response that confirms payment to the user."""
     if not META_PIXEL_ID or not META_ACCESS_TOKEN:
         return
     try:
-        email = None
+        email = phone = None
         try:
             user_resp = supabase.auth.admin.get_user_by_id(user_id)
             email = getattr(user_resp.user, "email", None) if user_resp else None
+            phone = getattr(user_resp.user, "phone", None) if user_resp else None
         except Exception:
             pass
 
         user_data = {}
         if email:
             user_data["em"] = [hashlib.sha256(email.strip().lower().encode()).hexdigest()]
+        phone_digits = "".join(ch for ch in (phone or "") if ch.isdigit())
+        if phone_digits:
+            user_data["ph"] = [hashlib.sha256(phone_digits.encode()).hexdigest()]
+
+        # Browser-side identifiers captured at checkout (IP, user agent, _fbp, _fbc).
+        ctx = _load_checkout_context(user_id)
+        if ctx.get("client_ip"):
+            user_data["client_ip_address"] = ctx["client_ip"]
+        if ctx.get("client_user_agent"):
+            user_data["client_user_agent"] = ctx["client_user_agent"]
+        if ctx.get("fbp"):
+            user_data["fbp"] = ctx["fbp"]
+        if ctx.get("fbc"):
+            user_data["fbc"] = ctx["fbc"]
 
         payload = {
             "data": [{
