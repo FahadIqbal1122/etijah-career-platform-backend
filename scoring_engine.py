@@ -400,6 +400,9 @@ def enrich_profile(profile: dict) -> dict:
     answers = profile.get('answers')
     profile['education_specialisms'] = extract_specialisms(answers, profile.get('education_field'))
     profile['study_year'] = extract_study_year(answers) if profile.get('current_stage') == 'university' else None
+    # The optional "field you have in mind" (QOFIELD), already cleaned at submit; re-checked here because it enters prompts.
+    from content_policy import clean_direction_label
+    profile['focus_direction'] = clean_direction_label(answers.get('QOFIELD')) if isinstance(answers, dict) else None
     target = extract_target_country(answers)
     if target and profile.get('country') != target:
         profile.setdefault('country_based', profile.get('country'))

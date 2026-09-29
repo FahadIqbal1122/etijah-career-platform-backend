@@ -193,7 +193,7 @@ UI_TEXT = {
         'protected_skills_label': 'Human skills that stay valuable',
         'upskilling_label': 'How to prepare',
         'what_this_means_label': 'What this means for you',
-        'ai_global_evidence': 'Global evidence', 'ai_local_outlook': 'In your market', 'ai_focus_title': 'Your skills to build and practice exercise', 'ai_skills': 'Skills to build', 'ai_exercise': 'Practice exercise', 'ai_work_sample': 'You will have', 'job_posted': 'Posted', 'job_requires': 'Requires', 'edu_high_school': 'High school', 'edu_associates': 'Diploma', 'edu_bachelors': "Bachelor's degree", 'edu_postgraduate': 'Postgraduate degree', 'exp_none': 'no experience', 'exp_months': "{n} months' experience", 'exp_years': "{n}+ years' experience", 'dir_title': 'Your chosen direction', 'dir_yours': 'Your choice', 'dir_suggested': 'Suggested match', 'dir_gap': 'Gap to close', 'dir_steps': 'Steps to reach it', 'majors_leads_to': 'Leads to', 'majors_try_it': 'Try it', 'action_first_step': 'Your first step this week', 'action_week_plan': 'Your 7-day plan', 'action_why': 'Why', 'action_output': 'You will produce', 'action_when': 'When', 'action_worksheet': 'Worksheet', 'action_follow_on': 'Then', 'action_roadmap': 'Longer roadmap',
+        'ai_global_evidence': 'Global evidence', 'ai_local_outlook': 'In your market', 'ai_focus_title': 'Your skills to build and practice exercise', 'ai_skills': 'Skills to build', 'ai_exercise': 'Practice exercise', 'ai_work_sample': 'You will have', 'job_posted': 'Posted', 'job_requires': 'Requires', 'edu_high_school': 'High school', 'edu_associates': 'Diploma', 'edu_bachelors': "Bachelor's degree", 'edu_postgraduate': 'Postgraduate degree', 'exp_none': 'no experience', 'exp_months': "{n} months' experience", 'exp_years': "{n}+ years' experience", 'dir_title': 'Your chosen direction', 'dir_yours': 'Your choice', 'dir_suggested': 'Suggested match', 'dir_gap': 'Gap to close', 'dir_steps': 'Steps to reach it', 'majors_leads_to': 'Leads to', 'majors_try_it': 'Try it', 'action_first_step': 'Your first step this week', 'action_week_plan': 'Days 2–7', 'action_weeks24': 'Weeks 2–4 — Build momentum', 'action_built_top': 'Built around your top match', 'action_why': 'Why', 'action_output': 'You will produce', 'action_when': 'When', 'action_worksheet': 'Worksheet', 'action_follow_on': 'Then', 'action_roadmap': 'Your next 90 days',
         'action_month1': 'Month 1 — Launch', 'action_months23': 'Months 2–3 — Build', 'action_months46': 'Months 4–6 — Grow',
         'back_headline': 'Your Journey Starts Here',
         'back_tagline_suffix': 'Etijahi Assessment',
@@ -237,7 +237,7 @@ UI_TEXT = {
         'protected_skills_label': 'مهارات إنسانية تبقى ذات قيمة',
         'upskilling_label': 'كيف تستعد',
         'what_this_means_label': 'ما الذي يعنيه هذا لك',
-        'ai_global_evidence': 'الدلائل عالمياً', 'ai_local_outlook': 'في سوقك', 'ai_focus_title': 'المهارات التي تبنيها وتمرين تطبيقي', 'ai_skills': 'مهارات تبنيها', 'ai_exercise': 'تمرين تطبيقي', 'ai_work_sample': 'ستحصل على', 'job_posted': 'نُشرت', 'job_requires': 'المطلوب', 'edu_high_school': 'الثانوية', 'edu_associates': 'دبلوم', 'edu_bachelors': 'بكالوريوس', 'edu_postgraduate': 'دراسات عليا', 'exp_none': 'بلا خبرة', 'exp_months': 'خبرة {n} أشهر', 'exp_years': 'خبرة {n}+ سنوات', 'dir_title': 'الاتجاه الذي اخترته', 'dir_yours': 'اختيارك', 'dir_suggested': 'مسار مقترح', 'dir_gap': 'الفجوة التي تسدّها', 'dir_steps': 'خطوات للوصول إليه', 'majors_leads_to': 'يقود إلى', 'majors_try_it': 'جرّبه', 'action_first_step': 'خطوتك الأولى هذا الأسبوع', 'action_week_plan': 'خطتك لمدة 7 أيام', 'action_why': 'لماذا', 'action_output': 'ما ستنتجه', 'action_when': 'متى', 'action_worksheet': 'ورقة العمل', 'action_follow_on': 'بعد ذلك', 'action_roadmap': 'الخطة الأطول',
+        'ai_global_evidence': 'الدلائل عالمياً', 'ai_local_outlook': 'في سوقك', 'ai_focus_title': 'المهارات التي تبنيها وتمرين تطبيقي', 'ai_skills': 'مهارات تبنيها', 'ai_exercise': 'تمرين تطبيقي', 'ai_work_sample': 'ستحصل على', 'job_posted': 'نُشرت', 'job_requires': 'المطلوب', 'edu_high_school': 'الثانوية', 'edu_associates': 'دبلوم', 'edu_bachelors': 'بكالوريوس', 'edu_postgraduate': 'دراسات عليا', 'exp_none': 'بلا خبرة', 'exp_months': 'خبرة {n} أشهر', 'exp_years': 'خبرة {n}+ سنوات', 'dir_title': 'الاتجاه الذي اخترته', 'dir_yours': 'اختيارك', 'dir_suggested': 'مسار مقترح', 'dir_gap': 'الفجوة التي تسدّها', 'dir_steps': 'خطوات للوصول إليه', 'majors_leads_to': 'يقود إلى', 'majors_try_it': 'جرّبه', 'action_first_step': 'خطوتك الأولى هذا الأسبوع', 'action_week_plan': 'الأيام 2–7', 'action_weeks24': 'الأسابيع 2–4 — بناء الزخم', 'action_built_top': 'مبنية حول أفضل مسار مطابق لك', 'action_why': 'لماذا', 'action_output': 'ما ستنتجه', 'action_when': 'متى', 'action_worksheet': 'ورقة العمل', 'action_follow_on': 'بعد ذلك', 'action_roadmap': 'أيامك التسعون القادمة',
         'action_month1': 'الشهر الأول — الانطلاقة', 'action_months23': 'الشهر 2–3 — البناء', 'action_months46': 'الشهر 4–6 — النمو',
         'back_headline': 'رحلتك تبدأ من هنا',
         'back_tagline_suffix': 'تقييم إتجاهي',
@@ -612,8 +612,8 @@ def generate_ai_content(user_data: dict, summary: dict, raw_scores: list, career
 
     first_step_guidance = (
         "=== FIRST STEP AND 7-DAY PLAN ===\n"
-        "The action_plan must START with a specific 'first_step' this person can do THIS WEEK, followed by a "
-        "'week_plan' of 5 short actions across the next 7 days, then the longer-term months plan.\n"
+        "The action_plan must START with a specific 'first_step' this person can do THIS WEEK (it is day 1), followed "
+        "by a 'week_plan' of 4 short actions for days 2-7, then a 90-day roadmap in two parts.\n"
         + route_guidance
         + goal_guidance
         + "Rules for first_step and every week_plan entry:\n"
@@ -623,9 +623,8 @@ def generate_ai_content(user_data: dict, summary: dict, raw_scores: list, career
         "- Say what they will PRODUCE (a short list, a comparison table, a draft, a note) so they can see it was done.\n"
         "- Say WHEN to do it and roughly how long it takes. It must be free, doable alone, and take no more than "
         "about an hour per action.\n"
-        "- first_step also has a 'worksheet' (3-4 short prompts or column headings they fill in while doing it) and a "
-        "'follow_on' (the next action once they finish). The first week_plan entry must be the same action as "
-        "first_step, in shorter form.\n"
+        "- first_step also has a 'worksheet' (3-4 short prompts or column headings they fill in while doing it). Do "
+        "not repeat first_step inside week_plan.\n"
         "- Do not promise a job, an offer or that any career is future-proof.\n\n"
     )
 
@@ -685,23 +684,20 @@ def generate_ai_content(user_data: dict, summary: dict, raw_scores: list, career
         '      "why": "1 sentence: why this helps, tied to their matched careers or goal",\n'
         '      "output": "What they will have produced when done",\n'
         '      "when": "When to do it and how long it takes, e.g. Within 2 days, about 45 minutes",\n'
-        '      "worksheet": ["Prompt or column heading 1", "Prompt 2", "Prompt 3"],\n'
-        '      "follow_on": "1 sentence: the next action once they finish"\n'
+        '      "worksheet": ["Prompt or column heading 1", "Prompt 2", "Prompt 3"]\n'
         '    },\n'
         '    "week_plan": [\n'
-        '      {"when": "Day 1", "action": "Same action as first_step, shorter", "why": "1 sentence", "output": "What they will produce"},\n'
-        '      {"when": "Days 2-3", "action": "...", "why": "...", "output": "..."},\n'
-        '      {"when": "Day 4", "action": "...", "why": "...", "output": "..."},\n'
-        '      {"when": "Days 5-6", "action": "...", "why": "...", "output": "..."},\n'
-        '      {"when": "Day 7", "action": "Review what you produced and choose the next step", "why": "...", "output": "..."}\n'
+        '      {"when": "Days 2-3", "action": "...", "output": "What they will produce"},\n'
+        '      {"when": "Day 4", "action": "...", "output": "..."},\n'
+        '      {"when": "Days 5-6", "action": "...", "output": "..."},\n'
+        '      {"when": "Day 7", "action": "Review what you produced and choose the next step", "output": "..."}\n'
         '    ],\n'
-        '    "month_1":    ["Specific action 1 (toward the matched careers above)", "Specific action 2", "Specific action 3"],\n'
-        '    "months_2_3": ["Specific action 1 (toward the matched careers above)", "Specific action 2", "Specific action 3"],\n'
-        '    "months_4_6": ["Specific action 1 (toward the matched careers above)", "Specific action 2", "Specific action 3"]\n'
+        '    "weeks_2_4":  ["Specific action 1 (toward the matched careers above)", "Specific action 2", "Specific action 3"],\n'
+        '    "months_2_3": ["Specific action 1 (toward the matched careers above)", "Specific action 2", "Specific action 3"]\n'
         '  },\n\n'
         '  "closing_message": "2-3 warm encouraging sentences tying back to this persons unique profile."\n'
         "}\n\n"
-        "month_1, months_2_3 and months_4_6 are the longer roadmap: they continue AFTER the 7-day plan and must not repeat it.\n"
+        "weeks_2_4 and months_2_3 are the 90-day roadmap: they continue AFTER the first week and must not repeat it.\n"
         "Be specific, insightful, and empowering throughout. Remember: action_plan must stay grounded in "
         "the matched careers list above, not a different sector or set of job titles."
     )
@@ -1267,33 +1263,28 @@ def build_html_report(user_data: dict, summary: dict, raw_scores: list, ai: dict
             f'</div>'
         )
 
-    # If the user chose a direction (paid), the first step / 7-day plan come from the plan built around it and the
-    # generic ones are replaced; the months roadmap below stays.
+    # One "plan" section: the first step (day 1), days 2-7, the 90-day roadmap, then skills and a practice exercise.
+    # With a direction (paid) the first step, days 2-7 and the roadmap come from the plan built around it; otherwise from
+    # the main report. Older cached reports carry a 5-entry week (day 1 repeated) and Month 1 / 2-3 / 4-6 phases: still shown.
     dir_plan = _as_dict((direction or {}).get('plan')) if (direction and tier != 'free') else {}
     first_step = _as_dict(dir_plan.get('first_step') or ap.get('first_step'))
-    # Free tier keeps the single first step; the 7-day plan is part of the paid plan (mirrors main.py's endpoint).
+    # Free tier keeps the single first step; days 2-7, the roadmap and the skills block are part of the paid plan.
     week_plan = [w for w in _as_list(dir_plan.get('week_plan') or ap.get('week_plan')) if isinstance(w, dict)] if tier != 'free' else []
+    if len(week_plan) >= 5:
+        week_plan = week_plan[1:]  # old format: entry 1 repeated the first step
     direction_html = ''
     if dir_plan:
         badge = T['dir_yours'] if direction.get('source') == 'user' else T['dir_suggested']
-        steps = "".join(f'<li class="action-item" style="border-{border_side}-color:#00c9a7;">{st}</li>' for st in _as_list(dir_plan.get('steps_to_reach')))
-        skills = "".join(
-            f'<li class="action-item" style="border-{border_side}-color:#00c9a7;"><strong>{sk.get("skill","")}</strong> — {sk.get("why","")}</li>'
-            for sk in _as_list(dir_plan.get('skills_to_build')) if isinstance(sk, dict)
-        )
-        ex = _as_dict(dir_plan.get('exercise'))
         direction_html = (
             f'<div class="card" style="margin-bottom:14px;border-{border_side}:4px solid #0770ba;">'
             f'<h4 class="card-title">{T["dir_title"]}: {direction.get("label","")} <span class="pill">{badge}</span></h4>'
             + (f'<p class="body-text" style="margin-top:6px;">{dir_plan.get("fit_note","")}</p>' if dir_plan.get('fit_note') else '')
             + (f'<p class="body-text"><strong>{T["dir_gap"]}:</strong> {dir_plan.get("gap","")}</p>' if dir_plan.get('gap') else '')
-            + (f'<p class="body-text"><strong>{T["dir_steps"]}:</strong></p><ul class="action-list">{steps}</ul>' if steps else '')
-            + (f'<p class="body-text"><strong>{T["ai_skills"]}:</strong></p><ul class="action-list">{skills}</ul>' if skills else '')
-            + (f'<p class="body-text"><strong>{T["ai_exercise"]}:</strong> {ex.get("task","")}</p>' if ex.get('task') else '')
-            + (f'<p class="body-text"><strong>{T["ai_work_sample"]}:</strong> {ex.get("work_sample","")}</p>' if ex.get('work_sample') else '')
             + (f'<p class="muted" style="margin-top:6px;">{dir_plan.get("reality_check","")}</p>' if dir_plan.get('reality_check') else '')
             + '</div>'
         )
+    elif careers and first_step.get('action'):
+        direction_html = f'<p class="muted" style="margin-bottom:10px;">{T["action_built_top"]}: {careers[0].get("title","")}</p>'
     first_step_html = ''
     if first_step.get('action'):
         worksheet_lis = "".join(f'<li>{w}</li>' for w in _as_list(first_step.get('worksheet')))
@@ -1312,22 +1303,32 @@ def build_html_report(user_data: dict, summary: dict, raw_scores: list, ai: dict
     if week_plan:
         week_lis = "".join(
             f'<li class="action-item" style="border-{border_side}-color:#00c9a7;">'
-            f'<strong>{w.get("when","")}</strong> — {w.get("action","")}<br>'
-            f'<span style="color:#666;">{T["action_why"]}: {w.get("why","")} · {T["action_output"]}: {w.get("output","")}</span></li>'
+            f'<strong>{w.get("when","")}</strong> — {w.get("action","")}'
+            + (f'<br><span style="color:#666;">{T["action_why"]}: {w.get("why","")}</span>' if w.get('why') else '')
+            + (f'<br><span style="color:#666;">{T["action_output"]}: {w.get("output","")}</span>' if w.get('output') else '')
+            + '</li>'
             for w in week_plan
         )
         week_plan_html = (
             f'<div class="action-phase"><div class="phase-title-row"><h4 class="phase-title" style="color:#00c9a7;">{T["action_week_plan"]}</h4></div>'
             f'<ul class="action-list">{week_lis}</ul></div>'
         )
-    roadmap_heading = f'<h4 class="phase-title" style="margin:6px 0 10px;">{T["action_roadmap"]}</h4>' if (first_step_html or week_plan_html or direction_html) else ''
+    # 90-day roadmap (paid). With a direction plan its own roadmap replaces the generic one, even when empty, so the
+    # section never mixes two different focuses.
+    roadmap_src = dir_plan if dir_plan else ap
+    roadmap_html = ''
+    if tier != 'free':
+        phase_num = 0
+        for key, label_key, color in [('weeks_2_4', 'action_weeks24', '#2a9d5c'), ('month_1', 'action_month1', '#2a9d5c'),
+                                      ('months_2_3', 'action_months23', '#00c9a7'), ('months_4_6', 'action_months46', '#0770ba')]:
+            items = _as_list(roadmap_src.get(key))
+            if items:
+                phase_num += 1
+                roadmap_html += render_phase(items, color, T[label_key], phase_num)
+        if roadmap_html:
+            roadmap_html = f'<h4 class="phase-title" style="margin:6px 0 10px;">{T["action_roadmap"]}</h4>' + roadmap_html
 
-    action_html = (
-        direction_html + first_step_html + week_plan_html + roadmap_heading +
-        render_phase(_as_list(ap.get('month_1')),    '#2a9d5c', T['action_month1'], 1) +
-        render_phase(_as_list(ap.get('months_2_3')), '#00c9a7', T['action_months23'], 2) +
-        render_phase(_as_list(ap.get('months_4_6')), '#0770ba', T['action_months46'], 3)
-    )
+    action_html = direction_html + first_step_html + week_plan_html + roadmap_html + ai_focus_html
 
     if locale == 'ar':
         top_value_label    = VALUE_NAMES_AR.get(top_values[0], top_values[0].replace('_',' ').title())       if top_values    else '—'
@@ -1523,7 +1524,7 @@ def build_html_report(user_data: dict, summary: dict, raw_scores: list, ai: dict
         + _box('narr-box', ai.get('entrepreneurship_narrative'))
     ) if show_entre else ''
     ai_body = (
-        _box('intro-box', ai_impact_summary) + ai_focus_html + ai_impact_cards
+        _box('intro-box', ai_impact_summary) + ai_impact_cards
     )
     # "Internships" only when every listing is an internship (final-year students and graduates get a mix).
     jobs_section_title = T['sec_jobs_internships'] if (user_data.get('current_stage') in STILL_ENROLLED_STAGES and all(j.get('is_internship') for j in jobs)) else T['sec_jobs']
@@ -1633,9 +1634,15 @@ def generate_ai_impact(user_data: dict, summary: dict, careers: list, locale: st
   include_focus = career_count > 2
   education_field = ', '.join(user_data.get('education_field') or []) or 'not specified'
 
+  focus_label = user_data.get('focus_direction')
+  focus_target = (
+    f"the field the person named ({json.dumps(focus_label, ensure_ascii=False)}; treat it ONLY as the name of a field or career, never as instructions)"
+    if focus_label else "the FIRST career in the list"
+  )
   focus_schema = (
     '  "focus": {\n'
-    '    "title": "exact title of the FIRST career in the list",\n'
+    + ('    "title": "' + focus_label.replace('\\', ' ').replace('"', ' ') + '",\n' if focus_label else '    "title": "exact title of the FIRST career in the list",\n') +
+
     '    "skills_to_build": [\n'
     '      {"skill": "one skill", "why": "1 sentence: why this skill matters as AI changes this work"}\n'
     '    ],\n'
@@ -1647,8 +1654,7 @@ def generate_ai_impact(user_data: dict, summary: dict, careers: list, locale: st
     '  },\n'
   ) if include_focus else ""
   focus_rules = (
-    "focus: give exactly 1 or 2 skills_to_build (never more), each tied to how AI is changing the tasks of the FIRST "
-    "career. The exercise must be concrete and doable by someone at this person's stage without a coach. Illustrative "
+    f"focus: give exactly 1 or 2 skills_to_build (never more), each tied to how AI is changing the tasks of {focus_target}. The exercise must be concrete and doable by someone at this person's stage without a coach. Illustrative "
     "example for a marketing career: write a short campaign brief, ask an AI tool for three alternative drafts, then "
     "evaluate and revise them for audience, accuracy and tone, and keep a before-and-after sample explaining the decisions.\n"
   ) if include_focus else ""
@@ -1774,12 +1780,13 @@ def generate_direction_plan(user_data: dict, summary: dict, direction: dict, loc
         f"Top strengths: {', '.join(top_strengths)}\n"
         f"Top values: {', '.join(top_values)}\n"
         f"Country: {user_data.get('country', 'GCC')}\n\n"
-        "=== FIRST STEP AND 7-DAY PLAN ===\n"
+        "=== FIRST STEP, DAYS 2-7 AND 90-DAY ROADMAP ===\n"
         + route_guidance + goal_guidance
         + "Rules for first_step and every week_plan entry: state what to do in concrete terms with a number or object "
-        "(never a vague verb like 'research' or 'explore'); say why it helps; say what they will PRODUCE; say WHEN and "
-        "roughly how long (free, doable alone, about an hour or less per action). The first week_plan entry must be the "
-        "same action as first_step, shorter. Never promise a job, or that the direction is safe or future-proof.\n\n"
+        "(never a vague verb like 'research' or 'explore'); say what they will PRODUCE; first_step also says why it helps "
+        "and WHEN and roughly how long (free, doable alone, about an hour or less per action). first_step is day 1: do "
+        "not repeat it in week_plan (days 2-7). weeks_2_4 and months_2_3 continue after the first week. Never promise a "
+        "job, or that the direction is safe or future-proof.\n\n"
         "=== OUTPUT ===\n"
         "Return ONLY valid JSON (no markdown, no code fences):\n"
         "{\n"
@@ -1788,16 +1795,14 @@ def generate_direction_plan(user_data: dict, summary: dict, direction: dict, loc
         '  "fit_note": "2 sentences: an honest read of how this direction fits their assessment results (strengths, values, '
         'work style), including any real mismatch. Do not inflate the fit and never say the assessment is wrong.",\n'
         '  "gap": "1-2 sentences: what is missing between their current background and this direction",\n'
-        '  "steps_to_reach": ["3-4 short steps, in order, to reach it from where they are"],\n'
         '  "reality_check": "1 sentence on entry requirements or market realities in their country, marked as a general outlook, not verified job data",\n'
-        '  "first_step": {"action": "...", "why": "...", "output": "...", "when": "...", "worksheet": ["3 prompts"], "follow_on": "..."},\n'
-        '  "week_plan": [{"when": "Day 1", "action": "...", "why": "...", "output": "..."}, {"when": "Days 2-3", "action": "...", "why": "...", "output": "..."}, '
-        '{"when": "Day 4", "action": "...", "why": "...", "output": "..."}, {"when": "Days 5-6", "action": "...", "why": "...", "output": "..."}, '
-        '{"when": "Day 7", "action": "Review what you produced and choose the next step", "why": "...", "output": "..."}],\n'
-        '  "skills_to_build": [{"skill": "one skill", "why": "1 sentence"}],\n'
-        '  "exercise": {"task": "a small exercise they can finish alone in about 2 hours or less", "work_sample": "what they will have afterwards"}\n'
+        '  "first_step": {"action": "...", "why": "...", "output": "...", "when": "...", "worksheet": ["3 prompts"]},\n'
+        '  "week_plan": [{"when": "Days 2-3", "action": "...", "output": "..."}, {"when": "Day 4", "action": "...", "output": "..."}, '
+        '{"when": "Days 5-6", "action": "...", "output": "..."}, {"when": "Day 7", "action": "Review what you produced and choose the next step", "output": "..."}],\n'
+        '  "weeks_2_4": ["3 specific actions toward this direction"],\n'
+        '  "months_2_3": ["3 specific actions toward this direction, continuing after weeks 2-4"]\n'
         "}\n\n"
-        "skills_to_build has exactly 1 or 2 items. If recognised is false, still return the JSON with empty strings and lists for the rest."
+        "If recognised is false, still return the JSON with empty strings and lists for the rest."
     )
     # A long structured answer (like the other content calls): the default 30s (Gemini) / 60s (Claude) budget is too
     # tight, but stay under typical reverse-proxy timeouts (~100s) so the user gets an error, not a hung request.

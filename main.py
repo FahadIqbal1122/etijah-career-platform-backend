@@ -1205,9 +1205,10 @@ def get_career_recommendations(response_id: str, locale: str | None = None, user
     # generate_ai_content). Now rendered on the live results page's Action Plan
     # card, in addition to admin review and the downloaded PDF.
     action_plan = dict(ai_content.get("action_plan") or {})
-    # Free tier gets the single first step; the 7-day plan is part of the paid Career Action Plan.
+    # Free tier gets the single first step; days 2-7 and the 90-day roadmap are part of the paid plan.
     if tier == "free" and not _is_admin(user):
-        action_plan.pop("week_plan", None)
+        for k in ("week_plan", "weeks_2_4", "month_1", "months_2_3", "months_4_6"):
+            action_plan.pop(k, None)
     return {
         "career_recommendations": ai_content.get("career_recommendations") or [],
         "action_plan": action_plan,
