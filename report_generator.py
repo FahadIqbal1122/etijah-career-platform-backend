@@ -762,6 +762,8 @@ def generate_ai_content(user_data: dict, summary: dict, raw_scores: list, career
         '      "match_score": 88,\n'
         '      "fit_summary": "2 sentences on exactly why this fits this specific person.",\n'
         '      "growth_note": "1 sentence on career growth potential.",\n'
+        '      "gap": "1 sentence: what is missing between their current background and this career (a qualification, skill or experience). For a new_direction career, name the main steps or requirements to reach it from where they are.",\n'
+        '      "next_action": "1 sentence: one concrete thing they can do now (within about a month) toward this career, and free or low-cost.",\n'
         '      "fit_tag": "strong_fit or worth_exploring — fixed code, not narrative text",\n'
         '      "direction_tag": "builds_on_background or new_direction — fixed code, not narrative text"\n'
         '    }\n'
@@ -772,7 +774,11 @@ def generate_ai_content(user_data: dict, summary: dict, raw_scores: list, career
         "don't make every career 'strong_fit'.\n"
         "direction_tag: use 'builds_on_background' if the career overlaps with the person's education "
         "field/current work or sectors of interest, and 'new_direction' if it doesn't but is justified "
-        "by their personality/values/strengths results instead.\n\n"
+        "by their personality/values/strengths results instead.\n"
+        "match_score reflects the assessment results honestly: do NOT raise or lower a score to fit what the person "
+        "says they want; the goal only affects how you explain each career, never the score.\n"
+        "gap and next_action must be honest and specific to this person's stage and background, in plain language, "
+        "and must never suggest a career is guaranteed or that their current field is a mistake.\n\n"
         f"Provide exactly {career_count} career recommendations. Be specific, insightful, and empowering throughout."
     )
 
@@ -1023,16 +1029,17 @@ def build_html_report(user_data: dict, summary: dict, raw_scores: list, ai: dict
         )
 
     # ── Career recommendation cards ───────────────────────────────────────────
-    career_cards = ""
-    for rec in _as_list(ai.get('career_recommendations'))[:career_rec_cap]:
-        rec = _as_dict(rec)
+    def _career_card(rec: dict) -> str:
         ms = rec.get('match_score', 0)
         tag_pills = ""
         if rec.get('fit_tag') in ('strong_fit', 'worth_exploring'):
             tag_pills += f'<span class="pill" style="margin-left:4px;">{T["fit_tag_" + rec["fit_tag"]]}</span>'
         if rec.get('direction_tag') in ('builds_on_background', 'new_direction'):
             tag_pills += f'<span class="pill" style="margin-left:4px;">{T["direction_tag_" + rec["direction_tag"]]}</span>'
-        career_cards += (
+        gap_label = T['rec_gap_paths'] if rec.get('direction_tag') == 'new_direction' else T['rec_gap_build']
+        gap_html = (f'<p class="body-text" style="margin-top:6px;"><strong>{gap_label}:</strong> {rec.get("gap","")}</p>' if rec.get('gap') else '')
+        next_html = (f'<p class="body-text" style="margin-top:4px;"><strong>{T["rec_next"]}:</strong> {rec.get("next_action","")}</p>' if rec.get('next_action') else '')
+        return (
             f'<div class="card" style="margin-bottom:10px;">'
             f'<div class="card-row">'
             f'<div>'
@@ -1046,8 +1053,31 @@ def build_html_report(user_data: dict, summary: dict, raw_scores: list, ai: dict
             f'</div>'
             f'<p class="body-text" style="margin-top:8px;">{rec.get("fit_summary","")}</p>'
             f'<p class="muted" style="margin-top:4px;font-style:italic;">{rec.get("growth_note","")}</p>'
+            f'{gap_html}{next_html}'
             f'</div>'
         )
+
+    # Two headings when every recommendation carries a direction_tag: "Build on what you have"
+    # (in or near their current field) and "Paths you may not have considered". Group order follows
+    # their goal (a different direction leads with the paths). High-school users have no field to
+    # build on, so they get a single list; older cached reports without tags also stay flat.
+    recs = [_as_dict(r) for r in _as_list(ai.get('career_recommendations'))[:career_rec_cap]]
+    build_recs = [r for r in recs if r.get('direction_tag') == 'builds_on_background']
+    path_recs = [r for r in recs if r.get('direction_tag') == 'new_direction']
+    can_group = (
+        recs and len(build_recs) + len(path_recs) == len(recs)
+        and user_data.get('current_stage') not in MAJORS_STAGES
+    )
+    if can_group:
+        groups = [(T['group_build'], build_recs), (T['group_paths'], path_recs)]
+        if user_data.get('career_direction') == 'change_field':
+            groups.reverse()
+        career_cards = ""
+        for heading, group_recs in groups:
+            if group_recs:
+                career_cards += f'<h4 class="phase-title" style="margin:6px 0 10px;">{heading}</h4>' + "".join(_career_card(r) for r in group_recs)
+    else:
+        career_cards = "".join(_career_card(r) for r in recs)
 
     # ── Job listing cards ──────────────────────────────────────────────────────
     job_cards = ""

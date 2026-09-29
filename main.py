@@ -1177,7 +1177,7 @@ def get_career_suggestions(response_id: str, user=Depends(get_optional_user)):
 
 @app.get("/assessment/{response_id}/career-recommendations")
 def get_career_recommendations(response_id: str, locale: str | None = None, user=Depends(get_optional_user)):
-    owner_row = supabase.table('assessment_responses').select('user_id').eq('id', response_id).single().execute()
+    owner_row = supabase.table('assessment_responses').select('user_id,career_direction').eq('id', response_id).single().execute()
     if not owner_row.data:
         raise HTTPException(status_code=404, detail="No results found for this response")
     owner_user_id = owner_row.data.get('user_id')
@@ -1201,6 +1201,8 @@ def get_career_recommendations(response_id: str, locale: str | None = None, user
     return {
         "career_recommendations": ai_content.get("career_recommendations") or [],
         "action_plan": action_plan,
+        # Lets the results page order the "Build on what you have" / "Paths you may not have considered" groups.
+        "career_direction": owner_row.data.get('career_direction'),
     }
 
 @app.get("/assessment/{response_id}/ai-impact")
