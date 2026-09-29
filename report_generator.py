@@ -1053,11 +1053,25 @@ def build_html_report(user_data: dict, summary: dict, raw_scores: list, ai: dict
     job_cards = ""
     for job in jobs:
         location = job.get("location", "").strip()
+        # When it was posted and what it asks for (older cached listings carry neither).
+        meta = []
+        if job.get("posted_at"):
+            meta.append(f'{T["job_posted"]}: {job["posted_at"]}')
+        req_parts = []
+        if job.get("requires_education") in ("high_school", "associates", "bachelors", "postgraduate"):
+            req_parts.append(T["edu_" + job["requires_education"]])
+        months = job.get("requires_experience_months")
+        if isinstance(months, int):
+            req_parts.append(T["exp_none"] if months == 0 else T["exp_months"].format(n=months) if months < 12 else T["exp_years"].format(n=months // 12))
+        if req_parts:
+            meta.append(f'{T["job_requires"]}: {" · ".join(req_parts)}')
+        meta_html = f'<p class="muted" style="margin-top:4px;">{" · ".join(meta)}</p>' if meta else ""
         job_cards += (
             f'<div class="card" style="margin-bottom:10px;">'
             f'<h4 class="card-title">{job.get("title","")}</h4>'
             f'<p class="muted">{job.get("company","")}{" · " + location if location else ""}</p>'
             f'<p class="muted" style="margin-top:6px;">{T["matched_to"]}: {job.get("matched_career","")}</p>'
+            f'{meta_html}'
             f'</div>'
         )
 
@@ -2436,7 +2450,9 @@ def create_report(response_id: str, supabase_client, tier: str = "launchpad", lo
     # way for report generation to fail or stall.
     jobs = []
     cached_jobs = _execute_with_retry(supabase_client.table('job_listings_cache').select('jobs').eq('response_id', response_id))
-    if cached_jobs.data:
+    # High-school users see majors and courses instead of jobs/internships (mirrors the live site).
+    # Paid plan only (the live site hides the apply links from free users too).
+    if cached_jobs.data and profile.data.get('current_stage') not in NO_LISTINGS_STAGES and tier != 'free':
         jobs = (cached_jobs.data[0].get('jobs') or [])[:8]
 
     companies, courses = [], []

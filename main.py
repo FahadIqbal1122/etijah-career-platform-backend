@@ -2287,12 +2287,33 @@ def _search_matching_jobs(response_id: str) -> list[dict] | None:
     all_jobs = []
     seen_ids = set()
 
-    for career in top3:
+    # Recent graduates get entry-level jobs plus internships (one extra internship search for
+    # their top career); still-enrolled users get internships only; everyone else regular jobs.
+    # Final-year and postgraduate students are about to enter the market, so they also get entry-level jobs
+    # (one extra search for their top career) alongside their internships.
+    final_year_student = profile.data.get('current_stage') == 'university' and profile.data.get('study_year') in ('final_year', 'postgraduate')
+    searches = [(career, is_still_enrolled) for career in top3]
+    if is_early_career and top3:
+        searches.append((top3[0], True))
+    if final_year_student and top3:
+        searches.append((top3[0], False))
+    per_search = 3 if (is_early_career or final_year_student) else 4
+    # Highest education level we know they have: a graduate or a university student (about to have a bachelor's)
+    # = bachelor's, a postgraduate student = postgraduate. Working users: unknown, so no education filter.
+    stage_now = profile.data.get('current_stage')
+    if stage_now == 'recent_graduate':
+        user_education_rank = EDUCATION_RANK['bachelors']
+    elif stage_now == 'university':
+        user_education_rank = EDUCATION_RANK['postgraduate'] if profile.data.get('study_year') == 'postgraduate' else EDUCATION_RANK['bachelors']
+    else:
+        user_education_rank = None
+
+    for career, internship_mode in searches:
         try:
-            if is_still_enrolled:
+            if internship_mode:
                 query_prefix = "internship "
                 job_requirements = "internship"
-            elif is_early_career:
+            elif is_early_career or final_year_student:
                 query_prefix = "entry level graduate "
                 job_requirements = "under_3_years_experience,no_experience,no_degree"
             else:
@@ -2317,7 +2338,12 @@ def _search_matching_jobs(response_id: str) -> list[dict] | None:
                 timeout=8.0,
             )
             resp.raise_for_status()
-            for job in (resp.json().get("data") or [])[:4]:
+            # Take the first `per_search` listings that pass the filters (not the first few raw results, which
+            # the freshness / requirement filters below may all reject).
+            kept_from_search = 0
+            for job in (resp.json().get("data") or []):
+                if kept_from_search >= per_search:
+                    break
                 job_id = job.get("job_id")
                 job_title = job.get("job_title")
                 employer_name = job.get("employer_name")
@@ -2329,10 +2355,23 @@ def _search_matching_jobs(response_id: str) -> list[dict] | None:
                 # Internship postings are inherently entry-level, so the
                 # senior-title filter (built for regular job postings) doesn't
                 # apply to them.
-                if not is_still_enrolled and not is_seniority_appropriate(job_title, job.get("job_description"), is_early_career):
+                if not internship_mode and not is_seniority_appropriate(job_title, job.get("job_description"), is_early_career or final_year_student):
+                    continue
+                # Drop stale or expired postings, and ones that ask for more education or experience than they have.
+                if not is_job_fresh(job):
+                    continue
+                req = parse_job_requirements(job)
+                if internship_mode:
+                    exp_cap = MAX_EXPERIENCE_MONTHS_INTERNSHIP
+                elif is_early_career or final_year_student:
+                    exp_cap = MAX_EXPERIENCE_MONTHS_EARLY_CAREER
+                else:
+                    exp_cap = None
+                if not meets_requirements(req, user_education_rank, exp_cap):
                     continue
                 if job_id and job_id not in seen_ids:
                     seen_ids.add(job_id)
+                    kept_from_search += 1
                     all_jobs.append({
                         "job_id": job_id,
                         "title": job_title,
@@ -2341,7 +2380,10 @@ def _search_matching_jobs(response_id: str) -> list[dict] | None:
                         "source": job.get("job_publisher"),
                         "url": job.get("job_apply_link"),
                         "matched_career": career['title'],
-                        "is_internship": is_still_enrolled,
+                        "is_internship": internship_mode,
+                        "posted_at": job_posted_date(job),
+                        "requires_education": req["education"],
+                        "requires_experience_months": req["experience_months"],
                     })
         except Exception as e:
             print("JSearch error:", e)
@@ -2362,11 +2404,19 @@ def get_job_listings(response_id: str, force: bool = False, user=Depends(get_opt
     if owner_row.data.get('current_stage') in NO_LISTINGS_STAGES:
         return {"jobs": []}
 
+    # The apply links are part of the paid plan. Free users still get title / company / source (the page shows
+    # them as a blurred teaser), but never the link — the UI blur alone is not a paywall.
+    is_free_viewer = not _is_admin(user) and get_effective_tier(owner_row.data.get('user_id')) == "free"
+    def _visible(jobs: list) -> dict:
+        if is_free_viewer:
+            jobs = [{k: v for k, v in j.items() if k != 'url'} for j in jobs]
+        return {"jobs": jobs}
+
     cached = _execute_with_retry(supabase.table('job_listings_cache').select('*').eq('response_id', response_id))
     if cached.data and not force:
         fetched_at = datetime.fromisoformat(cached.data[0]['fetched_at'])
         if datetime.now(timezone.utc) - fetched_at < JOB_LISTINGS_CACHE_TTL:
-            return {"jobs": cached.data[0]['jobs']}
+            return _visible(cached.data[0]['jobs'])
 
     result_jobs = _search_matching_jobs(response_id)
     if result_jobs is None:
@@ -2378,7 +2428,7 @@ def get_job_listings(response_id: str, force: bool = False, user=Depends(get_opt
         'fetched_at': datetime.now(timezone.utc).isoformat(),
     }))
 
-    return {"jobs": result_jobs}
+    return _visible(result_jobs)
 
 
 @app.post("/internal/jobs/refresh-matches")
