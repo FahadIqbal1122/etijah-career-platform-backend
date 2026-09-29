@@ -7,6 +7,8 @@ import os
 import json
 import re
 import html as _html
+import threading
+from contextlib import contextmanager
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor
 import google.generativeai as genai
@@ -2095,6 +2097,26 @@ def _get_cached_semantic_scores(response_id: str, summary: dict, profile_data: d
     return scores
 
 
+_SINGLE_FLIGHT_LOCKS: dict[str, threading.Lock] = {}
+_SINGLE_FLIGHT_GUARD = threading.Lock()
+
+@contextmanager
+def single_flight(key: str):
+    """Only one thread at a time runs the body for a given key; the others wait and then run it after. Callers
+    re-check their cache inside the block, so a second identical request that arrives while the first is still
+    generating reuses the first one's result instead of paying for a second AI call.
+    In-process only: it covers one server process (the current deployment runs a single uvicorn worker). If the
+    backend is ever scaled to several workers or replicas, this needs a shared lock (for example a database row)."""
+    with _SINGLE_FLIGHT_GUARD:
+        lock = _SINGLE_FLIGHT_LOCKS.setdefault(key, threading.Lock())
+    with lock:
+        yield
+    with _SINGLE_FLIGHT_GUARD:
+        # Drop the entry once nobody is holding or waiting on it, so the dict does not grow forever.
+        if not lock.locked() and _SINGLE_FLIGHT_LOCKS.get(key) is lock:
+            del _SINGLE_FLIGHT_LOCKS[key]
+
+
 def _generate_and_cache(supabase_client, response_id: str, col: str, generate):
     """Each write is conditioned on the column still being null, so if two
     requests race for the same response_id and both generate a value, the
@@ -2103,15 +2125,23 @@ def _generate_and_cache(supabase_client, response_id: str, col: str, generate):
     gets back whatever actually ended up persisted (the winning request's
     value), not its own discarded generation — otherwise a later Arabic
     translation pass could translate content that was never the row's
-    real English cache, permanently diverging EN/AR content."""
-    value = generate()
-    written = _execute_with_retry(supabase_client.table('assessment_responses')
-        .update({col: value})
-        .eq('id', response_id).is_(col, 'null'))
-    if written.data:
-        return value
-    refreshed = _execute_with_retry(supabase_client.table('assessment_responses').select(col).eq('id', response_id).single())
-    return refreshed.data.get(col) or value
+    real English cache, permanently diverging EN/AR content.
+
+    On top of that, identical requests are serialised (single_flight): a second request for the same
+    response and column that arrives while the first is still generating waits, then finds the value
+    the first one cached and returns it, so the AI call is paid for once, not twice."""
+    with single_flight(f"cache:{response_id}:{col}"):
+        current = _execute_with_retry(supabase_client.table('assessment_responses').select(col).eq('id', response_id).single())
+        if current.data and current.data.get(col):
+            return current.data[col]
+        value = generate()
+        written = _execute_with_retry(supabase_client.table('assessment_responses')
+            .update({col: value})
+            .eq('id', response_id).is_(col, 'null'))
+        if written.data:
+            return value
+        refreshed = _execute_with_retry(supabase_client.table('assessment_responses').select(col).eq('id', response_id).single())
+        return refreshed.data.get(col) or value
 
 
 def get_or_generate_ai_content(response_id: str, supabase_client, tier: str = "launchpad", locale: str = 'en') -> dict:
