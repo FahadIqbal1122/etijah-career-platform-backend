@@ -1231,7 +1231,10 @@ def get_ai_impact(response_id: str, force: bool = False, locale: str | None = No
     cache_col_active = cache_col_ar if locale == 'ar' else cache_col
     cached = profile_row.data.get(cache_col_active)
     if cached and not force:
-        return {**cached, "careers": (cached.get("careers") or [])[:careers_cap]}
+        out = {**cached, "careers": (cached.get("careers") or [])[:careers_cap]}
+        if is_free:
+            out.pop("focus", None)  # skills-to-build / practice exercise are part of the paid plan
+        return out
 
     rows = _execute_with_retry(supabase.table('assessment_results')
         .select('*').eq('response_id', response_id))
@@ -1255,7 +1258,10 @@ def get_ai_impact(response_id: str, force: bool = False, locale: str | None = No
         # bug_reports row for the same failure already recorded above.
         raise HTTPException(status_code=500, detail="AI Impact generation failed, please try again")
 
-    return {**result, "careers": (result.get("careers") or [])[:careers_cap]}
+    out = {**result, "careers": (result.get("careers") or [])[:careers_cap]}
+    if is_free:
+        out.pop("focus", None)
+    return out
 
 def _trim_student_track(track: dict, tier: str) -> dict:
     """High-school majors comparison: free tier keeps just each major's name and one-line reason;

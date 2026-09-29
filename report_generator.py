@@ -167,7 +167,7 @@ UI_TEXT = {
         'sec01': 'Your Career Profile', 'sec02': 'Career Personality', 'sec03': 'Personality Traits',
         'sec04': 'Core Values', 'sec05': 'Strengths Profile', 'sec06': 'Work Style & Resilience',
         'sec07': 'Entrepreneurial Profile', 'sec08': 'Career Pathways',
-        'sec09': 'AI Impact & Future-Proofing',
+        'sec09': 'AI Impact & Your Next Skills',
         'sec_jobs': 'Job Listings', 'sec_jobs_internships': 'Internships & Exposure',
         'sec_student_track': 'Majors & Exposure',
         'sec_certifications': 'Certifications to Pursue', 'sec_career_path': 'Your Path Forward',
@@ -211,7 +211,7 @@ UI_TEXT = {
         'sec01': 'ملفك المهني', 'sec02': 'شخصيتك المهنية', 'sec03': 'سمات الشخصية',
         'sec04': 'القيم الجوهرية', 'sec05': 'ملف نقاط القوة', 'sec06': 'أسلوب العمل والمرونة',
         'sec07': 'الملف الريادي', 'sec08': 'المسارات المهنية',
-        'sec09': 'تأثير الذكاء الاصطناعي واستشراف المستقبل',
+        'sec09': 'تأثير الذكاء الاصطناعي ومهاراتك القادمة',
         'sec_jobs': 'فرص وظيفية', 'sec_jobs_internships': 'فرص تدريب وتعرّف على المجال',
         'sec_student_track': 'التخصصات والتعرّف على المجال',
         'sec_certifications': 'شهادات يُنصح بها', 'sec_career_path': 'مسارك المهني القادم',
@@ -1215,13 +1215,33 @@ def build_html_report(user_data: dict, summary: dict, raw_scores: list, ai: dict
             f'<h4 class="card-title">{c.get("title","")}</h4>'
             f'{_risk_badge(c.get("ai_risk_level",""), locale)}'
             f'</div>'
-            f'<p class="body-text" style="margin-top:6px;">{c.get("gcc_outlook","")}</p>'
+            + (f'<p class="body-text" style="margin-top:6px;"><strong>{T["ai_global_evidence"]}:</strong> {c.get("global_evidence","")}</p>' if c.get('global_evidence') else '')
+            + f'<p class="body-text" style="margin-top:6px;">{("<strong>" + T["ai_local_outlook"] + ":</strong> ") if c.get("global_evidence") else ""}{c.get("gcc_outlook","")}</p>'
             f'{protected_skills_html}'
             f'{upskilling_html}'
             f'{what_this_means_html}'
             f'</div>'
         )
     ai_impact_summary = (ai_impact or {}).get('overall_summary', '')
+
+    # Paid only (the focus block is only generated for the full AI-impact call): skills to build and a
+    # practice exercise for the top-matched career.
+    ai_focus_html = ''
+    focus = _as_dict((ai_impact or {}).get('focus'))
+    if focus and tier != 'free':
+        skill_items = "".join(
+            f'<li class="action-item" style="border-{border_side}-color:#00c9a7;"><strong>{sk.get("skill","")}</strong> — {sk.get("why","")}</li>'
+            for sk in _as_list(focus.get('skills_to_build')) if isinstance(sk, dict)
+        )
+        ex = _as_dict(focus.get('exercise'))
+        ai_focus_html = (
+            f'<div class="card" style="margin-bottom:10px;border-{border_side}:4px solid #00c9a7;">'
+            f'<h4 class="card-title">{T["ai_focus_title"]}: {focus.get("title","")}</h4>'
+            + (f'<p class="muted" style="margin:8px 0 4px;font-size:0.75em;text-transform:uppercase;">{T["ai_skills"]}</p><ul class="action-list">{skill_items}</ul>' if skill_items else '')
+            + (f'<p class="body-text" style="margin-top:8px;"><strong>{T["ai_exercise"]}:</strong> {ex.get("task","")}</p>' if ex.get('task') else '')
+            + (f'<p class="body-text"><strong>{T["ai_work_sample"]}:</strong> {ex.get("work_sample","")}</p>' if ex.get('work_sample') else '')
+            + '</div>'
+        )
 
     # ── Action plan ───────────────────────────────────────────────────────────
     ap = _as_dict(ai.get('action_plan'))
@@ -1705,17 +1725,56 @@ def generate_ai_impact(user_data: dict, summary: dict, careers: list, locale: st
   top_strengths  = summary.get('strengths', {}).get('top_strengths', [])
   top_values     = summary.get('values',    {}).get('top_values',   [])
   careers_text   = "\n".join(f" - {c['title']} ({c['sector']})" for c in careers[:career_count])
+  # The free tier only shows 2 careers; the skills-to-build and practice-exercise block is part of
+  # the paid plan, so it is only generated for the full (paid) call.
+  include_focus = career_count > 2
+  education_field = ', '.join(user_data.get('education_field') or []) or 'not specified'
+
+  focus_schema = (
+    '  "focus": {\n'
+    '    "title": "exact title of the FIRST career in the list",\n'
+    '    "skills_to_build": [\n'
+    '      {"skill": "one skill", "why": "1 sentence: why this skill matters as AI changes this work"}\n'
+    '    ],\n'
+    '    "exercise": {\n'
+    '      "task": "a small exercise they can finish alone in about 2 hours or less, using a free AI tool where it makes sense, "'
+    '"that practises the skill(s) above",\n'
+    '      "work_sample": "what they will have afterwards to show for it (e.g. a before-and-after document with notes on their decisions)"\n'
+    '    }\n'
+    '  },\n'
+  ) if include_focus else ""
+  focus_rules = (
+    "focus: give exactly 1 or 2 skills_to_build (never more), each tied to how AI is changing the tasks of the FIRST "
+    "career. The exercise must be concrete and doable by someone at this person's stage without a coach. Illustrative "
+    "example for a marketing career: write a short campaign brief, ask an AI tool for three alternative drafts, then "
+    "evaluate and revise them for audience, accuracy and tone, and keep a before-and-after sample explaining the decisions.\n"
+  ) if include_focus else ""
 
   prompt = (
-    "You are a career futurist specializing in AI's impact on work in the GCC region.\n"
-    "Analyze how AI and automation will affect this specific person's top career matches.\n"                                                                                                         
-    "Be honest about risks but focus on what protects them and how to future-proof.\n\n"
+    "You are a career adviser explaining, in plain language, how AI is changing the work in this person's top career matches.\n"
+    "Be honest about which TASKS are changing and focus on what stays valuable and what they can do about it.\n\n"
+    "Rules:\n"
+    "- Never say or imply that a career is future-proof, safe, or will disappear. Talk about tasks that are changing, "
+    "not whole careers vanishing.\n"
+    "- Evidence: you may refer to general, well-known kinds of global evidence (for example published research or industry "
+    "reports on generative AI at work) ONLY where you are confident they exist. NEVER invent statistics, percentages, "
+    "report titles, quotes or links. If you are not sure, say it is based on general industry trends.\n"
+    "- Keep GLOBAL evidence (global_evidence) separate from LOCAL outlook (gcc_outlook). gcc_outlook is a general outlook "
+    "for the person's market, not verified job-market data: say so plainly if you have no specific data.\n"
+    "- what_this_means_for_you must fit this person's STAGE and experience: a student should hear what to do while "
+    "studying, a recent graduate what changes for entry-level work, and a working person how it affects their current work "
+    "or a move.\n\n"
     f"{CULTURAL_GUARDRAIL}\n\n"
     + (ARABIC_LANGUAGE_INSTRUCTION if locale == 'ar' else "")
     + "=== USER PROFILE ===\n"
     f"RIASEC top types: {', '.join(riasec_types)}\n"
-    f"Top strengths: {', '.join(top_strengths)}\n"                                                                                                                                                   
-    f"Top values: {', '.join(top_values)}\n"                                                                                                                                                                   f"Current stage: {user_data.get('current_stage', 'N/A')}\n"
+    f"Top strengths: {', '.join(top_strengths)}\n"
+    f"Top values: {', '.join(top_values)}\n"
+    f"Current stage: {user_data.get('current_stage', 'N/A')}\n"
+    f"Work experience: {user_data.get('experience_level') or 'N/A'}\n"
+    f"Education field: {education_field}\n"
+    + (f"Specific area of study: {', '.join(user_data['education_specialisms'])}\n" if user_data.get('education_specialisms') else "")
+    + f"What they want help with: {CAREER_DIRECTION_LABELS.get(user_data.get('career_direction'), 'Not specified')}\n"
     f"Country: {user_data.get('country', 'GCC')}\n\n"
     "=== TOP MATCHED CAREERS ===\n"
     f"{careers_text}\n\n"
@@ -1723,24 +1782,27 @@ def generate_ai_impact(user_data: dict, summary: dict, careers: list, locale: st
     "Return ONLY valid JSON (no markdown, no code fences):\n"
     "{\n"
     '  "overall_summary": "2-3 sentences on this persons overall AI exposure given their strengths and career matches.",\n'
+    + focus_schema +
     '  "careers": [\n'
-    '    {\n'   
+    '    {\n'
     '      "title": "exact career title from the list",\n'
     '      "ai_risk_level": "low or medium or high",\n'
     '      "at_risk_tasks": ["task 1", "task 2"],\n'
     '      "protected_skills": ["skill 1", "skill 2"],\n'
-    '      "upskilling": ["1 specific recommendation", "1 specific recommendation"],\n'
-    '      "gcc_outlook": "1 sentence on AI adoption pace in this career in the GCC specifically.",\n'
-    '      "what_this_means_for_you": "1-2 sentences, written directly to the person (you/your), '
-    'turning the above into a personal takeaway and a concrete next action — not a summary of '
-    'what was already said, but what they should actually do with it."\n'
+    '      "global_evidence": "1-2 sentences: what general global evidence or industry trends say about these tasks changing (see rules; no invented figures).",\n'
+    '      "gcc_outlook": "1 sentence on AI adoption pace in this career in the GCC, marked as a general outlook, not job-market data.",\n'
+    '      "what_this_means_for_you": "1-2 sentences, written directly to the person (you/your) and specific to their stage: '
+    'what this means for someone like them and one concrete next action."\n'
     '    }\n'
     '  ]\n'
     "}\n\n"
-    f"Cover all {career_count} careers. Be specific and GCC-aware throughout."
+    + focus_rules +
+    f"Cover all {career_count} careers. Be specific, plain-spoken and GCC-aware throughout."
   )
 
-  return _generate_json(prompt, label="ai_impact")
+  # The paid call is larger now (5 careers with evidence, plus the focus block): give it a longer budget than the
+  # small free-tier call.
+  return _generate_json(prompt, timeout_s=90 if include_focus else None, label="ai_impact")
 
 
 def get_or_generate_ai_impact(response_id: str, summary: dict, profile_data: dict, top_careers: list,
