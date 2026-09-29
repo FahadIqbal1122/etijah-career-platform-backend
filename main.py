@@ -782,6 +782,7 @@ def get_results(response_id: str, user=Depends(get_optional_user)):
         'results': rows.data, 'summary': summary, 'email': profile.data.get('email'),
         'tier': tier, 'locale': profile.data.get('locale') or 'en',
         'is_still_enrolled': profile.data.get('current_stage') in STILL_ENROLLED_STAGES,
+        'route': resolve_route(profile.data.get('current_stage')),
         # Drives the beta feedback form on the frontend — only shown during the
         # beta window, distinct from a genuine paying launchpad tier.
         'beta_mode': _is_test_mode_enabled(),
@@ -1195,7 +1196,7 @@ def get_career_recommendations(response_id: str, locale: str | None = None, user
     # card, in addition to admin review and the downloaded PDF.
     action_plan = dict(ai_content.get("action_plan") or {})
     # Free tier gets the single first step; the 7-day plan is part of the paid Career Action Plan.
-    if tier == "free":
+    if tier == "free" and not _is_admin(user):
         action_plan.pop("week_plan", None)
     return {
         "career_recommendations": ai_content.get("career_recommendations") or [],
@@ -1254,6 +1255,13 @@ def get_ai_impact(response_id: str, force: bool = False, locale: str | None = No
 
     return {**result, "careers": (result.get("careers") or [])[:careers_cap]}
 
+def _trim_student_track(track: dict, tier: str) -> dict:
+    """High-school majors comparison: free tier keeps just each major's name and one-line reason;
+    the careers it leads to and the 'try it' step are part of the paid plan."""
+    if not track or tier != "free" or not track.get("majors"):
+        return track
+    return {**track, "majors": [{"name": m.get("name"), "why_fit": m.get("why_fit")} for m in track["majors"]]}
+
 @app.get("/assessment/{response_id}/student-track")
 def get_student_track(response_id: str, force: bool = False, locale: str | None = None, user=Depends(get_optional_user)):
     """Majors guidance + exposure ideas for still-enrolled students — the
@@ -1276,10 +1284,11 @@ def get_student_track(response_id: str, force: bool = False, locale: str | None 
         return {}
 
     locale = locale or 'en'
+    tier = "launchpad" if _is_admin(user) else get_effective_tier(owner_user_id)
     cache_col_active = 'student_track_cache_ar' if locale == 'ar' else 'student_track_cache'
     cached = profile_row.data.get(cache_col_active)
     if cached and not force:
-        return cached
+        return _trim_student_track(cached, tier)
 
     rows = _execute_with_retry(supabase.table('assessment_results').select('*').eq('response_id', response_id))
     if not rows.data:
@@ -1297,7 +1306,7 @@ def get_student_track(response_id: str, force: bool = False, locale: str | None 
     except Exception as e:
         send_failure_alert("Student track generation", e, response_id=response_id, supabase=supabase)
         raise HTTPException(status_code=500, detail="Student track generation failed, please try again")
-    return result
+    return _trim_student_track(result, tier)
 
 @app.get("/assessment/{response_id}/certifications")
 def get_certifications(response_id: str, force: bool = False, locale: str | None = None, user=Depends(get_optional_user)):
@@ -1316,7 +1325,11 @@ def get_certifications(response_id: str, force: bool = False, locale: str | None
     if force:
         _assert_can_force_refresh(owner_user_id, user)
 
-    if profile_row.data.get('current_stage') not in ENTERING_MARKET_STAGES:
+    if profile_row.data.get('current_stage') not in CERTIFICATION_STAGES:
+        return {}
+    # Certifications are part of the paid plan (Pathfinder or Launchpad). Free users get {} and the
+    # results page shows an unlock card, so no AI call is spent on them. Admins always see them.
+    if get_effective_tier(owner_user_id) == "free" and not _is_admin(user):
         return {}
 
     locale = locale or 'en'
@@ -2339,12 +2352,15 @@ def _search_matching_jobs(response_id: str) -> list[dict] | None:
 
 @app.get("/assessment/{response_id}/job-listings")
 def get_job_listings(response_id: str, force: bool = False, user=Depends(get_optional_user)):
-    owner_row = _execute_with_retry(supabase.table('assessment_responses').select('user_id').eq('id', response_id).single())
+    owner_row = _execute_with_retry(supabase.table('assessment_responses').select('user_id,current_stage').eq('id', response_id).single())
     if not owner_row.data:
         raise HTTPException(status_code=404, detail="No results found for this response")
     _assert_can_view(owner_row.data.get('user_id'), user)
     if force:
         _assert_can_force_refresh(owner_row.data.get('user_id'), user)
+    # High-school users see majors and courses instead — no jobs or internships (and no JSearch spend).
+    if owner_row.data.get('current_stage') in NO_LISTINGS_STAGES:
+        return {"jobs": []}
 
     cached = _execute_with_retry(supabase.table('job_listings_cache').select('*').eq('response_id', response_id))
     if cached.data and not force:
@@ -2553,6 +2569,9 @@ def get_companies_suggestions(response_id: str, user=Depends(get_optional_user))
     _assert_can_view(owner_user_id, user)
     tier = get_effective_tier(owner_user_id)
     if tier == "free":
+        return []
+    # The employer target list is for graduates and working users, not students.
+    if profile.data.get('current_stage') in NO_COMPANIES_STAGES:
         return []
     company_limit = 50 if tier == "launchpad" else 20
 

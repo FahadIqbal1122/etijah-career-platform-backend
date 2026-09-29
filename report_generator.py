@@ -1077,6 +1077,21 @@ def build_html_report(user_data: dict, summary: dict, raw_scores: list, ai: dict
     if student_track:
         if student_track.get('majors_guidance'):
             student_track_cards += f'<p class="body-text" style="margin-bottom:10px;">{student_track["majors_guidance"]}</p>'
+        for m in (student_track.get('majors') or []):
+            careers_line = ''
+            if tier != 'free':
+                careers_list = ', '.join(str(c) for c in _as_list(m.get('careers')))
+                careers_line = (
+                    (f'<p class="body-text"><strong>{T["majors_leads_to"]}:</strong> {careers_list}</p>' if careers_list else '')
+                    + (f'<p class="body-text"><strong>{T["majors_try_it"]}:</strong> {m.get("try_it","")}</p>' if m.get('try_it') else '')
+                )
+            student_track_cards += (
+                f'<div class="card" style="margin-bottom:10px;border-{border_side}:4px solid #00c9a7;">'
+                f'<h4 class="card-title">{m.get("name","")}</h4>'
+                f'<p class="body-text" style="margin-top:6px;">{m.get("why_fit","")}</p>'
+                f'{careers_line}'
+                f'</div>'
+            )
         for idea in (student_track.get('exposure_ideas') or []):
             student_track_cards += (
                 f'<div class="card" style="margin-bottom:10px;">'
@@ -1728,6 +1743,7 @@ def generate_student_track(user_data: dict, summary: dict, careers: list, locale
     top_values    = summary.get('values', {}).get('top_values', [])
     careers_text  = "\n".join(f" - {c['title']} ({c['sector']})" for c in careers[:career_count])
     education_field = ', '.join(user_data.get('education_field') or []) or 'not yet decided'
+    is_high_school = user_data.get('current_stage') in MAJORS_STAGES
 
     prompt = (
         "You are a career coach helping a student in the GCC figure out their next practical "
@@ -1751,15 +1767,32 @@ def generate_student_track(user_data: dict, summary: dict, careers: list, locale
         "=== OUTPUT ===\n"
         "Return ONLY valid JSON (no markdown, no code fences):\n"
         "{\n"
-        '  "majors_guidance": "2-3 sentences: if stage is high_school, suggest which majors best '
-        'fit these career matches and why; if stage is university and a field is already declared, '
+        '  "majors_guidance": "2-3 sentences: if stage is high_school, summarise which kinds of majors '
+        'fit them and why; if stage is university and a field is already declared, '
         'advise how to make the most of or supplement that field given the matches (e.g. minors, '
-        'electives, projects) rather than suggesting an unrelated major.",\n'
-        '  "exposure_ideas": [\n'
+        'electives, projects) rather than suggesting an unrelated major. If they are unsure about '
+        'their subject, suggest low-cost ways to test their interest in it and in neighbouring areas.",\n'
+        + (
+            '  "majors": [\n'
+            '    {"name": "a general major or field of study (not a specific university programme)", '
+            '"why_fit": "1 sentence tying it to their assessment results", '
+            '"careers": ["career it leads to", "another", "another"], '
+            '"try_it": "1 sentence: a low-cost way to test their interest before committing"}\n'
+            '  ],\n'
+            if is_high_school else ""
+        )
+        + '  "exposure_ideas": [\n'
         '    {"title": "short name of the activity/competition/programme", '
         '"why": "1 sentence on how it connects to their matched careers"}\n'
         '  ]\n'
         "}\n\n"
+        + (
+            "Provide exactly 3 majors that fit their results, meaningfully different from each other. "
+            "For each, list 3 careers it leads to, taking them from the matched careers list where a "
+            "major genuinely leads there, and adding realistic others where it does not. Do not claim a "
+            "major guarantees a job.\n\n"
+            if is_high_school else ""
+        ) +
         "Provide exactly 4 exposure_ideas: a mix of competitions, student societies/clubs, "
         "shadowing/volunteering, and short online/personal projects — concrete and specific to the "
         "GCC where possible (real or realistic programme types, e.g. national hackathons, "
@@ -1809,9 +1842,17 @@ def generate_certifications(user_data: dict, summary: dict, careers: list, local
     careers_text  = "\n".join(f" - {c['title']} ({c['sector']})" for c in careers[:career_count])
     education_field = ', '.join(user_data.get('education_field') or []) or 'not specified'
 
+    is_student = user_data.get('current_stage') in STILL_ENROLLED_STAGES
     prompt = (
-        "You are a career coach helping a recent graduate in the GCC become more competitive "
-        "for entry-level roles in their matched careers.\n\n"
+        (
+            "You are a career coach helping a university student in the GCC build on their degree. "
+            "They have plenty of time before graduating, so the certifications can be substantial "
+            "ones that take months, not only quick wins — pick what will make them most competitive "
+            "when they graduate for their matched careers.\n\n"
+            if is_student else
+            "You are a career coach helping a recent graduate in the GCC become more competitive "
+            "for entry-level roles in their matched careers.\n\n"
+        ) +
         f"{CULTURAL_GUARDRAIL}\n\n"
         + (ARABIC_LANGUAGE_INSTRUCTION if locale == 'ar' else "")
         + "=== USER PROFILE ===\n"
@@ -2380,10 +2421,11 @@ def create_report(response_id: str, supabase_client, tier: str = "launchpad", lo
     if profile.data.get('current_stage') in STILL_ENROLLED_STAGES:
         student_track = get_or_generate_student_track(response_id, summary, profile.data, top_careers,
             supabase_client, locale=locale)
-    elif profile.data.get('current_stage') in ENTERING_MARKET_STAGES:
+    # Certifications: university students (time to build credentials) and recent graduates.
+    if profile.data.get('current_stage') in CERTIFICATION_STAGES and tier != 'free':
         certifications = get_or_generate_certifications(response_id, summary, profile.data, top_careers,
             supabase_client, locale=locale)
-    elif profile.data.get('current_stage') in PROFESSIONAL_STAGES:
+    if profile.data.get('current_stage') in PROFESSIONAL_STAGES:
         career_path = get_or_generate_career_path(response_id, summary, profile.data, top_careers,
             supabase_client, locale=locale)
 
@@ -2413,6 +2455,9 @@ def create_report(response_id: str, supabase_client, tier: str = "launchpad", lo
         company_limit = 50 if tier == 'launchpad' else 20
         companies_raw = _execute_with_retry(company_query.order('name_en').limit(company_limit)).data or []
         companies = [c for c in companies_raw if is_appropriate(c.get('name_en'), c.get('sector'))][:12]
+        # The employer target list is for graduates and working users, not students.
+        if profile.data.get('current_stage') in NO_COMPANIES_STAGES:
+            companies = []
 
         user_riasec = set(summary.get('riasec', {}).get('top_types', []))
         course_sectors = set(c['sector'] for c in top5)
