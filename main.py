@@ -578,6 +578,13 @@ def submit_assessment(body: SubmitRequest, background_tasks: BackgroundTasks, us
     # Score it first, before writing anything — a payload with no recognizable
     # question answers can't be scored, so reject cleanly instead of leaving
     # an orphaned response row with no results.
+    # Optional "field you have in mind" (QOFIELD): keep only a cleaned label, drop it if it fails the checks. It
+    # is never scored; it later feeds an AI prompt, so what is stored is the whitelisted, length-limited text.
+    field_in_mind = clean_direction_label(body.answers.get('QOFIELD'))
+    if field_in_mind:
+        body.answers['QOFIELD'] = field_in_mind
+    else:
+        body.answers.pop('QOFIELD', None)
     results = compute_scores(body.answers)
     if not results:
         raise HTTPException(status_code=422, detail="No scoreable answers found in payload")
@@ -1512,14 +1519,40 @@ def _direction_payload(row: dict, locale: str) -> dict:
         "locales": list(plans.keys()),
     }
 
+# (response_id, locale) -> "running" | "failed": stops the results page's polling from starting a second AI call,
+# or retrying a failed one on every poll. In-process only (single uvicorn worker); a restart just allows one more try,
+# and the cached plan in direction_plans is checked before any AI call is made.
+_direction_autobuild: dict[tuple[str, str], str] = {}
+
+def _autobuild_direction(response_id: str, label: str, source: str, locale: str):
+    key = (response_id, locale)
+    try:
+        row = _execute_with_retry(supabase.table('assessment_responses')
+            .select('user_id,current_stage,country,education_field,career_direction,experience_level,sectors_of_interest,answers')
+            .eq('id', response_id).single())
+        _build_direction_plan(response_id, row.data, label, source, locale)
+        _direction_autobuild.pop(key, None)
+    except HTTPException as e:
+        print(f"direction auto-build refused for {response_id} ({locale}): {e.detail}")
+        _direction_autobuild[key] = "failed"
+    except Exception as e:
+        print(f"direction auto-build failed for {response_id} ({locale}):", e)
+        _direction_autobuild[key] = "failed"
+
 @app.get("/assessment/{response_id}/direction")
-def get_direction(response_id: str, locale: str | None = None, user=Depends(get_optional_user)):
-    """The direction the user chose to build their plan around (or null), with its plan for `locale`
-    if one has been generated in that language."""
-    owner_row = _execute_with_retry(supabase.table('assessment_responses').select('user_id').eq('id', response_id).single())
+def get_direction(response_id: str, background_tasks: BackgroundTasks, locale: str | None = None, user=Depends(get_optional_user)):
+    """The direction the plan is built around (or null), with its plan for `locale` if one exists.
+
+    The direction is the optional "field you have in mind" answer from the end of the assessment (QOFIELD), or one
+    chosen earlier through POST. For a paid report whose plan is not built yet in this language, the build starts here
+    in the background and `pending` is true: the results page polls until the plan appears. `failed_label` is set when
+    the build was refused or failed, so the page can say so instead of polling forever."""
+    loc = locale if locale in ('en', 'ar') else 'en'
+    owner_row = _execute_with_retry(supabase.table('assessment_responses').select('user_id,answers').eq('id', response_id).single())
     if not owner_row.data:
         raise HTTPException(status_code=404, detail="No results found for this response")
-    _assert_can_view(owner_row.data.get('user_id'), user)
+    owner_user_id = owner_row.data.get('user_id')
+    _assert_can_view(owner_user_id, user)
     try:
         rows = _execute_with_retry(supabase.table('direction_plans')
             .select('*').eq('response_id', response_id).eq('is_selected', True)).data or []
@@ -1527,27 +1560,30 @@ def get_direction(response_id: str, locale: str | None = None, user=Depends(get_
         # Table not created yet (migration not applied) or a DB hiccup: behave as "nothing chosen".
         print("direction_plans read failed:", e)
         return {"selected": None}
-    return {"selected": _direction_payload(rows[0], locale or 'en') if rows else None}
+    selected = rows[0] if rows else None
+    if selected and (selected.get('plans') or {}).get(loc):
+        return {"selected": _direction_payload(selected, loc)}
 
-@app.post("/assessment/{response_id}/direction")
-def choose_direction(response_id: str, body: DirectionRequest, user=Depends(get_optional_user)):
-    """Build the plan around a chosen direction (one of the suggested careers, or a field the user typed).
-    Paid feature and it spends an AI call, so: owner or admin only, one generation per direction per language,
-    and at most MAX_DIRECTIONS_PER_RESPONSE different directions per assessment."""
-    profile_row = _execute_with_retry(supabase.table('assessment_responses')
-        .select('user_id,current_stage,country,education_field,career_direction,experience_level,sectors_of_interest,answers')
-        .eq('id', response_id).single())
-    if not profile_row.data:
-        raise HTTPException(status_code=404, detail="No results found for this response")
-    profile = profile_row.data
-    owner_user_id = profile.get('user_id')
-    _assert_can_view(owner_user_id, user)
-    _assert_can_force_refresh(owner_user_id, user)
-    tier = "launchpad" if _is_admin(user) else get_effective_tier(owner_user_id)
-    if tier == "free":
-        raise HTTPException(status_code=403, detail="Building your plan around your own direction is part of the full report")
+    label = selected.get('label') if selected else clean_direction_label((owner_row.data.get('answers') or {}).get('QOFIELD'))
+    source = selected.get('source') if selected else 'user'
+    out = {"selected": _direction_payload(selected, loc) if selected else None}
+    if not label:
+        return out
+    if get_effective_tier(owner_user_id) == "free":
+        # Not built for free users; the page shows an unlock card because they did ask for a plan.
+        return {**out, "requested_label": label}
+    state = _direction_autobuild.get((response_id, loc))
+    if state == "failed":
+        return {**out, "failed_label": label}
+    if state is None:
+        _direction_autobuild[(response_id, loc)] = "running"
+        background_tasks.add_task(_autobuild_direction, response_id, label, source, loc)
+    return {**out, "pending": True, "pending_label": label}
 
-    label = clean_direction_label(body.label)
+def _build_direction_plan(response_id: str, profile: dict, label_raw: str, source: str, locale: str) -> dict:
+    """Builds (or returns the cached) plan for one direction in one language and marks it as the selected one.
+    Callers have already decided the user may have it (owner/admin and paid). Raises HTTPException on refusal."""
+    label = clean_direction_label(label_raw)
     if not label:
         raise HTTPException(status_code=422, detail="Please use a short field or career name (letters, numbers and simple punctuation).")
     key = direction_key(label)
@@ -1556,7 +1592,7 @@ def choose_direction(response_id: str, body: DirectionRequest, user=Depends(get_
     # Identical requests (a double click, two tabs, a retry after a slow response) are serialised: the second one
     # waits for the first to finish, then finds the plan it cached instead of paying for another AI call.
     from report_generator import single_flight
-    with single_flight(f"direction:{response_id}:{key}:{body.locale}"):
+    with single_flight(f"direction:{response_id}:{key}:{locale}"):
         try:
             existing = _execute_with_retry(supabase.table('direction_plans').select('*').eq('response_id', response_id)).data or []
         except Exception as e:
@@ -1567,7 +1603,7 @@ def choose_direction(response_id: str, body: DirectionRequest, user=Depends(get_
             raise HTTPException(status_code=429, detail=f"You have already built plans for {MAX_DIRECTIONS_PER_RESPONSE} different directions")
         plans = dict((row or {}).get('plans') or {})
 
-        if body.locale not in plans:
+        if locale not in plans:
             rows = _execute_with_retry(supabase.table('assessment_results').select('*').eq('response_id', response_id))
             if not rows.data:
                 raise HTTPException(status_code=404, detail="No results found for this response")
@@ -1600,20 +1636,20 @@ def choose_direction(response_id: str, body: DirectionRequest, user=Depends(get_
             from report_generator import generate_direction_plan
             try:
                 plan = generate_direction_plan(profile, summary,
-                    {"label": label, "source": body.source, "related": related, "context": context}, body.locale)
+                    {"label": label, "source": source, "related": related, "context": context}, locale)
             except Exception as e:
                 send_failure_alert("Direction plan generation", e, response_id=response_id, supabase=supabase)
                 raise HTTPException(status_code=500, detail="We could not build your plan right now, please try again")
             if not plan.get("recognised", True):
                 raise HTTPException(status_code=422, detail="We could not tell what field that is. Try a more common name, for example 'Supply chain management'.")
             plan.pop("recognised", None)
-            plans[body.locale] = plan
+            plans[locale] = plan
 
         now = datetime.now(timezone.utc).isoformat()
         try:
             supabase.table('direction_plans').upsert({
                 'response_id': response_id, 'direction_key': key, 'label': label,
-                'source': (row or {}).get('source') or body.source, 'plans': plans, 'updated_at': now,
+                'source': (row or {}).get('source') or source, 'plans': plans, 'updated_at': now,
             }, on_conflict='response_id,direction_key').execute()
             supabase.table('direction_plans').update({'is_selected': False}).eq('response_id', response_id).execute()
             saved = supabase.table('direction_plans').update({'is_selected': True}) \
@@ -1621,7 +1657,28 @@ def choose_direction(response_id: str, body: DirectionRequest, user=Depends(get_
         except Exception as e:
             print("direction_plans write failed:", e)
             raise HTTPException(status_code=503, detail="This feature is not available yet, please try again later")
-        return {"selected": _direction_payload(saved[0] if saved else {"label": label, "source": body.source, "plans": plans}, body.locale)}
+        return {"selected": _direction_payload(saved[0] if saved else {"label": label, "source": source, "plans": plans}, locale)}
+
+
+@app.post("/assessment/{response_id}/direction")
+def choose_direction(response_id: str, body: DirectionRequest, user=Depends(get_optional_user)):
+    """Build the plan around a chosen direction (one of the suggested careers, or a field the user typed).
+    Paid feature and it spends an AI call, so: owner or admin only, one generation per direction per language,
+    and at most MAX_DIRECTIONS_PER_RESPONSE different directions per assessment."""
+    profile_row = _execute_with_retry(supabase.table('assessment_responses')
+        .select('user_id,current_stage,country,education_field,career_direction,experience_level,sectors_of_interest,answers')
+        .eq('id', response_id).single())
+    if not profile_row.data:
+        raise HTTPException(status_code=404, detail="No results found for this response")
+    profile = profile_row.data
+    owner_user_id = profile.get('user_id')
+    _assert_can_view(owner_user_id, user)
+    _assert_can_force_refresh(owner_user_id, user)
+    tier = "launchpad" if _is_admin(user) else get_effective_tier(owner_user_id)
+    if tier == "free":
+        raise HTTPException(status_code=403, detail="Building your plan around your own direction is part of the full report")
+
+    return _build_direction_plan(response_id, profile, body.label, body.source, body.locale)
 
 @app.get("/assessment/{response_id}/report")
 def get_report(response_id: str, locale: str | None = None, user=Depends(get_optional_user)):
