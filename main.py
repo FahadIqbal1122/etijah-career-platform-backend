@@ -1,5 +1,6 @@
 from http import HTTPStatus
 import os
+import re
 from threading import _profile_hook
 from fastapi import FastAPI, HTTPException, Depends, Security, BackgroundTasks
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
@@ -1408,6 +1409,90 @@ def get_career_path(response_id: str, force: bool = False, locale: str | None = 
         raise HTTPException(status_code=500, detail="Career path generation failed, please try again")
     return result
 
+RECOMMENDATION_FEEDBACK_REASONS = ("uninterested", "unqualified", "unfamiliar", "impractical")
+MAX_FEEDBACK_ROWS_PER_RESPONSE = 20
+
+class RecommendationFeedbackRequest(BaseModel):
+    career_title: str = Field(min_length=1, max_length=120)
+    reason: Literal["uninterested", "unqualified", "unfamiliar", "impractical"]
+    locale: Literal["en", "ar"] = "en"
+
+def _clean_feedback_title(title: str) -> str:
+    return re.sub(r"\s+", " ", title or "").strip()[:120]
+
+@app.get("/assessment/{response_id}/recommendation-feedback")
+def get_recommendation_feedback(response_id: str, user=Depends(get_optional_user)):
+    """The careers this user marked 'not for me', with the reason: {"items": [{career_title, reason}]}."""
+    owner_row = _execute_with_retry(supabase.table('assessment_responses').select('user_id').eq('id', response_id).single())
+    if not owner_row.data:
+        raise HTTPException(status_code=404, detail="No results found for this response")
+    _assert_can_view(owner_row.data.get('user_id'), user)
+    try:
+        rows = _execute_with_retry(supabase.table('recommendation_feedback')
+            .select('career_title,reason').eq('response_id', response_id)).data or []
+    except Exception as e:
+        print("recommendation_feedback read failed (table missing?):", e)
+        return {"items": []}
+    return {"items": rows}
+
+@app.post("/assessment/{response_id}/recommendation-feedback")
+def save_recommendation_feedback(response_id: str, body: RecommendationFeedbackRequest, user=Depends(get_optional_user)):
+    """Record (or change) why a career was rejected. Feedback only: it never changes a score or a report."""
+    owner_row = _execute_with_retry(supabase.table('assessment_responses').select('user_id').eq('id', response_id).single())
+    if not owner_row.data:
+        raise HTTPException(status_code=404, detail="No results found for this response")
+    _assert_can_view(owner_row.data.get('user_id'), user)
+    title = _clean_feedback_title(body.career_title)
+    if not title:
+        raise HTTPException(status_code=422, detail="Missing career")
+    try:
+        existing = _execute_with_retry(supabase.table('recommendation_feedback')
+            .select('career_title').eq('response_id', response_id)).data or []
+        if title not in {r['career_title'] for r in existing} and len(existing) >= MAX_FEEDBACK_ROWS_PER_RESPONSE:
+            raise HTTPException(status_code=429, detail="Too many careers marked already")
+        supabase.table('recommendation_feedback').upsert({
+            'response_id': response_id, 'career_title': title, 'locale': body.locale, 'reason': body.reason,
+            'updated_at': datetime.now(timezone.utc).isoformat(),
+        }, on_conflict='response_id,career_title').execute()
+    except HTTPException:
+        raise
+    except Exception as e:
+        print("recommendation_feedback write failed:", e)
+        raise HTTPException(status_code=503, detail="This feature is not available yet, please try again later")
+    return {"career_title": title, "reason": body.reason}
+
+@app.delete("/assessment/{response_id}/recommendation-feedback")
+def delete_recommendation_feedback(response_id: str, career_title: str, user=Depends(get_optional_user)):
+    """Undo: the user changed their mind about a career."""
+    owner_row = _execute_with_retry(supabase.table('assessment_responses').select('user_id').eq('id', response_id).single())
+    if not owner_row.data:
+        raise HTTPException(status_code=404, detail="No results found for this response")
+    _assert_can_view(owner_row.data.get('user_id'), user)
+    try:
+        supabase.table('recommendation_feedback').delete() \
+            .eq('response_id', response_id).eq('career_title', _clean_feedback_title(career_title)).execute()
+    except Exception as e:
+        print("recommendation_feedback delete failed:", e)
+        raise HTTPException(status_code=503, detail="This feature is not available yet, please try again later")
+    return {"deleted": True}
+
+@app.get("/admin/recommendation-feedback")
+def admin_recommendation_feedback(_=Depends(require_admin)):
+    """Why users rejected careers: counts by reason and by career (top 30), plus the total."""
+    try:
+        rows = _execute_with_retry(supabase.table('recommendation_feedback').select('career_title,reason,locale')).data or []
+    except Exception as e:
+        print("recommendation_feedback admin read failed (table missing?):", e)
+        return {"total": 0, "by_reason": {}, "by_career": []}
+    by_reason: dict[str, int] = {}
+    by_career: dict[str, dict] = {}
+    for r in rows:
+        by_reason[r['reason']] = by_reason.get(r['reason'], 0) + 1
+        c = by_career.setdefault(r['career_title'], {"career_title": r['career_title'], "total": 0, "reasons": {}})
+        c["total"] += 1
+        c["reasons"][r['reason']] = c["reasons"].get(r['reason'], 0) + 1
+    top = sorted(by_career.values(), key=lambda c: c["total"], reverse=True)[:30]
+    return {"total": len(rows), "by_reason": by_reason, "by_career": top}
 
 class DirectionRequest(BaseModel):
     label: str = Field(max_length=200)
