@@ -51,18 +51,19 @@ def is_appropriate(*fields: str | None) -> bool:
 #   certs     certifications
 #   courses   recommended courses
 #   companies employers worth researching
-#   ai        AI impact (with skills to build and the practice exercise)
+#   ai        AI impact per career (the skills and practice exercise now live in the plan section)
 #   profile   the detailed personality, values, strengths and work-style pages
 # Rule: what decides and what to do next come first (careers, plan), then what to do about it in the order that
 # matters for that stage (learn / build for students, apply for graduates, transition for working users), then
-# the AI context, then the detailed profile as supporting evidence. Related sections sit next to each other:
+# the detailed profile as supporting evidence. The AI impact page sits right after the careers it is about (the results
+# page shows it inside each career card instead, so it ignores the "ai" entry). Related sections sit next to each other:
 # courses with certifications, jobs with companies.
 SECTION_ORDER = {
-    "choosing_studies": ["summary", "majors", "careers", "plan", "courses", "ai", "profile"],
-    "student":          ["summary", "careers", "plan", "courses", "certs", "majors", "jobs", "ai", "profile"],
-    "graduate":         ["summary", "careers", "plan", "jobs", "certs", "courses", "companies", "ai", "profile"],
-    "next_move":        ["summary", "careers", "plan", "path", "jobs", "courses", "companies", "ai", "profile"],
-    "default":          ["summary", "careers", "plan", "jobs", "courses", "companies", "ai", "profile"],
+    "choosing_studies": ["summary", "majors", "careers", "ai", "plan", "courses", "profile"],
+    "student":          ["summary", "careers", "ai", "plan", "courses", "certs", "majors", "jobs", "profile"],
+    "graduate":         ["summary", "careers", "ai", "plan", "jobs", "certs", "courses", "companies", "profile"],
+    "next_move":        ["summary", "careers", "ai", "plan", "path", "jobs", "courses", "companies", "profile"],
+    "default":          ["summary", "careers", "ai", "plan", "jobs", "courses", "companies", "profile"],
 }
 
 def section_order(current_stage: str | None) -> list[str]:
