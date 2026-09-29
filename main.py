@@ -1408,6 +1408,134 @@ def get_career_path(response_id: str, force: bool = False, locale: str | None = 
         raise HTTPException(status_code=500, detail="Career path generation failed, please try again")
     return result
 
+
+class DirectionRequest(BaseModel):
+    label: str = Field(max_length=200)
+    source: Literal["suggested", "user"]
+    locale: Literal["en", "ar"] = "en"
+
+MAX_DIRECTIONS_PER_RESPONSE = 5
+
+def _direction_payload(row: dict, locale: str) -> dict:
+    plans = row.get('plans') or {}
+    return {
+        "label": row.get('label'),
+        "source": row.get('source'),
+        "plan": plans.get(locale),
+        "locales": list(plans.keys()),
+    }
+
+@app.get("/assessment/{response_id}/direction")
+def get_direction(response_id: str, locale: str | None = None, user=Depends(get_optional_user)):
+    """The direction the user chose to build their plan around (or null), with its plan for `locale`
+    if one has been generated in that language."""
+    owner_row = _execute_with_retry(supabase.table('assessment_responses').select('user_id').eq('id', response_id).single())
+    if not owner_row.data:
+        raise HTTPException(status_code=404, detail="No results found for this response")
+    _assert_can_view(owner_row.data.get('user_id'), user)
+    try:
+        rows = _execute_with_retry(supabase.table('direction_plans')
+            .select('*').eq('response_id', response_id).eq('is_selected', True)).data or []
+    except Exception as e:
+        # Table not created yet (migration not applied) or a DB hiccup: behave as "nothing chosen".
+        print("direction_plans read failed:", e)
+        return {"selected": None}
+    return {"selected": _direction_payload(rows[0], locale or 'en') if rows else None}
+
+@app.post("/assessment/{response_id}/direction")
+def choose_direction(response_id: str, body: DirectionRequest, user=Depends(get_optional_user)):
+    """Build the plan around a chosen direction (one of the suggested careers, or a field the user typed).
+    Paid feature and it spends an AI call, so: owner or admin only, one generation per direction per language,
+    and at most MAX_DIRECTIONS_PER_RESPONSE different directions per assessment."""
+    profile_row = _execute_with_retry(supabase.table('assessment_responses')
+        .select('user_id,current_stage,country,education_field,career_direction,experience_level,sectors_of_interest,answers')
+        .eq('id', response_id).single())
+    if not profile_row.data:
+        raise HTTPException(status_code=404, detail="No results found for this response")
+    profile = profile_row.data
+    owner_user_id = profile.get('user_id')
+    _assert_can_view(owner_user_id, user)
+    _assert_can_force_refresh(owner_user_id, user)
+    tier = "launchpad" if _is_admin(user) else get_effective_tier(owner_user_id)
+    if tier == "free":
+        raise HTTPException(status_code=403, detail="Building your plan around your own direction is part of the full report")
+
+    label = clean_direction_label(body.label)
+    if not label:
+        raise HTTPException(status_code=422, detail="Please use a short field or career name (letters, numbers and simple punctuation).")
+    key = direction_key(label)
+    enrich_profile(profile)
+
+    # Identical requests (a double click, two tabs, a retry after a slow response) are serialised: the second one
+    # waits for the first to finish, then finds the plan it cached instead of paying for another AI call.
+    from report_generator import single_flight
+    with single_flight(f"direction:{response_id}:{key}:{body.locale}"):
+        try:
+            existing = _execute_with_retry(supabase.table('direction_plans').select('*').eq('response_id', response_id)).data or []
+        except Exception as e:
+            print("direction_plans read failed:", e)
+            raise HTTPException(status_code=503, detail="This feature is not available yet, please try again later")
+        row = next((r for r in existing if r.get('direction_key') == key), None)
+        if row is None and len(existing) >= MAX_DIRECTIONS_PER_RESPONSE:
+            raise HTTPException(status_code=429, detail=f"You have already built plans for {MAX_DIRECTIONS_PER_RESPONSE} different directions")
+        plans = dict((row or {}).get('plans') or {})
+
+        if body.locale not in plans:
+            rows = _execute_with_retry(supabase.table('assessment_results').select('*').eq('response_id', response_id))
+            if not rows.data:
+                raise HTTPException(status_code=404, detail="No results found for this response")
+            summary = build_framework_output(rows.data)
+
+            # Grounding: what we already say about this career (suggested), or the closest careers we know of (typed).
+            related: list[str] = []
+            context = ""
+            try:
+                from report_generator import get_or_generate_ai_content
+                recs = (get_or_generate_ai_content(response_id, supabase, tier="launchpad", locale='en') or {}).get('career_recommendations') or []
+                rec = next((r for r in recs if str(r.get('title', '')).casefold() == key), None)
+                if rec:
+                    context = " ".join(str(rec.get(k, '')) for k in ('fit_summary', 'gap') if rec.get(k))
+                    related = [rec.get('title')]
+            except Exception as e:
+                print("direction: could not load career recommendations for grounding:", e)
+            if not related:
+                try:
+                    emb = _gemini_embed(label)
+                    matches = supabase.rpc("match_careers", {"query_embedding": emb, "match_count": 3}).execute().data or []
+                    ids = [m['id'] for m in matches]
+                    if ids:
+                        titles = supabase.table('careers').select('id,title').in_('id', ids).execute().data or []
+                        by_id = {t['id']: t['title'] for t in titles}
+                        related = [by_id[i] for i in ids if i in by_id]
+                except Exception as e:
+                    print("direction: could not find related careers (continuing without):", e)
+
+            from report_generator import generate_direction_plan
+            try:
+                plan = generate_direction_plan(profile, summary,
+                    {"label": label, "source": body.source, "related": related, "context": context}, body.locale)
+            except Exception as e:
+                send_failure_alert("Direction plan generation", e, response_id=response_id, supabase=supabase)
+                raise HTTPException(status_code=500, detail="We could not build your plan right now, please try again")
+            if not plan.get("recognised", True):
+                raise HTTPException(status_code=422, detail="We could not tell what field that is. Try a more common name, for example 'Supply chain management'.")
+            plan.pop("recognised", None)
+            plans[body.locale] = plan
+
+        now = datetime.now(timezone.utc).isoformat()
+        try:
+            supabase.table('direction_plans').upsert({
+                'response_id': response_id, 'direction_key': key, 'label': label,
+                'source': (row or {}).get('source') or body.source, 'plans': plans, 'updated_at': now,
+            }, on_conflict='response_id,direction_key').execute()
+            supabase.table('direction_plans').update({'is_selected': False}).eq('response_id', response_id).execute()
+            saved = supabase.table('direction_plans').update({'is_selected': True}) \
+                .eq('response_id', response_id).eq('direction_key', key).execute().data or []
+        except Exception as e:
+            print("direction_plans write failed:", e)
+            raise HTTPException(status_code=503, detail="This feature is not available yet, please try again later")
+        return {"selected": _direction_payload(saved[0] if saved else {"label": label, "source": body.source, "plans": plans}, body.locale)}
+
 @app.get("/assessment/{response_id}/report")
 def get_report(response_id: str, locale: str | None = None, user=Depends(get_optional_user)):
     owner_row = supabase.table('assessment_responses').select('user_id').eq('id', response_id).single().execute()
