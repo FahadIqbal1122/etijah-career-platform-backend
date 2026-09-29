@@ -96,9 +96,11 @@ INTERNAL_JOBS_KEY = os.getenv("INTERNAL_JOBS_KEY")
 DASHBOARD_SHARE_TOKEN = os.getenv("DASHBOARD_SHARE_TOKEN")
 
 PLAN_CATALOG = {
-    "pathfinder":        {"name": "Pathfinder",        "amount": 149, "currency": "SAR", "interval": "lifetime", "extension_days": None, "available": True},
-    "launchpad_monthly": {"name": "Launchpad Monthly",  "amount": 99,  "currency": "SAR", "interval": "month",    "extension_days": 30,   "available": False},
-    "launchpad_yearly":  {"name": "Launchpad Yearly",   "amount": 799, "currency": "SAR", "interval": "year",     "extension_days": 365,  "available": False},
+    "pathfinder":        {"name": "Pathfinder",        "amount": 79,  "currency": "SAR", "interval": "lifetime", "extension_days": None, "available": True},
+    # One-time payment, 365 days of Launchpad access (no renewal). Code kept as launchpad_monthly so the
+    # landing page, api.ts PlanCode type and dashboard ?buy= handling keep working.
+    "launchpad_monthly": {"name": "Launchpad",          "amount": 440, "currency": "SAR", "interval": "one_time", "extension_days": 365,  "available": False},
+    # "launchpad_yearly":  {"name": "Launchpad Yearly",   "amount": 799, "currency": "SAR", "interval": "year",     "extension_days": 365,  "available": False},
 }
 
 _bearer = HTTPBearer()
@@ -1178,9 +1180,13 @@ def get_career_recommendations(response_id: str, locale: str | None = None, user
     # action_plan is generated in the same call as career_recommendations (see
     # generate_ai_content). Now rendered on the live results page's Action Plan
     # card, in addition to admin review and the downloaded PDF.
+    action_plan = dict(ai_content.get("action_plan") or {})
+    # Free tier gets the single first step; the 7-day plan is part of the paid Career Action Plan.
+    if tier == "free":
+        action_plan.pop("week_plan", None)
     return {
         "career_recommendations": ai_content.get("career_recommendations") or [],
-        "action_plan": ai_content.get("action_plan") or {},
+        "action_plan": action_plan,
     }
 
 @app.get("/assessment/{response_id}/ai-impact")

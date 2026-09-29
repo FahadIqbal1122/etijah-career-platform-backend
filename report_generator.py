@@ -169,7 +169,7 @@ UI_TEXT = {
         'sec_student_track': 'Majors & Exposure',
         'sec_certifications': 'Certifications to Pursue', 'sec_career_path': 'Your Path Forward',
         'sec_companies': 'Companies to Target', 'sec_courses': 'Recommended Courses',
-        'sec_action_plan': 'Your 90-Day Action Plan',
+        'sec_action_plan': 'Your Action Plan',
         'matched_to': 'Matched to', 'government': 'Government',
         'exec_summary': 'Executive Summary',
         'riasec_code_stat': 'RIASEC Code', 'primary_type_stat': 'Primary Type',
@@ -190,6 +190,7 @@ UI_TEXT = {
         'protected_skills_label': 'Human skills that stay valuable',
         'upskilling_label': 'How to prepare',
         'what_this_means_label': 'What this means for you',
+        'action_first_step': 'Your first step this week', 'action_week_plan': 'Your 7-day plan', 'action_why': 'Why', 'action_output': 'You will produce', 'action_when': 'When', 'action_worksheet': 'Worksheet', 'action_follow_on': 'Then', 'action_roadmap': 'Longer roadmap',
         'action_month1': 'Month 1 — Launch', 'action_months23': 'Months 2–3 — Build', 'action_months46': 'Months 4–6 — Grow',
         'back_headline': 'Your Journey Starts Here',
         'back_tagline_suffix': 'Etijahi Assessment',
@@ -212,7 +213,7 @@ UI_TEXT = {
         'sec_student_track': 'التخصصات والتعرّف على المجال',
         'sec_certifications': 'شهادات يُنصح بها', 'sec_career_path': 'مسارك المهني القادم',
         'sec_companies': 'شركات مستهدفة', 'sec_courses': 'دورات موصى بها',
-        'sec_action_plan': 'خطة عملك لمدة 90 يوماً',
+        'sec_action_plan': 'خطة عملك',
         'matched_to': 'مطابقة لـ', 'government': 'حكومي',
         'exec_summary': 'الملخص التنفيذي',
         'riasec_code_stat': 'رمز RIASEC', 'primary_type_stat': 'النمط الأساسي',
@@ -233,6 +234,7 @@ UI_TEXT = {
         'protected_skills_label': 'مهارات إنسانية تبقى ذات قيمة',
         'upskilling_label': 'كيف تستعد',
         'what_this_means_label': 'ما الذي يعنيه هذا لك',
+        'action_first_step': 'خطوتك الأولى هذا الأسبوع', 'action_week_plan': 'خطتك لمدة 7 أيام', 'action_why': 'لماذا', 'action_output': 'ما ستنتجه', 'action_when': 'متى', 'action_worksheet': 'ورقة العمل', 'action_follow_on': 'بعد ذلك', 'action_roadmap': 'الخطة الأطول',
         'action_month1': 'الشهر الأول — الانطلاقة', 'action_months23': 'الشهر 2–3 — البناء', 'action_months46': 'الشهر 4–6 — النمو',
         'back_headline': 'رحلتك تبدأ من هنا',
         'back_tagline_suffix': 'تقييم إتجاهي',
@@ -542,6 +544,47 @@ def generate_ai_content(user_data: dict, summary: dict, raw_scores: list, career
         if coaching_chunks else ""
     )
 
+    stage = user_data.get('current_stage') or ''
+    if stage in ('high_school', 'university'):
+        route_guidance = (
+            "This person is still a student. The first step and week plan must be about EXPLORING and PREPARING "
+            "(for example internship preparation, testing interest in a field, talking to someone in a role) — "
+            "never applying for full-time jobs as if they had graduated.\n"
+        )
+    elif stage == 'recent_graduate':
+        route_guidance = (
+            "This person is a recent graduate. The first step and week plan must be about job and application "
+            "preparation linked to their degree (for example reading real entry-level or internship postings, "
+            "comparing requirements with their coursework and projects, preparing a CV or application).\n"
+        )
+    elif stage:
+        route_guidance = (
+            "This person is already working, between roles or changing direction. The first step and week plan "
+            "must build on their transferable skills and test a possible move before they commit to it (for example "
+            "a conversation with someone in the target role, a small trial task, comparing a role's requirements "
+            "with their experience).\n"
+        )
+    else:
+        route_guidance = ""
+
+    first_step_guidance = (
+        "=== FIRST STEP AND 7-DAY PLAN ===\n"
+        "The action_plan must START with a specific 'first_step' this person can do THIS WEEK, followed by a "
+        "'week_plan' of 5 short actions across the next 7 days, then the longer-term months plan.\n"
+        + route_guidance
+        + "Rules for first_step and every week_plan entry:\n"
+        "- State what to do in concrete terms with a number or object (e.g. 'Read three internship postings for "
+        "<one of the matched careers>'), never a vague verb like 'research', 'explore' or 'network more'.\n"
+        "- Say why it helps, tied to their matched careers, education field or career direction preference.\n"
+        "- Say what they will PRODUCE (a short list, a comparison table, a draft, a note) so they can see it was done.\n"
+        "- Say WHEN to do it and roughly how long it takes. It must be free, doable alone, and take no more than "
+        "about an hour per action.\n"
+        "- first_step also has a 'worksheet' (3-4 short prompts or column headings they fill in while doing it) and a "
+        "'follow_on' (the next action once they finish). The first week_plan entry must be the same action as "
+        "first_step, in shorter form.\n"
+        "- Do not promise a job, an offer or that any career is future-proof.\n\n"
+    )
+
     narrative_prompt = (
         f"You are writing a professional, personalized career development report for {user_data['full_name']}.\n"
         "Write in second person (you, your). Be warm, specific, and empowering — not generic.\n"
@@ -556,6 +599,7 @@ def generate_ai_content(user_data: dict, summary: dict, raw_scores: list, career
         "action_plan step should reference one or more of these career titles, their shared sector, or "
         "concrete employers/certifications/roles that plausibly lead to them. Do not invent unrelated "
         "sectors, job titles, or industries that aren't represented in this list.\n\n"
+        + first_step_guidance
         + "=== OUTPUT ===\n\n"
         "Return ONLY a valid JSON object (no markdown, no code fences) with exactly these keys:\n\n"
         "{\n"
@@ -589,12 +633,28 @@ def generate_ai_content(user_data: dict, summary: dict, raw_scores: list, career
         '  "work_style_narrative": "2-3 sentences describing ideal work environment from all work style scores.",\n'
         '  "entrepreneurship_narrative": "2-3 sentences on entrepreneurial profile and whether/how to explore it.",\n\n'
         '  "action_plan": {\n'
+        '    "first_step": {\n'
+        '      "action": "1-2 sentences: the one concrete thing to do this week",\n'
+        '      "why": "1 sentence: why this helps, tied to their matched careers or goal",\n'
+        '      "output": "What they will have produced when done",\n'
+        '      "when": "When to do it and how long it takes, e.g. Within 2 days, about 45 minutes",\n'
+        '      "worksheet": ["Prompt or column heading 1", "Prompt 2", "Prompt 3"],\n'
+        '      "follow_on": "1 sentence: the next action once they finish"\n'
+        '    },\n'
+        '    "week_plan": [\n'
+        '      {"when": "Day 1", "action": "Same action as first_step, shorter", "why": "1 sentence", "output": "What they will produce"},\n'
+        '      {"when": "Days 2-3", "action": "...", "why": "...", "output": "..."},\n'
+        '      {"when": "Day 4", "action": "...", "why": "...", "output": "..."},\n'
+        '      {"when": "Days 5-6", "action": "...", "why": "...", "output": "..."},\n'
+        '      {"when": "Day 7", "action": "Review what you produced and choose the next step", "why": "...", "output": "..."}\n'
+        '    ],\n'
         '    "month_1":    ["Specific action 1 (toward the matched careers above)", "Specific action 2", "Specific action 3"],\n'
         '    "months_2_3": ["Specific action 1 (toward the matched careers above)", "Specific action 2", "Specific action 3"],\n'
         '    "months_4_6": ["Specific action 1 (toward the matched careers above)", "Specific action 2", "Specific action 3"]\n'
         '  },\n\n'
         '  "closing_message": "2-3 warm encouraging sentences tying back to this persons unique profile."\n'
         "}\n\n"
+        "month_1, months_2_3 and months_4_6 are the longer roadmap: they continue AFTER the 7-day plan and must not repeat it.\n"
         "Be specific, insightful, and empowering throughout. Remember: action_plan must stay grounded in "
         "the matched careers list above, not a different sector or set of job titles."
     )
@@ -1069,7 +1129,39 @@ def build_html_report(user_data: dict, summary: dict, raw_scores: list, ai: dict
             f'</div>'
         )
 
+    first_step = _as_dict(ap.get('first_step'))
+    # Free tier keeps the single first step; the 7-day plan is part of the paid plan (mirrors main.py's endpoint).
+    week_plan = [w for w in _as_list(ap.get('week_plan')) if isinstance(w, dict)] if tier != 'free' else []
+    first_step_html = ''
+    if first_step.get('action'):
+        worksheet_lis = "".join(f'<li>{w}</li>' for w in _as_list(first_step.get('worksheet')))
+        first_step_html = (
+            f'<div class="card" style="border-{border_side}:4px solid #00c9a7; margin-bottom:14px;">'
+            f'<h4 class="card-title">{T["action_first_step"]}</h4>'
+            f'<p class="body-text" style="margin-top:6px;"><strong>{first_step.get("action","")}</strong></p>'
+            f'<p class="body-text"><strong>{T["action_why"]}:</strong> {first_step.get("why","")}</p>'
+            f'<p class="body-text"><strong>{T["action_output"]}:</strong> {first_step.get("output","")}</p>'
+            f'<p class="body-text"><strong>{T["action_when"]}:</strong> {first_step.get("when","")}</p>'
+            + (f'<p class="body-text"><strong>{T["action_worksheet"]}:</strong></p><ul class="action-list">{worksheet_lis}</ul>' if worksheet_lis else '')
+            + (f'<p class="body-text"><strong>{T["action_follow_on"]}:</strong> {first_step.get("follow_on","")}</p>' if first_step.get('follow_on') else '')
+            + '</div>'
+        )
+    week_plan_html = ''
+    if week_plan:
+        week_lis = "".join(
+            f'<li class="action-item" style="border-{border_side}-color:#00c9a7;">'
+            f'<strong>{w.get("when","")}</strong> — {w.get("action","")}<br>'
+            f'<span style="color:#666;">{T["action_why"]}: {w.get("why","")} · {T["action_output"]}: {w.get("output","")}</span></li>'
+            for w in week_plan
+        )
+        week_plan_html = (
+            f'<div class="action-phase"><div class="phase-title-row"><h4 class="phase-title" style="color:#00c9a7;">{T["action_week_plan"]}</h4></div>'
+            f'<ul class="action-list">{week_lis}</ul></div>'
+        )
+    roadmap_heading = f'<h4 class="phase-title" style="margin:6px 0 10px;">{T["action_roadmap"]}</h4>' if (first_step_html or week_plan_html) else ''
+
     action_html = (
+        first_step_html + week_plan_html + roadmap_heading +
         render_phase(_as_list(ap.get('month_1')),    '#2a9d5c', T['action_month1'], 1) +
         render_phase(_as_list(ap.get('months_2_3')), '#00c9a7', T['action_months23'], 2) +
         render_phase(_as_list(ap.get('months_4_6')), '#0770ba', T['action_months46'], 3)
