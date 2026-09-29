@@ -22,7 +22,7 @@ from smtp_service import send_report_email, send_feedback_email, send_results_re
 import httpx, hmac, hashlib, json, secrets, time
 from coaching_methodology import METHODOLOGY_DOC
 from coaching_pipeline import chunk_transcript, embed_and_store_chunks, client, embed_country_profile, sync_country_profile_embedding, sync_career_embedding, _gemini_embed
-from content_policy import section_order, job_posted_date, is_job_fresh, job_requirements as parse_job_requirements, meets_requirements, MAX_EXPERIENCE_MONTHS_EARLY_CAREER, MAX_EXPERIENCE_MONTHS_INTERNSHIP, EDUCATION_RANK, clean_direction_label, direction_key, resolve_route, MAJORS_STAGES, CERTIFICATION_STAGES, NO_LISTINGS_STAGES, NO_COMPANIES_STAGES, is_appropriate, is_region_eligible, is_seniority_appropriate, STILL_ENROLLED_STAGES, ENTERING_MARKET_STAGES, PROFESSIONAL_STAGES, CULTURAL_GUARDRAIL
+from content_policy import add_student_track_links, section_order, job_posted_date, is_job_fresh, job_requirements as parse_job_requirements, meets_requirements, MAX_EXPERIENCE_MONTHS_EARLY_CAREER, MAX_EXPERIENCE_MONTHS_INTERNSHIP, EDUCATION_RANK, clean_direction_label, direction_key, resolve_route, MAJORS_STAGES, CERTIFICATION_STAGES, NO_LISTINGS_STAGES, NO_COMPANIES_STAGES, is_appropriate, is_region_eligible, is_seniority_appropriate, STILL_ENROLLED_STAGES, ENTERING_MARKET_STAGES, PROFESSIONAL_STAGES, CULTURAL_GUARDRAIL
 from ai_provider import get_ai_provider, invalidate_ai_provider_cache, AI_PROVIDER_KEY, VALID_PROVIDERS
 
 load_dotenv()
@@ -1277,9 +1277,9 @@ def get_ai_impact(response_id: str, force: bool = False, locale: str | None = No
 def _trim_student_track(track: dict, tier: str) -> dict:
     """High-school majors comparison: free tier keeps just each major's name and one-line reason;
     the careers it leads to and the 'try it' step are part of the paid plan."""
-    if not track or tier != "free" or not track.get("majors"):
-        return track
-    return {**track, "majors": [{"name": m.get("name"), "why_fit": m.get("why_fit")} for m in track["majors"]]}
+    if track and tier == "free" and track.get("majors"):
+        track = {**track, "majors": [{"name": m.get("name"), "why_fit": m.get("why_fit")} for m in track["majors"]]}
+    return add_student_track_links(track)
 
 @app.get("/assessment/{response_id}/student-track")
 def get_student_track(response_id: str, force: bool = False, locale: str | None = None, user=Depends(get_optional_user)):

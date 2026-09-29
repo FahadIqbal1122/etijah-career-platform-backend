@@ -289,3 +289,59 @@ CULTURAL_GUARDRAIL = (
     "betting), or adult entertainment. If a matched career title could read that "
     "way, reframe it toward the closest culturally appropriate equivalent instead."
 )
+
+
+# ── Links for the "Majors & Exposure" ideas ─────────────────────────────────────────────────────────────────────
+# The AI writes the names of activities and programmes but is never asked for web addresses (it would invent them).
+# A name that matches a well-known programme below opens that programme's official site; everything else opens a web
+# search for the name, which always works and never sends the user to a wrong page. Only http(s) URLs built here are
+# ever returned.
+OPPORTUNITY_SITES = [
+    (r"aws educate|awseducate", "https://aws.amazon.com/education/awseducate/"),
+    (r"google cloud skills boost|cloud skills boost", "https://www.cloudskillsboost.google/"),
+    (r"microsoft learn", "https://learn.microsoft.com/training/"),
+    (r"\bcoursera\b", "https://www.coursera.org/"),
+    (r"\bedx\b", "https://www.edx.org/"),
+    (r"khan academy", "https://www.khanacademy.org/"),
+    (r"google career certificates?|grow with google", "https://grow.google/certificates/"),
+    (r"cisco networking academy|netacad", "https://www.netacad.com/"),
+    (r"hubspot academy", "https://academy.hubspot.com/"),
+    (r"\bkaggle\b", "https://www.kaggle.com/"),
+    (r"mit opencourseware", "https://ocw.mit.edu/"),
+]
+
+def _search_url(query: str) -> str:
+    from urllib.parse import quote_plus
+    return "https://www.google.com/search?q=" + quote_plus(re.sub(r"\s+", " ", query).strip()[:200])
+
+def opportunity_link(title: str | None) -> dict | None:
+    """{'url', 'kind'} for an exposure idea: 'site' for a known programme, otherwise 'search'."""
+    if not isinstance(title, str) or not title.strip():
+        return None
+    low = title.lower()
+    for pattern, url in OPPORTUNITY_SITES:
+        if re.search(pattern, low):
+            return {"url": url, "kind": "site"}
+    return {"url": _search_url(title), "kind": "search"}
+
+def major_link(name: str | None) -> dict | None:
+    """A web search for degree programmes in a major (the AI names general fields, never specific programmes)."""
+    if not isinstance(name, str) or not name.strip():
+        return None
+    return {"url": _search_url(f"{name} degree programs universities"), "kind": "search"}
+
+def add_student_track_links(track: dict | None) -> dict | None:
+    """Copy of a student track with a `link` on each exposure idea and major. Added on the way out, never cached, so
+    changes to the known-programme list apply to existing reports."""
+    if not isinstance(track, dict) or not track:
+        return track
+    out = dict(track)
+    if isinstance(track.get("exposure_ideas"), list):
+        out["exposure_ideas"] = [
+            {**i, "link": opportunity_link(i.get("title"))} if isinstance(i, dict) else i for i in track["exposure_ideas"]
+        ]
+    if isinstance(track.get("majors"), list):
+        out["majors"] = [
+            {**m, "link": major_link(m.get("name"))} if isinstance(m, dict) else m for m in track["majors"]
+        ]
+    return out

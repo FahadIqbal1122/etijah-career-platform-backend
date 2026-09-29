@@ -23,7 +23,7 @@ from db_client import disable_http2
 from scoring_engine import build_framework_output, score_careers, get_career_semantic_scores, COUNTRY_CODE_MAP
 from coaching_pipeline import _gemini_embed, client as anthropic_client
 from scoring_engine import extract_specialisms, enrich_profile
-from content_policy import resolve_route, section_order, should_show_entrepreneurship, is_appropriate, CULTURAL_GUARDRAIL, STILL_ENROLLED_STAGES, ENTERING_MARKET_STAGES, PROFESSIONAL_STAGES, MAJORS_STAGES, CERTIFICATION_STAGES, NO_LISTINGS_STAGES, NO_COMPANIES_STAGES
+from content_policy import opportunity_link, major_link, resolve_route, section_order, should_show_entrepreneurship, is_appropriate, CULTURAL_GUARDRAIL, STILL_ENROLLED_STAGES, ENTERING_MARKET_STAGES, PROFESSIONAL_STAGES, MAJORS_STAGES, CERTIFICATION_STAGES, NO_LISTINGS_STAGES, NO_COMPANIES_STAGES
 from ai_provider import get_ai_provider
 
 # Self-contained client (like ai_provider.py / smtp_service.py) purely for the
@@ -193,7 +193,7 @@ UI_TEXT = {
         'protected_skills_label': 'Human skills that stay valuable',
         'upskilling_label': 'How to prepare',
         'what_this_means_label': 'What this means for you',
-        'ai_global_evidence': 'Global evidence', 'ai_local_outlook': 'In your market', 'ai_focus_title': 'Your skills to build and practice exercise', 'ai_skills': 'Skills to build', 'ai_exercise': 'Practice exercise', 'ai_work_sample': 'You will have', 'job_posted': 'Posted', 'job_requires': 'Requires', 'edu_high_school': 'High school', 'edu_associates': 'Diploma', 'edu_bachelors': "Bachelor's degree", 'edu_postgraduate': 'Postgraduate degree', 'exp_none': 'no experience', 'exp_months': "{n} months' experience", 'exp_years': "{n}+ years' experience", 'dir_title': 'Your chosen direction', 'dir_yours': 'Your choice', 'dir_suggested': 'Suggested match', 'dir_gap': 'Gap to close', 'dir_steps': 'Steps to reach it', 'majors_leads_to': 'Leads to', 'majors_try_it': 'Try it', 'action_first_step': 'Your first step this week', 'action_week_plan': 'Days 2–7', 'action_weeks24': 'Weeks 2–4 — Build momentum', 'action_built_top': 'Built around your top match', 'action_why': 'Why', 'action_output': 'You will produce', 'action_when': 'When', 'action_worksheet': 'Worksheet', 'action_follow_on': 'Then', 'action_roadmap': 'Your next 90 days',
+        'ai_global_evidence': 'Global evidence', 'ai_local_outlook': 'In your market', 'ai_focus_title': 'Your skills to build and practice exercise', 'ai_skills': 'Skills to build', 'ai_exercise': 'Practice exercise', 'ai_work_sample': 'You will have', 'job_posted': 'Posted', 'job_requires': 'Requires', 'edu_high_school': 'High school', 'edu_associates': 'Diploma', 'edu_bachelors': "Bachelor's degree", 'edu_postgraduate': 'Postgraduate degree', 'exp_none': 'no experience', 'exp_months': "{n} months' experience", 'exp_years': "{n}+ years' experience", 'dir_title': 'Your chosen direction', 'dir_yours': 'Your choice', 'dir_suggested': 'Suggested match', 'dir_gap': 'Gap to close', 'dir_steps': 'Steps to reach it', 'majors_leads_to': 'Leads to', 'link_find_it': 'Search for it', 'link_open_site': 'Open the site', 'link_find_programs': 'Find degree programs', 'majors_try_it': 'Try it', 'action_first_step': 'Your first step this week', 'action_week_plan': 'Days 2–7', 'action_weeks24': 'Weeks 2–4 — Build momentum', 'action_built_top': 'Built around your top match', 'action_why': 'Why', 'action_output': 'You will produce', 'action_when': 'When', 'action_worksheet': 'Worksheet', 'action_follow_on': 'Then', 'action_roadmap': 'Your next 90 days',
         'action_month1': 'Month 1 — Launch', 'action_months23': 'Months 2–3 — Build', 'action_months46': 'Months 4–6 — Grow',
         'back_headline': 'Your Journey Starts Here',
         'back_tagline_suffix': 'Etijahi Assessment',
@@ -237,7 +237,7 @@ UI_TEXT = {
         'protected_skills_label': 'مهارات إنسانية تبقى ذات قيمة',
         'upskilling_label': 'كيف تستعد',
         'what_this_means_label': 'ما الذي يعنيه هذا لك',
-        'ai_global_evidence': 'الدلائل عالمياً', 'ai_local_outlook': 'في سوقك', 'ai_focus_title': 'المهارات التي تبنيها وتمرين تطبيقي', 'ai_skills': 'مهارات تبنيها', 'ai_exercise': 'تمرين تطبيقي', 'ai_work_sample': 'ستحصل على', 'job_posted': 'نُشرت', 'job_requires': 'المطلوب', 'edu_high_school': 'الثانوية', 'edu_associates': 'دبلوم', 'edu_bachelors': 'بكالوريوس', 'edu_postgraduate': 'دراسات عليا', 'exp_none': 'بلا خبرة', 'exp_months': 'خبرة {n} أشهر', 'exp_years': 'خبرة {n}+ سنوات', 'dir_title': 'الاتجاه الذي اخترته', 'dir_yours': 'اختيارك', 'dir_suggested': 'مسار مقترح', 'dir_gap': 'الفجوة التي تسدّها', 'dir_steps': 'خطوات للوصول إليه', 'majors_leads_to': 'يقود إلى', 'majors_try_it': 'جرّبه', 'action_first_step': 'خطوتك الأولى هذا الأسبوع', 'action_week_plan': 'الأيام 2–7', 'action_weeks24': 'الأسابيع 2–4 — بناء الزخم', 'action_built_top': 'مبنية حول أفضل مسار مطابق لك', 'action_why': 'لماذا', 'action_output': 'ما ستنتجه', 'action_when': 'متى', 'action_worksheet': 'ورقة العمل', 'action_follow_on': 'بعد ذلك', 'action_roadmap': 'أيامك التسعون القادمة',
+        'ai_global_evidence': 'الدلائل عالمياً', 'ai_local_outlook': 'في سوقك', 'ai_focus_title': 'المهارات التي تبنيها وتمرين تطبيقي', 'ai_skills': 'مهارات تبنيها', 'ai_exercise': 'تمرين تطبيقي', 'ai_work_sample': 'ستحصل على', 'job_posted': 'نُشرت', 'job_requires': 'المطلوب', 'edu_high_school': 'الثانوية', 'edu_associates': 'دبلوم', 'edu_bachelors': 'بكالوريوس', 'edu_postgraduate': 'دراسات عليا', 'exp_none': 'بلا خبرة', 'exp_months': 'خبرة {n} أشهر', 'exp_years': 'خبرة {n}+ سنوات', 'dir_title': 'الاتجاه الذي اخترته', 'dir_yours': 'اختيارك', 'dir_suggested': 'مسار مقترح', 'dir_gap': 'الفجوة التي تسدّها', 'dir_steps': 'خطوات للوصول إليه', 'majors_leads_to': 'يقود إلى', 'link_find_it': 'ابحث عنه', 'link_open_site': 'افتح الموقع', 'link_find_programs': 'ابحث عن البرامج الدراسية', 'majors_try_it': 'جرّبه', 'action_first_step': 'خطوتك الأولى هذا الأسبوع', 'action_week_plan': 'الأيام 2–7', 'action_weeks24': 'الأسابيع 2–4 — بناء الزخم', 'action_built_top': 'مبنية حول أفضل مسار مطابق لك', 'action_why': 'لماذا', 'action_output': 'ما ستنتجه', 'action_when': 'متى', 'action_worksheet': 'ورقة العمل', 'action_follow_on': 'بعد ذلك', 'action_roadmap': 'أيامك التسعون القادمة',
         'action_month1': 'الشهر الأول — الانطلاقة', 'action_months23': 'الشهر 2–3 — البناء', 'action_months46': 'الشهر 4–6 — النمو',
         'back_headline': 'رحلتك تبدأ من هنا',
         'back_tagline_suffix': 'تقييم إتجاهي',
@@ -837,6 +837,22 @@ def _badge(level: str, locale: str = 'en') -> str:
     label = LEVEL_LABELS_AR.get(level, level) if locale == 'ar' else level.upper()
     return f'<span class="tag tag-{tone}" style="white-space:nowrap;">{label}</span>'
 
+def _idea_link(idea: dict) -> dict | None:
+    # the title in `idea` is already HTML-escaped by build_html_report, so link from the unescaped text
+    return opportunity_link(_html.unescape(str(idea.get("title", ""))))
+
+def _idea_url(idea: dict):
+    return (_idea_link(idea) or {}).get("url")
+
+def _idea_kind(idea: dict):
+    return (_idea_link(idea) or {}).get("kind")
+
+def _link_tag(url, label: str) -> str:
+    """A small clickable tag; the URL is one built by content_policy (a known site or a search), escaped for the attribute."""
+    if not url:
+        return ''
+    return f'<p style="margin-top:6px;"><a href="{_html.escape(url, quote=True)}" class="tag tag-blue" style="text-decoration:none;">{label} ↗</a></p>'
+
 def _note(tone: str, label: str, text, side: str = 'left') -> str:
     """A tinted box with a coloured edge and a small label (blue = information, green = do this, amber = gap)."""
     if not str(text or '').strip():
@@ -1135,6 +1151,7 @@ def build_html_report(user_data: dict, summary: dict, raw_scores: list, ai: dict
             student_track_cards += (
                 f'<div class="card" style="margin-bottom:10px;border-{border_side}:4px solid #00c9a7;">'
                 f'<h4 class="card-title">{m.get("name","")}</h4>'
+                f'{_link_tag((major_link(m.get("name")) or {}).get("url"), T["link_find_programs"])}'
                 f'<p class="body-text" style="margin-top:6px;">{m.get("why_fit","")}</p>'
                 f'{careers_line}'
                 f'</div>'
@@ -1144,6 +1161,7 @@ def build_html_report(user_data: dict, summary: dict, raw_scores: list, ai: dict
                 f'<div class="card" style="margin-bottom:10px;">'
                 f'<h4 class="card-title">{idea.get("title","")}</h4>'
                 f'<p class="body-text" style="margin-top:6px;">{idea.get("why","")}</p>'
+                f'{_link_tag(_idea_url(idea), T["link_open_site"] if _idea_kind(idea) == "site" else T["link_find_it"])}'
                 f'</div>'
             )
 
