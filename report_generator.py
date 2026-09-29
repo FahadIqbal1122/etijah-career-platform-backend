@@ -675,8 +675,11 @@ def generate_ai_content(user_data: dict, summary: dict, raw_scores: list, career
         '  },\n\n'
         '  "resilience_narrative": "2-3 sentences interpreting resilience scores in context of workplace challenges.",\n'
         '  "work_style_narrative": "2-3 sentences describing ideal work environment from all work style scores.",\n'
-        '  "entrepreneurship_narrative": "2-3 sentences on entrepreneurial profile and whether/how to explore it.",\n\n'
-        '  "action_plan": {\n'
+        + (
+            '  "entrepreneurship_narrative": "2-3 sentences on entrepreneurial profile and whether/how to explore it.",\n\n'
+            if should_show_entrepreneurship(user_data.get('career_structure')) else ""
+        )
+        + ""        '  "action_plan": {\n'
         '    "first_step": {\n'
         '      "action": "1-2 sentences: the one concrete thing to do this week",\n'
         '      "why": "1 sentence: why this helps, tied to their matched careers or goal",\n'
@@ -1248,6 +1251,8 @@ def build_html_report(user_data: dict, summary: dict, raw_scores: list, ai: dict
     ap = _as_dict(ai.get('action_plan'))
 
     def render_phase(items: list, color: str, title: str, num: int) -> str:
+        if not items:
+            return ''  # a phase with no steps would print a heading with an empty list under it
         lis = "".join(
             f'<li class="action-item" style="border-{border_side}-color:{color};">{item}</li>'
             for item in items
@@ -1472,42 +1477,106 @@ def build_html_report(user_data: dict, summary: dict, raw_scores: list, ai: dict
   .cover-body > *, .back-cover > * { direction: rtl; }
   """
 
-    # Jobs/companies/courses are optional (empty on the free tier, or if a section has
-    # no matches) — numbered dynamically so an absent section never leaves a numbering
-    # gap or a blank page, and the Action Plan's own number/page shift to follow.
-    extra_section_pages = ""
-    next_sec_num, next_page_num = 10, 9
-    jobs_section_title = T['sec_jobs_internships'] if user_data.get('current_stage') in STILL_ENROLLED_STAGES else T['sec_jobs']
-    for title, cards_html in [
-        (jobs_section_title, job_cards),
-        (T['sec_student_track'], student_track_cards),
-        (T['sec_certifications'], certification_cards),
-        (T['sec_career_path'], career_path_cards),
-        (T['sec_companies'], company_cards),
-        (T['sec_courses'], course_cards),
-    ]:
-        if not cards_html:
-            continue
-        extra_section_pages += f"""
+    # ── Page assembly ─────────────────────────────────────────────────────────
+    # Every section is built as (title, body) and a page is only emitted if it has content, so a section that does
+    # not apply to this person (or came back empty) never leaves an empty page or a heading with nothing under it.
+    # Sections are numbered and paged dynamically, in the order shared with the results page (section_order).
+    show_entre = should_show_entrepreneurship(user_data.get('career_structure'))
+
+    def _box(cls: str, text, style: str = '') -> str:
+        """A text box, or nothing at all if the text is empty."""
+        if not str(text or '').strip():
+            return ''
+        return f'<div class="{cls}"{(" style=" + chr(34) + style + chr(34)) if style else ""}>{text}</div>'
+
+    summary_body = (
+        (f'<div class="summary-hero"><div class="summary-hero-label">{T["exec_summary"]}</div>'
+         f'<div class="summary-hero-text">{ai.get("executive_summary","")}</div></div>' if str(ai.get('executive_summary') or '').strip() else '')
+        + f'''<div class="stat-grid">
+      <div class="stat-cell"><div class="stat-lbl">{T['riasec_code_stat']}</div><div class="stat-val">{riasec_code}</div></div>
+      <div class="stat-cell"><div class="stat-lbl">{T['primary_type_stat']}</div><div class="stat-val">{primary_meta.get('label','')}</div></div>
+      <div class="stat-cell"><div class="stat-lbl">{T['top_value_stat']}</div><div class="stat-val">{top_value_label}</div></div>
+      <div class="stat-cell"><div class="stat-lbl">{T['top_strength_stat']}</div><div class="stat-val">{top_strength_label}</div></div>
+    </div>
+    <div class="all-bars-box">
+      <div class="all-bars-label">{T['full_riasec_overview']}</div>
+      {all_riasec_bars}
+    </div>'''
+    )
+    riasec_body = (
+        (f'<div class="riasec-overview"><div class="riasec-combo-title">{ai.get("riasec_combination_title","")}</div>'
+         f'<p class="body-text" style="margin-top:6px;">{ai.get("riasec_overview","")}</p></div>'
+         if (str(ai.get('riasec_combination_title') or '').strip() or str(ai.get('riasec_overview') or '').strip()) else '')
+        + riasec_cards
+    )
+    bigfive_body = _box('intro-box', ai.get('big_five_overview')) + bf_cards
+    values_body = _box('intro-box', ai.get('values_overview')) + (f'<div class="values-grid">{value_cards}</div>' if value_cards.strip() else '')
+    strengths_body = _box('intro-box', ai.get('strengths_overview')) + strength_cards
+    workstyle_body = (
+        f'<div class="two-col"><div class="col-box"><div class="col-title">{T["resilience_scores"]}</div>{res_bars}</div>'
+        f'<div class="col-box"><div class="col-title">{T["work_style_prefs"]}</div>{ws_bars}</div></div>'
+        + _box('narr-box', f'{ai.get("resilience_narrative","")} {ai.get("work_style_narrative","")}')
+    )
+    # Entrepreneurship only for people open to starting a business (see should_show_entrepreneurship).
+    entre_body = (
+        f'<div class="col-box"><div class="col-title">{T["entrepreneurship_scores"]}</div>{entre_bars}</div>'
+        + _box('narr-box', ai.get('entrepreneurship_narrative'))
+    ) if show_entre else ''
+    ai_body = (
+        _box('intro-box', ai_impact_summary) + ai_focus_html + ai_impact_cards
+    )
+    # "Internships" only when every listing is an internship (final-year students and graduates get a mix).
+    jobs_section_title = T['sec_jobs_internships'] if (user_data.get('current_stage') in STILL_ENROLLED_STAGES and all(j.get('is_internship') for j in jobs)) else T['sec_jobs']
+
+    # key -> pages; a page is a list of (title, body) sections that share it
+    pages_by_key = {
+        'summary':   [[(T['sec01'], summary_body)]],
+        'majors':    [[(T['sec_student_track'], student_track_cards)]],
+        'careers':   [[(T['sec08'], career_cards)]],
+        'plan':      [[(T['sec_action_plan'], action_html)]],
+        'path':      [[(T['sec_career_path'], career_path_cards)]],
+        'jobs':      [[(jobs_section_title, job_cards)]],
+        'certs':     [[(T['sec_certifications'], certification_cards)]],
+        'courses':   [[(T['sec_courses'], course_cards)]],
+        'companies': [[(T['sec_companies'], company_cards)]],
+        'ai':        [[(T['sec09'], ai_body)]],
+        'profile':   [
+            [(T['sec02'], riasec_body)],
+            [(T['sec03'], bigfive_body)],
+            [(T['sec04'], values_body)],
+            [(T['sec05'], strengths_body)],
+            [(T['sec06'], workstyle_body), (T['sec07'], entre_body)],
+        ],
+    }
+    pages_html = ""
+    sec_num, page_no = 1, 1
+    for key in section_order(user_data.get('current_stage')):
+        for page in pages_by_key.get(key, []):
+            subs = [(t, b) for t, b in page if str(b or '').strip()]
+            if not subs:
+                continue
+            content = ""
+            for i, (t, b) in enumerate(subs):
+                margin = ' style="margin-top:20px;"' if i > 0 else ''
+                content += (
+                    f'<div class="sec-heading"{margin}><div class="sec-accent"></div>'
+                    f'<div><div class="sec-num">{sec_num:02d}</div><div class="sec-title">{t}</div></div></div>{b}'
+                )
+                sec_num += 1
+            pages_html += f'''
   <div class="page">
     <div class="page-hdr">
       <span class="page-hdr-brand-wrap">{PAGE_HDR_LOGO_SVG}<span class="page-hdr-brand">{T['brand_header']}</span></span>
       <span class="page-hdr-name">{name}</span>
     </div>
-    <div class="sec-heading">
-      <div class="sec-accent"></div>
-      <div><div class="sec-num">{next_sec_num:02d}</div><div class="sec-title">{title}</div></div>
-    </div>
-    {cards_html}
+    {content}
     <div class="page-ftr">
       <span>{T['report_confidential_footer']} · {date_str}</span>
-      <span>{T['page']} {next_page_num}</span>
+      <span>{T['page']} {page_no}</span>
     </div>
   </div>
-"""
-        next_sec_num += 1
-        next_page_num += 1
-    action_plan_sec_num, action_plan_page_num = next_sec_num, next_page_num
+'''
+            page_no += 1
 
     return f"""<!DOCTYPE html>
   <html lang="{T['lang']}" dir="{T['dir']}">
@@ -1536,198 +1605,7 @@ def build_html_report(user_data: dict, summary: dict, raw_scores: list, ai: dict
     </div>
   </div>
 
-  <!-- PAGE 1 — CAREER PROFILE -->
-  <div class="page">
-    <div class="page-hdr">
-      <span class="page-hdr-brand-wrap">{PAGE_HDR_LOGO_SVG}<span class="page-hdr-brand">{T['brand_header']}</span></span>
-      <span class="page-hdr-name">{name}</span>
-    </div>
-    <div class="sec-heading">
-      <div class="sec-accent"></div>
-      <div><div class="sec-num">01</div><div class="sec-title">{T['sec01']}</div></div>
-    </div>
-    <div class="summary-hero">
-      <div class="summary-hero-label">{T['exec_summary']}</div>
-      <div class="summary-hero-text">{ai.get('executive_summary','')}</div>
-    </div>
-    <div class="stat-grid">
-      <div class="stat-cell"><div class="stat-lbl">{T['riasec_code_stat']}</div><div class="stat-val">{riasec_code}</div></div>
-      <div class="stat-cell"><div class="stat-lbl">{T['primary_type_stat']}</div><div class="stat-val">{primary_meta.get('label','')}</div></div>
-      <div class="stat-cell"><div class="stat-lbl">{T['top_value_stat']}</div><div class="stat-val">{top_value_label}</div></div>
-      <div class="stat-cell"><div class="stat-lbl">{T['top_strength_stat']}</div><div class="stat-val">{top_strength_label}</div></div>
-    </div>
-    <div class="all-bars-box">
-      <div class="all-bars-label">{T['full_riasec_overview']}</div>
-      {all_riasec_bars}
-    </div>
-    <div class="page-ftr">
-      <span>{T['report_confidential_footer']} · {date_str}</span>
-      <span>{T['page']} 1</span>
-    </div>
-  </div>
-
-  <!-- PAGE 2 — RIASEC CAREER PERSONALITY -->
-  <div class="page">
-    <div class="page-hdr">
-      <span class="page-hdr-brand-wrap">{PAGE_HDR_LOGO_SVG}<span class="page-hdr-brand">{T['brand_header']}</span></span>
-      <span class="page-hdr-name">{name}</span>
-    </div>
-    <div class="sec-heading">
-      <div class="sec-accent"></div>
-      <div><div class="sec-num">02</div><div class="sec-title">{T['sec02']}</div></div>
-    </div>
-    <div class="riasec-overview">
-      <div class="riasec-combo-title">{ai.get('riasec_combination_title','')}</div>
-      <p class="body-text" style="margin-top:6px;">{ai.get('riasec_overview','')}</p>
-    </div>
-    {riasec_cards}
-    <div class="page-ftr">
-      <span>{T['report_confidential_footer']} · {date_str}</span>
-      <span>{T['page']} 2</span>
-    </div>
-  </div>
-
-  <!-- PAGE 3 — BIG FIVE PERSONALITY -->
-  <div class="page">
-    <div class="page-hdr">
-      <span class="page-hdr-brand-wrap">{PAGE_HDR_LOGO_SVG}<span class="page-hdr-brand">{T['brand_header']}</span></span>
-      <span class="page-hdr-name">{name}</span>
-    </div>
-    <div class="sec-heading">
-      <div class="sec-accent"></div>
-      <div><div class="sec-num">03</div><div class="sec-title">{T['sec03']}</div></div>
-    </div>
-    <div class="intro-box">{ai.get('big_five_overview','')}</div>
-    {bf_cards}
-    <div class="page-ftr">
-      <span>{T['report_confidential_footer']} · {date_str}</span>
-      <span>{T['page']} 3</span>
-    </div>
-  </div>
-
-  <!-- PAGE 4 — CORE VALUES -->
-  <div class="page">
-    <div class="page-hdr">
-      <span class="page-hdr-brand-wrap">{PAGE_HDR_LOGO_SVG}<span class="page-hdr-brand">{T['brand_header']}</span></span>
-      <span class="page-hdr-name">{name}</span>
-    </div>
-    <div class="sec-heading">
-      <div class="sec-accent"></div>
-      <div><div class="sec-num">04</div><div class="sec-title">{T['sec04']}</div></div>
-    </div>
-    <div class="intro-box">{ai.get('values_overview','')}</div>
-    <div class="values-grid">{value_cards}</div>
-    <div class="page-ftr">
-      <span>{T['report_confidential_footer']} · {date_str}</span>
-      <span>{T['page']} 4</span>
-    </div>
-  </div>
-
-  <!-- PAGE 5 — STRENGTHS PROFILE -->
-  <div class="page">
-    <div class="page-hdr">
-      <span class="page-hdr-brand-wrap">{PAGE_HDR_LOGO_SVG}<span class="page-hdr-brand">{T['brand_header']}</span></span>
-      <span class="page-hdr-name">{name}</span>
-    </div>
-    <div class="sec-heading">
-      <div class="sec-accent"></div>
-      <div><div class="sec-num">05</div><div class="sec-title">{T['sec05']}</div></div>
-    </div>
-    <div class="intro-box">{ai.get('strengths_overview','')}</div>
-    {strength_cards}
-    <div class="page-ftr">
-      <span>{T['report_confidential_footer']} · {date_str}</span>
-      <span>{T['page']} 5</span>
-    </div>
-  </div>
-
-  <!-- PAGE 6 — WORK STYLE, RESILIENCE & ENTREPRENEURSHIP -->
-  <div class="page">
-    <div class="page-hdr">
-      <span class="page-hdr-brand-wrap">{PAGE_HDR_LOGO_SVG}<span class="page-hdr-brand">{T['brand_header']}</span></span>
-      <span class="page-hdr-name">{name}</span>
-    </div>
-    <div class="sec-heading">
-      <div class="sec-accent"></div>
-      <div><div class="sec-num">06</div><div class="sec-title">{T['sec06']}</div></div>
-    </div>
-    <div class="two-col">
-      <div class="col-box">
-        <div class="col-title">{T['resilience_scores']}</div>
-        {res_bars}
-      </div>
-      <div class="col-box">
-        <div class="col-title">{T['work_style_prefs']}</div>
-        {ws_bars}
-      </div>
-    </div>
-    <div class="narr-box">{ai.get('resilience_narrative','')} {ai.get('work_style_narrative','')}</div>
-    <div class="sec-heading" style="margin-top:20px;">
-      <div class="sec-accent"></div>
-      <div><div class="sec-num">07</div><div class="sec-title">{T['sec07']}</div></div>
-    </div>
-    <div class="col-box">
-      <div class="col-title">{T['entrepreneurship_scores']}</div>
-      {entre_bars}
-    </div>
-    <div class="narr-box">{ai.get('entrepreneurship_narrative','')}</div>
-    <div class="page-ftr">
-      <span>{T['report_confidential_footer']} · {date_str}</span>
-      <span>{T['page']} 6</span>
-    </div>
-  </div>
-
-  <!-- PAGE 7 — CAREER PATHWAYS -->
-  <div class="page">
-    <div class="page-hdr">
-      <span class="page-hdr-brand-wrap">{PAGE_HDR_LOGO_SVG}<span class="page-hdr-brand">{T['brand_header']}</span></span>
-      <span class="page-hdr-name">{name}</span>
-    </div>
-    <div class="sec-heading">
-      <div class="sec-accent"></div>
-      <div><div class="sec-num">08</div><div class="sec-title">{T['sec08']}</div></div>
-    </div>
-    {career_cards}
-    <div class="page-ftr">
-      <span>{T['report_confidential_footer']} · {date_str}</span>
-      <span>{T['page']} 7</span>
-    </div>
-  </div>
-
-  <!-- PAGE 8 — AI IMPACT & FUTURE-PROOFING -->
-  <div class="page">
-    <div class="page-hdr">
-      <span class="page-hdr-brand-wrap">{PAGE_HDR_LOGO_SVG}<span class="page-hdr-brand">{T['brand_header']}</span></span>
-      <span class="page-hdr-name">{name}</span>
-    </div>
-    <div class="sec-heading">
-      <div class="sec-accent"></div>
-      <div><div class="sec-num">09</div><div class="sec-title">{T['sec09']}</div></div>
-    </div>
-    <div class="intro-box">{ai_impact_summary}</div>
-    {ai_impact_cards}
-    <div class="page-ftr">
-      <span>{T['report_confidential_footer']} · {date_str}</span>
-      <span>{T['page']} 8</span>
-    </div>
-  </div>
-  {extra_section_pages}
-  <!-- 90-DAY ACTION PLAN -->
-  <div class="page">
-    <div class="page-hdr">
-      <span class="page-hdr-brand-wrap">{PAGE_HDR_LOGO_SVG}<span class="page-hdr-brand">{T['brand_header']}</span></span>
-      <span class="page-hdr-name">{name}</span>
-    </div>
-    <div class="sec-heading">
-      <div class="sec-accent"></div>
-      <div><div class="sec-num">{action_plan_sec_num:02d}</div><div class="sec-title">{T['sec_action_plan']}</div></div>
-    </div>
-    {action_html}
-    <div class="page-ftr">
-      <span>{T['report_confidential_footer']} · {date_str}</span>
-      <span>{T['page']} {action_plan_page_num}</span>
-    </div>
-  </div>
+  {pages_html}
 
   <!-- BACK COVER -->
   <div class="back-cover">
@@ -2446,8 +2324,8 @@ def get_or_generate_ai_content(response_id: str, supabase_client, tier: str = "l
     profile = _execute_with_retry(supabase_client.table('assessment_responses')
         .select('full_name,email,age,age_bracket,experience_level,current_stage,education_field,'
                 'major_was_own_choice,major_choice_reason,career_direction,'
-                'sectors_of_interest,geographic_openness,why_here,country,'
-                'ai_content_cache,ai_content_cache_free,ai_content_cache_ar,ai_content_cache_ar_free')
+                'sectors_of_interest,career_structure,geographic_openness,why_here,country,'
+                'ai_content_cache,ai_content_cache_free,ai_content_cache_ar,ai_content_cache_ar_free,answers')
         .eq('id', response_id).single())
     if not profile.data:
         raise ValueError(f"No assessment found for {response_id}")
@@ -2512,7 +2390,7 @@ def create_report(response_id: str, supabase_client, tier: str = "launchpad", lo
     profile = _execute_with_retry(supabase_client.table('assessment_responses')
         .select('full_name,email,age,age_bracket,experience_level,current_stage,education_field,'
                 'major_was_own_choice,major_choice_reason,career_direction,'
-                'sectors_of_interest,geographic_openness,why_here,country,'
+                'sectors_of_interest,career_structure,geographic_openness,why_here,country,'
                 'ai_impact_cache,ai_content_cache,ai_impact_cache_ar,ai_content_cache_ar,'
                 'ai_impact_cache_free,ai_content_cache_free,ai_impact_cache_ar_free,ai_content_cache_ar_free,'
                 'student_track_cache,student_track_cache_ar,'

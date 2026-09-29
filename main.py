@@ -784,6 +784,8 @@ def get_results(response_id: str, user=Depends(get_optional_user)):
         'tier': tier, 'locale': profile.data.get('locale') or 'en',
         'is_still_enrolled': profile.data.get('current_stage') in STILL_ENROLLED_STAGES,
         'route': resolve_route(profile.data.get('current_stage')),
+        # Order of the report sections for this person (shared with the PDF; see content_policy.SECTION_ORDER).
+        'section_order': section_order(profile.data.get('current_stage')),
         # Drives the beta feedback form on the frontend — only shown during the
         # beta window, distinct from a genuine paying launchpad tier.
         'beta_mode': _is_test_mode_enabled(),
