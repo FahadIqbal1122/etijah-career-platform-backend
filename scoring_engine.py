@@ -1,3 +1,35 @@
+# Specific areas within each broad study field (QO5), answered in the QO5D1 / QO5D2 follow-up questions and
+# stored in assessment_responses.answers as `${field}_${area}`. Keep in sync with SPECIALISMS in the frontend's
+# src/data/specialisms.ts. Only these exact values are accepted, because they end up in AI prompts.
+SPECIALISM_AREAS = {
+    'business': ['marketing', 'finance', 'accounting', 'hr', 'supply_chain', 'management', 'entrepreneurship', 'economics', 'other'],
+    'engineering': ['civil', 'mechanical', 'electrical', 'chemical_petroleum', 'industrial', 'biomedical', 'environmental', 'other'],
+    'computer_science': ['software', 'data_ai', 'cybersecurity', 'networks_it', 'information_systems', 'other'],
+    'medicine': ['general_medicine', 'nursing', 'pharmacy', 'dentistry', 'public_health', 'allied_health', 'other'],
+    'sciences': ['biology', 'chemistry', 'physics', 'math_stats', 'environmental', 'geology', 'other'],
+    'humanities': ['psychology', 'sociology', 'media_communication', 'languages', 'history', 'political_science', 'other'],
+    'arts': ['graphic_design', 'architecture_interior', 'fine_arts', 'film_media', 'music_performing', 'fashion', 'other'],
+    'education': ['early_childhood', 'primary', 'secondary', 'special_needs', 'leadership', 'other'],
+    'law': ['general', 'corporate', 'criminal', 'sharia', 'international', 'other'],
+}
+
+def extract_specialisms(answers, allowed_fields=None) -> list[str]:
+    """Readable 'field: area' strings (e.g. 'business: supply chain') from a response's QO5D1/QO5D2 answers.
+    If allowed_fields (the response's education_field) is given, an answer whose field is not one of them is
+    ignored — e.g. a stale answer left over after the user went back and changed their study field."""
+    out: list[str] = []
+    if not isinstance(answers, dict):
+        return out
+    for qid in ('QO5D1', 'QO5D2'):
+        v = answers.get(qid)
+        if not isinstance(v, str):
+            continue
+        for field, areas in SPECIALISM_AREAS.items():
+            if v.startswith(field + '_') and v[len(field) + 1:] in areas and (allowed_fields is None or field in allowed_fields):
+                out.append(f"{field.replace('_', ' ')}: {v[len(field) + 1:].replace('_', ' ')}")
+                break
+    return out
+
 # Maps forced-choice answers to numeric scores
 FORCED_CHOICE_SCORES = {
     'Q6':  {'A': 5, 'B': 3},   # A=Artistic, B=Conventional
@@ -229,7 +261,8 @@ def get_career_semantic_scores(supabase_client, summary: dict, user_data: dict) 
             f"Top strengths: {', '.join(summary.get('strengths', {}).get('top_strengths', []))}. "
             f"Sectors of interest: {', '.join(user_data.get('sectors_of_interest', []) or [])}. "
             f"Education field: {', '.join(user_data.get('education_field', []) or [])}. "
-            f"Current stage: {user_data.get('current_stage', '')}."
+            + (f"Specific area of study: {', '.join(user_data.get('education_specialisms') or [])}. " if user_data.get('education_specialisms') else "")
+            + f"Current stage: {user_data.get('current_stage', '')}."
         )
         embedding = _gemini_embed(query_text)
         matches = supabase_client.rpc("match_careers", {
@@ -268,15 +301,21 @@ def score_careers(summary: dict, user_data: dict, careers: list, semantic_scores
     user_education = [e for e in (user_data.get('education_field') or []) if e and e != 'not_applicable']
     user_sectors   = user_data.get('sectors_of_interest', [])
 
-    # career_direction ('stay_in_field' / 'change_field' / 'not_sure' / None)
+    # career_direction ('stay_in_field' / 'change_field' / 'unsure_subject' / 'not_sure' / None)
     # scales how hard the education-field overlap below pulls the ranking:
     # someone who wants to stay in their field should see that overlap weighted
     # more heavily, someone who wants out shouldn't be held back by a lack of
-    # overlap. 'not_sure'/None keeps the original (+3/-2) weights unchanged so
-    # historical responses without an answer score exactly as before.
+    # overlap. None (never asked) keeps the original (+3/-2) weights unchanged so
+    # historical responses without an answer score exactly as before. An explicit
+    # 'not_sure' is NOT treated as neutral: it softens both weights so the list
+    # shows a mix of in-field and out-of-field careers. 'unsure_subject' (unsure their
+    # chosen subject is right) keeps a small bonus for their field but no penalty for
+    # careers outside it.
     field_match_boost, field_mismatch_penalty = {
         'stay_in_field': (5, -4),
         'change_field':  (1, 0),
+        'unsure_subject': (2, 0),
+        'not_sure':      (2, -1),
     }.get(user_data.get('career_direction'), (3, -2))
 
     sector_map = {
@@ -336,6 +375,36 @@ COUNTRY_CODE_MAP = {
     'qatar': 'QA',
     'uae': 'AE',
 }
+
+# Answers to the QOYR (year of study) and QOTC (country to work in) questions live in assessment_responses.answers.
+# Only these exact values are accepted, because they can end up in AI prompts. Keep in sync with the frontend.
+STUDY_YEARS = ['year_1', 'year_2', 'year_3', 'year_4', 'final_year', 'postgraduate']
+
+def extract_study_year(answers) -> str | None:
+    v = answers.get('QOYR') if isinstance(answers, dict) else None
+    return v if v in STUDY_YEARS else None
+
+def extract_target_country(answers) -> str | None:
+    """A GCC country slug from QOTC, or None ('same as where I live', 'anywhere in the GCC', 'another country' or
+    unanswered all fall back to the country they are based in)."""
+    v = answers.get('QOTC') if isinstance(answers, dict) else None
+    return v if v in COUNTRY_CODE_MAP else None
+
+def enrich_profile(profile: dict) -> dict:
+    """Derive answer-based fields on a fetched assessment_responses row, in place, if it carries `answers`:
+    education_specialisms (QO5D), study_year (QOYR, university students only) and the country to work in (QOTC).
+    The target country REPLACES profile['country'] so job search, companies, the country profile and every prompt
+    use it consistently; the original is kept as profile['country_based']."""
+    if 'answers' not in profile:
+        return profile
+    answers = profile.get('answers')
+    profile['education_specialisms'] = extract_specialisms(answers, profile.get('education_field'))
+    profile['study_year'] = extract_study_year(answers) if profile.get('current_stage') == 'university' else None
+    target = extract_target_country(answers)
+    if target and profile.get('country') != target:
+        profile.setdefault('country_based', profile.get('country'))
+        profile['country'] = target
+    return profile
 
 # Display names for the same slugs — assessment_responses.country stores the raw
 # QO1 option value (e.g. "saudi_arabia"), not a human-readable name, so anything

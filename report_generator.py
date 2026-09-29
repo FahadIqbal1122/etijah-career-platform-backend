@@ -20,7 +20,8 @@ from supabase import create_client as _create_supabase_client
 from db_client import disable_http2
 from scoring_engine import build_framework_output, score_careers, get_career_semantic_scores, COUNTRY_CODE_MAP
 from coaching_pipeline import _gemini_embed, client as anthropic_client
-from content_policy import is_appropriate, CULTURAL_GUARDRAIL, STILL_ENROLLED_STAGES, ENTERING_MARKET_STAGES, PROFESSIONAL_STAGES
+from scoring_engine import extract_specialisms, enrich_profile
+from content_policy import resolve_route, section_order, should_show_entrepreneurship, is_appropriate, CULTURAL_GUARDRAIL, STILL_ENROLLED_STAGES, ENTERING_MARKET_STAGES, PROFESSIONAL_STAGES, MAJORS_STAGES, CERTIFICATION_STAGES, NO_LISTINGS_STAGES, NO_COMPANIES_STAGES
 from ai_provider import get_ai_provider
 
 # Self-contained client (like ai_provider.py / smtp_service.py) purely for the
@@ -185,12 +186,12 @@ UI_TEXT = {
         'prior_experience': 'Prior Experience', 'risk_tolerance': 'Risk Tolerance', 'portfolio_interest': 'Portfolio Interest',
         'match': 'MATCH', 'development_tip': 'Development tip:',
         'risk_suffix': 'RISK',
-        'fit_tag_strong_fit': 'Strong fit', 'fit_tag_worth_exploring': 'Worth exploring',
+        'group_build': 'Build on what you have', 'group_paths': 'Paths you may not have considered', 'rec_gap_build': 'Gap to close', 'rec_gap_paths': 'What it takes to get there', 'rec_next': 'What you can do now', 'fit_tag_strong_fit': 'Strong fit', 'fit_tag_worth_exploring': 'Worth exploring',
         'direction_tag_builds_on_background': 'Builds on your background', 'direction_tag_new_direction': 'New direction',
         'protected_skills_label': 'Human skills that stay valuable',
         'upskilling_label': 'How to prepare',
         'what_this_means_label': 'What this means for you',
-        'action_first_step': 'Your first step this week', 'action_week_plan': 'Your 7-day plan', 'action_why': 'Why', 'action_output': 'You will produce', 'action_when': 'When', 'action_worksheet': 'Worksheet', 'action_follow_on': 'Then', 'action_roadmap': 'Longer roadmap',
+        'ai_global_evidence': 'Global evidence', 'ai_local_outlook': 'In your market', 'ai_focus_title': 'Your skills to build and practice exercise', 'ai_skills': 'Skills to build', 'ai_exercise': 'Practice exercise', 'ai_work_sample': 'You will have', 'job_posted': 'Posted', 'job_requires': 'Requires', 'edu_high_school': 'High school', 'edu_associates': 'Diploma', 'edu_bachelors': "Bachelor's degree", 'edu_postgraduate': 'Postgraduate degree', 'exp_none': 'no experience', 'exp_months': "{n} months' experience", 'exp_years': "{n}+ years' experience", 'dir_title': 'Your chosen direction', 'dir_yours': 'Your choice', 'dir_suggested': 'Suggested match', 'dir_gap': 'Gap to close', 'dir_steps': 'Steps to reach it', 'majors_leads_to': 'Leads to', 'majors_try_it': 'Try it', 'action_first_step': 'Your first step this week', 'action_week_plan': 'Your 7-day plan', 'action_why': 'Why', 'action_output': 'You will produce', 'action_when': 'When', 'action_worksheet': 'Worksheet', 'action_follow_on': 'Then', 'action_roadmap': 'Longer roadmap',
         'action_month1': 'Month 1 — Launch', 'action_months23': 'Months 2–3 — Build', 'action_months46': 'Months 4–6 — Grow',
         'back_headline': 'Your Journey Starts Here',
         'back_tagline_suffix': 'Etijahi Assessment',
@@ -229,12 +230,12 @@ UI_TEXT = {
         'prior_experience': 'خبرة سابقة', 'risk_tolerance': 'تقبّل المخاطرة', 'portfolio_interest': 'الاهتمام بمشاريع متعددة',
         'match': 'نسبة التوافق', 'development_tip': 'نصيحة للتطوير:',
         'risk_suffix': 'المخاطر',
-        'fit_tag_strong_fit': 'تطابق قوي', 'fit_tag_worth_exploring': 'يستحق الاستكشاف',
+        'group_build': 'ابنِ على ما لديك', 'group_paths': 'مسارات ربما لم تفكر بها', 'rec_gap_build': 'الفجوة التي تسدّها', 'rec_gap_paths': 'ما يلزم للوصول إليه', 'rec_next': 'ما يمكنك فعله الآن', 'fit_tag_strong_fit': 'تطابق قوي', 'fit_tag_worth_exploring': 'يستحق الاستكشاف',
         'direction_tag_builds_on_background': 'يبني على خلفيتك', 'direction_tag_new_direction': 'اتجاه جديد',
         'protected_skills_label': 'مهارات إنسانية تبقى ذات قيمة',
         'upskilling_label': 'كيف تستعد',
         'what_this_means_label': 'ما الذي يعنيه هذا لك',
-        'action_first_step': 'خطوتك الأولى هذا الأسبوع', 'action_week_plan': 'خطتك لمدة 7 أيام', 'action_why': 'لماذا', 'action_output': 'ما ستنتجه', 'action_when': 'متى', 'action_worksheet': 'ورقة العمل', 'action_follow_on': 'بعد ذلك', 'action_roadmap': 'الخطة الأطول',
+        'ai_global_evidence': 'الدلائل عالمياً', 'ai_local_outlook': 'في سوقك', 'ai_focus_title': 'المهارات التي تبنيها وتمرين تطبيقي', 'ai_skills': 'مهارات تبنيها', 'ai_exercise': 'تمرين تطبيقي', 'ai_work_sample': 'ستحصل على', 'job_posted': 'نُشرت', 'job_requires': 'المطلوب', 'edu_high_school': 'الثانوية', 'edu_associates': 'دبلوم', 'edu_bachelors': 'بكالوريوس', 'edu_postgraduate': 'دراسات عليا', 'exp_none': 'بلا خبرة', 'exp_months': 'خبرة {n} أشهر', 'exp_years': 'خبرة {n}+ سنوات', 'dir_title': 'الاتجاه الذي اخترته', 'dir_yours': 'اختيارك', 'dir_suggested': 'مسار مقترح', 'dir_gap': 'الفجوة التي تسدّها', 'dir_steps': 'خطوات للوصول إليه', 'majors_leads_to': 'يقود إلى', 'majors_try_it': 'جرّبه', 'action_first_step': 'خطوتك الأولى هذا الأسبوع', 'action_week_plan': 'خطتك لمدة 7 أيام', 'action_why': 'لماذا', 'action_output': 'ما ستنتجه', 'action_when': 'متى', 'action_worksheet': 'ورقة العمل', 'action_follow_on': 'بعد ذلك', 'action_roadmap': 'الخطة الأطول',
         'action_month1': 'الشهر الأول — الانطلاقة', 'action_months23': 'الشهر 2–3 — البناء', 'action_months46': 'الشهر 4–6 — النمو',
         'back_headline': 'رحلتك تبدأ من هنا',
         'back_tagline_suffix': 'تقييم إتجاهي',
@@ -254,7 +255,15 @@ def _format_date(locale: str) -> str:
 CAREER_DIRECTION_LABELS = {
     'stay_in_field': "Wants to stay close to their current field/education",
     'change_field':  "Wants to move into something different from their current field/education",
-    'not_sure':      "Not sure whether to stay in their field or change direction",
+    'not_sure':      "Not sure yet what they want help with (stay in their field or change direction)",
+    'unsure_subject': "Unsure whether their subject/current path is right and wants to explore their options",
+    'choosing_major': "Still in school and wants help choosing what to study (which majors fit them)",
+    'explore_careers': "Still in school and wants to explore careers that suit them",
+}
+
+STUDY_YEAR_LABELS = {
+    'year_1': "1st year", 'year_2': "2nd year", 'year_3': "3rd year", 'year_4': "4th year",
+    'final_year': "final year", 'postgraduate': "postgraduate (master's / PhD)",
 }
 
 ARABIC_LANGUAGE_INSTRUCTION = (

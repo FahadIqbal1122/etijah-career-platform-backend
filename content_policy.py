@@ -10,6 +10,7 @@ main exposure point, since that content isn't curated by us.
 """
 
 import re
+from datetime import datetime, timezone, timedelta
 
 DISALLOWED_KEYWORDS = [
     # Non-Islamic religious institutions / clergy
@@ -37,6 +38,71 @@ def is_appropriate(*fields: str | None) -> bool:
     """True if none of the given text fields trip the disallowed-content filter."""
     text = " ".join(f for f in fields if f)
     return not _PATTERN.search(text)
+
+
+# ── Order of the report sections (results page and PDF share this list) ───────────────────────
+# Logical section keys:
+#   summary   who you are at a glance (quick cards / profile summary page)
+#   majors    majors to compare (high school) or exposure ideas (university): the "student track"
+#   careers   suggested careers
+#   plan      choose your direction, first step, 7-day plan and the months roadmap
+#   path      progression / transition write-up (working professionals)
+#   jobs      live job postings or internships
+#   certs     certifications
+#   courses   recommended courses
+#   companies employers worth researching
+#   ai        AI impact (with skills to build and the practice exercise)
+#   profile   the detailed personality, values, strengths and work-style pages
+# Rule: what decides and what to do next come first (careers, plan), then what to do about it in the order that
+# matters for that stage (learn / build for students, apply for graduates, transition for working users), then
+# the AI context, then the detailed profile as supporting evidence. Related sections sit next to each other:
+# courses with certifications, jobs with companies.
+SECTION_ORDER = {
+    "choosing_studies": ["summary", "majors", "careers", "plan", "courses", "ai", "profile"],
+    "student":          ["summary", "careers", "plan", "courses", "certs", "majors", "jobs", "ai", "profile"],
+    "graduate":         ["summary", "careers", "plan", "jobs", "certs", "courses", "companies", "ai", "profile"],
+    "next_move":        ["summary", "careers", "plan", "path", "jobs", "courses", "companies", "ai", "profile"],
+    "default":          ["summary", "careers", "plan", "jobs", "courses", "companies", "ai", "profile"],
+}
+
+def section_order(current_stage: str | None) -> list[str]:
+    if current_stage in MAJORS_STAGES:
+        return SECTION_ORDER["choosing_studies"]
+    if current_stage in STILL_ENROLLED_STAGES:
+        return SECTION_ORDER["student"]
+    if current_stage in ENTERING_MARKET_STAGES:
+        return SECTION_ORDER["graduate"]
+    if current_stage in PROFESSIONAL_STAGES:
+        return SECTION_ORDER["next_move"]
+    return SECTION_ORDER["default"]
+
+def should_show_entrepreneurship(career_structure: str | None) -> bool:
+    """The entrepreneurship section is only meaningful for someone open to starting a business. A person who said they
+    see their career as an employee (QO7 = 'employee') is auto-filled with placeholder answers for those questions
+    (see SKIP_RULES in the assessment form), so showing scores and a narrative for them would be made-up content."""
+    return career_structure != "employee"
+
+
+# A direction the user types themselves (results page "choose your direction") ends up inside an AI prompt, so
+# it is kept short, limited to ordinary name characters (letters in any script incl. Arabic, digits, spaces and a
+# few punctuation marks), and passed through the same cultural-content filter as everything else.
+_DIRECTION_ALLOWED = re.compile(r"^[\w\s&/,.'()+#-]+$", re.UNICODE)
+
+def clean_direction_label(text: str | None) -> str | None:
+    """Sanitised direction label, or None if it should be rejected."""
+    if not isinstance(text, str):
+        return None
+    label = re.sub(r"\s+", " ", text).strip()
+    if not (2 <= len(label) <= 80):
+        return None
+    if not _DIRECTION_ALLOWED.match(label):
+        return None
+    if not is_appropriate(label):
+        return None
+    return label
+
+def direction_key(label: str) -> str:
+    return re.sub(r"\s+", " ", label).strip().casefold()
 
 
 # JSearch's `country` param only biases results toward a region; it can still
@@ -89,6 +155,29 @@ STILL_ENROLLED_STAGES = {"high_school", "university"}
 ENTERING_MARKET_STAGES = {"recent_graduate"}
 PROFESSIONAL_STAGES = {"working_exploring", "career_changer", "returning", "between_roles"}
 
+# Which results sections each kind of user sees (decided 29 Sept 2026):
+#   high_school   -> majors to compare (+ the careers they lead to), courses, exposure ideas.
+#                    No jobs, internships or company list.
+#   university    -> courses, certifications (they have time to build credentials), internships,
+#                    exposure ideas. No jobs, no company list, no majors comparison.
+#   recent_graduate -> entry-level jobs + internships, certifications, companies, courses.
+#   professionals -> jobs, career path (progression/transition), companies, courses. No majors.
+MAJORS_STAGES = {"high_school"}
+CERTIFICATION_STAGES = {"university", "recent_graduate"}
+NO_LISTINGS_STAGES = {"high_school"}            # neither jobs nor internships
+NO_COMPANIES_STAGES = STILL_ENROLLED_STAGES     # employer target list is for graduates and up
+
+def resolve_route(current_stage: str | None) -> str:
+    """Entry route (from the 28 Sept meeting guide) for a QO4 stage. Used by the results
+    endpoint so the frontend/admin can label what a user is seeing."""
+    if current_stage in MAJORS_STAGES:
+        return "choosing_studies"
+    if current_stage in STILL_ENROLLED_STAGES or current_stage in ENTERING_MARKET_STAGES:
+        return "degree_to_career"
+    if current_stage in PROFESSIONAL_STAGES:
+        return "next_move"
+    return "default"
+
 SENIOR_LEVEL_KEYWORDS = [
     "senior", "sr.", "manager", "director", "head of", "chief", "vp ",
     "vice president", "principal", "executive", "president",
@@ -115,6 +204,81 @@ def is_seniority_appropriate(job_title: str | None, job_description: str | None,
     if any(kw in text for kw in ENTRY_LEVEL_SIGNALS):
         return True
     return not any(kw in text for kw in SENIOR_LEVEL_KEYWORDS)
+
+
+# ── Freshness and requirements of a live listing (JSearch fields) ─────────────
+# Every field used here is optional in the API response: a listing that does not carry a date or
+# requirement data is kept (unknown is not a reason to hide a job), only listings that clearly do
+# not fit are dropped.
+
+MAX_JOB_AGE_DAYS = 60
+EDUCATION_RANK = {"high_school": 1, "associates": 2, "bachelors": 3, "postgraduate": 4}
+# Highest experience (months) we still show to someone at the start of their career / to an intern.
+MAX_EXPERIENCE_MONTHS_EARLY_CAREER = 36
+MAX_EXPERIENCE_MONTHS_INTERNSHIP = 12
+
+
+def _parse_dt(value) -> datetime | None:
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+
+
+def job_posted_date(job: dict) -> str | None:
+    """YYYY-MM-DD the listing was posted, or None if the API gave no usable date."""
+    dt = _parse_dt(job.get("job_posted_at_datetime_utc"))
+    return dt.date().isoformat() if dt else None
+
+
+def is_job_fresh(job: dict, now: datetime | None = None) -> bool:
+    """False for a listing posted more than MAX_JOB_AGE_DAYS ago or whose offer has already expired."""
+    now = now or datetime.now(timezone.utc)
+    posted = _parse_dt(job.get("job_posted_at_datetime_utc"))
+    if posted and now - posted > timedelta(days=MAX_JOB_AGE_DAYS):
+        return False
+    expires = _parse_dt(job.get("job_offer_expiration_datetime_utc"))
+    if expires and expires < now:
+        return False
+    return True
+
+
+def job_requirements(job: dict) -> dict:
+    """{'education': 'high_school'|'associates'|'bachelors'|'postgraduate'|None, 'experience_months': int|None}
+    read from the listing's own structured fields. A postgraduate degree only counts as a requirement when the
+    listing does not merely prefer it."""
+    edu = job.get("job_required_education") if isinstance(job.get("job_required_education"), dict) else {}
+    exp = job.get("job_required_experience") if isinstance(job.get("job_required_experience"), dict) else {}
+    education = None
+    if edu.get("postgraduate_degree") and not edu.get("degree_preferred"):
+        education = "postgraduate"
+    elif edu.get("bachelors_degree"):
+        education = "bachelors"
+    elif edu.get("associates_degree"):
+        education = "associates"
+    elif edu.get("high_school"):
+        education = "high_school"
+    months = None
+    if exp.get("no_experience_required"):
+        months = 0
+    elif isinstance(exp.get("required_experience_in_months"), (int, float)):
+        months = int(exp["required_experience_in_months"])
+    return {"education": education, "experience_months": months}
+
+
+def meets_requirements(req: dict, user_education_rank: int | None, max_experience_months: int | None) -> bool:
+    """Drop a listing that asks for a higher education level than the user has (only when we know their level)
+    or for more experience than a beginner can have (only when a cap applies)."""
+    if user_education_rank is not None and req.get("education"):
+        if EDUCATION_RANK[req["education"]] > user_education_rank:
+            return False
+    if max_experience_months is not None and req.get("experience_months") is not None:
+        if req["experience_months"] > max_experience_months:
+            return False
+    return True
 
 
 CULTURAL_GUARDRAIL = (

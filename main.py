@@ -6,7 +6,7 @@ from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.middleware.cors import CORSMiddleware
 from supabase import create_client, Client
 from dotenv import load_dotenv
-from scoring_engine import compute_scores, build_framework_output, score_careers, get_career_semantic_scores, COUNTRY_CODE_MAP, COUNTRY_NAMES
+from scoring_engine import compute_scores, build_framework_output, score_careers, get_career_semantic_scores, extract_specialisms, enrich_profile, COUNTRY_CODE_MAP, COUNTRY_NAMES
 from pydantic import BaseModel, EmailStr, Field, field_validator
 from typing import Any, Literal
 import io
@@ -21,7 +21,7 @@ from smtp_service import send_report_email, send_feedback_email, send_results_re
 import httpx, hmac, hashlib, json, secrets, time
 from coaching_methodology import METHODOLOGY_DOC
 from coaching_pipeline import chunk_transcript, embed_and_store_chunks, client, embed_country_profile, sync_country_profile_embedding, sync_career_embedding, _gemini_embed
-from content_policy import is_appropriate, is_region_eligible, is_seniority_appropriate, STILL_ENROLLED_STAGES, ENTERING_MARKET_STAGES, PROFESSIONAL_STAGES, CULTURAL_GUARDRAIL
+from content_policy import section_order, job_posted_date, is_job_fresh, job_requirements as parse_job_requirements, meets_requirements, MAX_EXPERIENCE_MONTHS_EARLY_CAREER, MAX_EXPERIENCE_MONTHS_INTERNSHIP, EDUCATION_RANK, clean_direction_label, direction_key, resolve_route, MAJORS_STAGES, CERTIFICATION_STAGES, NO_LISTINGS_STAGES, NO_COMPANIES_STAGES, is_appropriate, is_region_eligible, is_seniority_appropriate, STILL_ENROLLED_STAGES, ENTERING_MARKET_STAGES, PROFESSIONAL_STAGES, CULTURAL_GUARDRAIL
 from ai_provider import get_ai_provider, invalidate_ai_provider_cache, AI_PROVIDER_KEY, VALID_PROVIDERS
 
 load_dotenv()
@@ -151,6 +151,9 @@ def _assert_can_view(owner_user_id: str | None, user):
         raise HTTPException(status_code=401, detail="Sign in to view this response")
     if user.id != owner_user_id and (user.app_metadata or {}).get("role") != "admin":
         raise HTTPException(status_code=404, detail="No results found for this response")
+
+def _is_admin(user) -> bool:
+    return bool(user) and (user.app_metadata or {}).get("role") == "admin"
 
 def _assert_can_force_refresh(owner_user_id: str | None, user):
     """force=true bypasses the cache and pays for a live LLM/API call — unlike a plain view,
