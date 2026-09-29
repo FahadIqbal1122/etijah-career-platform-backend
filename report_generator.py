@@ -824,27 +824,24 @@ def _bar(score: float, color: str = "#00c9a7") -> str:
 RISK_LABELS_AR = {'low': 'منخفضة', 'medium': 'متوسطة', 'high': 'عالية'}
 
 def _risk_badge(risk: str, locale: str = 'en') -> str:
-    colors = {'low': '#2a9d5c', 'medium': '#d4a017', 'high': '#e05a3a'}
-    c = colors.get(risk, '#888')
+    tone = {'low': 'green', 'medium': 'amber', 'high': 'rose'}.get(risk, 'gray')
     label = f'{RISK_LABELS_AR.get(risk, risk or "")} {UI_TEXT["ar"]["risk_suffix"]}' if locale == 'ar' \
         else f'{(risk or "").upper()} {UI_TEXT["en"]["risk_suffix"]}'
-    return (
-        f'<span style="font-size:7pt;font-weight:700;padding:2px 8px;border-radius:10px;'
-        f'background:{c}22;color:{c};border:1px solid {c};letter-spacing:1px;white-space:nowrap;">'
-        f'{label}</span>'
-    )
+    return f'<span class="tag tag-{tone}" style="white-space:nowrap;">{label}</span>'
 
 LEVEL_LABELS_AR = {'high': 'مرتفع', 'medium': 'متوسط', 'low': 'منخفض'}
 
 def _badge(level: str, locale: str = 'en') -> str:
-    colors = {'high': '#2a9d5c', 'medium': '#d4a017', 'low': '#e05a3a'}
-    c = colors.get(level, '#888')
+    # Personality levels are information, not good or bad: high is blue, everything else gray.
+    tone = 'blue' if level == 'high' else 'gray'
     label = LEVEL_LABELS_AR.get(level, level) if locale == 'ar' else level.upper()
-    return (
-        f'<span style="font-size:7pt;font-weight:700;padding:2px 8px;border-radius:10px;'
-        f'background:{c}22;color:{c};border:1px solid {c};letter-spacing:1px;">'
-        f'{label}</span>'
-    )
+    return f'<span class="tag tag-{tone}" style="white-space:nowrap;">{label}</span>'
+
+def _note(tone: str, label: str, text, side: str = 'left') -> str:
+    """A tinted box with a coloured edge and a small label (blue = information, green = do this, amber = gap)."""
+    if not str(text or '').strip():
+        return ''
+    return f'<div class="note note-{tone}"><span class="note-label">{label}</span><span class="body-text">{text}</span></div>'
 
 # ─── HTML report builder ───────────────────────────────────────────────────────
 
@@ -1029,26 +1026,32 @@ def build_html_report(user_data: dict, summary: dict, raw_scores: list, ai: dict
         )
 
     # ── Career recommendation cards ───────────────────────────────────────────
+    risk_by_title = {str(c.get('title', '')).strip().lower(): c.get('ai_risk_level')
+                     for c in _as_list((ai_impact or {}).get('careers')) if isinstance(c, dict)}
+
     def _career_card(rec: dict) -> str:
         ms = rec.get('match_score', 0)
         tag_pills = ""
         if rec.get('fit_tag') in ('strong_fit', 'worth_exploring'):
-            tag_pills += f'<span class="pill" style="margin-left:4px;">{T["fit_tag_" + rec["fit_tag"]]}</span>'
+            tag_pills += f'<span class="tag tag-{"green" if rec["fit_tag"] == "strong_fit" else "amber"}">{T["fit_tag_" + rec["fit_tag"]]}</span>'
         if rec.get('direction_tag') in ('builds_on_background', 'new_direction'):
-            tag_pills += f'<span class="pill" style="margin-left:4px;">{T["direction_tag_" + rec["direction_tag"]]}</span>'
+            tag_pills += f'<span class="tag tag-{"purple" if rec["direction_tag"] == "new_direction" else "blue"}">{T["direction_tag_" + rec["direction_tag"]]}</span>'
+        risk = risk_by_title.get(str(rec.get('title', '')).strip().lower())
+        if risk in ('low', 'medium', 'high'):
+            tag_pills += _risk_badge(risk, locale)
         gap_label = T['rec_gap_paths'] if rec.get('direction_tag') == 'new_direction' else T['rec_gap_build']
-        gap_html = (f'<p class="body-text" style="margin-top:6px;"><strong>{gap_label}:</strong> {rec.get("gap","")}</p>' if rec.get('gap') else '')
-        next_html = (f'<p class="body-text" style="margin-top:4px;"><strong>{T["rec_next"]}:</strong> {rec.get("next_action","")}</p>' if rec.get('next_action') else '')
+        gap_html = _note('amber', gap_label, rec.get('gap', ''))
+        next_html = _note('green', T['rec_next'], rec.get('next_action', ''))
         return (
             f'<div class="card" style="margin-bottom:10px;">'
             f'<div class="card-row">'
             f'<div>'
             f'<h4 class="card-title">{rec.get("title","")}</h4>'
-            f'<span class="pill">{rec.get("sector","")}</span>{tag_pills}'
+            f'<span class="tag tag-gray">{rec.get("sector","")}</span>{tag_pills}'
             f'</div>'
             f'<div style="text-align:center;flex-shrink:0;">'
             f'<div style="font-size:20pt;font-weight:900;color:#0770ba;line-height:1;">{ms}%</div>'
-            f'<div class="muted" style="font-size:7pt;letter-spacing:1px;">{T["match"]}</div>'
+            f'<div class="muted" style="font-size:8.5pt;letter-spacing:1px;">{T["match"]}</div>'
             f'</div>'
             f'</div>'
             f'<p class="body-text" style="margin-top:8px;">{rec.get("fit_summary","")}</p>'
@@ -1086,7 +1089,7 @@ def build_html_report(user_data: dict, summary: dict, raw_scores: list, ai: dict
         # When it was posted and what it asks for (older cached listings carry neither).
         meta = []
         if job.get("posted_at"):
-            meta.append(f'{T["job_posted"]}: {job["posted_at"]}')
+            meta.append(f'<span class="tag tag-gray">{T["job_posted"]}: {job["posted_at"]}</span>')
         req_parts = []
         if job.get("requires_education") in ("high_school", "associates", "bachelors", "postgraduate"):
             req_parts.append(T["edu_" + job["requires_education"]])
@@ -1094,8 +1097,8 @@ def build_html_report(user_data: dict, summary: dict, raw_scores: list, ai: dict
         if isinstance(months, int):
             req_parts.append(T["exp_none"] if months == 0 else T["exp_months"].format(n=months) if months < 12 else T["exp_years"].format(n=months // 12))
         if req_parts:
-            meta.append(f'{T["job_requires"]}: {" · ".join(req_parts)}')
-        meta_html = f'<p class="muted" style="margin-top:4px;">{" · ".join(meta)}</p>' if meta else ""
+            meta.append(f'<span class="tag tag-blue">{T["job_requires"]}: {" · ".join(req_parts)}</span>')
+        meta_html = f'<div style="margin-top:4px;">{"".join(meta)}</div>' if meta else ""
         job_cards += (
             f'<div class="card" style="margin-bottom:10px;">'
             f'<h4 class="card-title">{job.get("title","")}</h4>'
@@ -1188,11 +1191,11 @@ def build_html_report(user_data: dict, summary: dict, raw_scores: list, ai: dict
     for c in (ai_impact or {}).get('careers', [])[:ai_impact_cap]:
         pill_margin = 'margin:2px 0 2px 4px;' if locale == 'ar' else 'margin:2px 4px 2px 0;'
         protected_pills = "".join(
-            f'<span class="pill" style="{pill_margin}">{s}</span>'
+            f'<span class="tag tag-green" style="{pill_margin}">{s}</span>'
             for s in c.get('protected_skills', [])
         )
         protected_skills_html = (
-            f'<p class="muted" style="margin:8px 0 4px;font-size:0.75em;text-transform:uppercase;letter-spacing:0.03em;">{T["protected_skills_label"]}</p>'
+            f'<p class="muted" style="margin:8px 0 4px;font-size:8.5pt;text-transform:uppercase;letter-spacing:0.03em;">{T["protected_skills_label"]}</p>'
             f'<div>{protected_pills}</div>'
         ) if c.get('protected_skills') else ""
         upskilling_items = "".join(
@@ -1200,7 +1203,7 @@ def build_html_report(user_data: dict, summary: dict, raw_scores: list, ai: dict
             for tip in c.get('upskilling', [])
         )
         upskilling_html = (
-            f'<p class="muted" style="margin:8px 0 4px;font-size:0.75em;text-transform:uppercase;letter-spacing:0.03em;">{T["upskilling_label"]}</p>'
+            f'<p class="muted" style="margin:8px 0 4px;font-size:8.5pt;text-transform:uppercase;letter-spacing:0.03em;">{T["upskilling_label"]}</p>'
             f'<ul class="action-list">{upskilling_items}</ul>'
         ) if c.get('upskilling') else ""
         what_this_means_html = (
@@ -1237,9 +1240,9 @@ def build_html_report(user_data: dict, summary: dict, raw_scores: list, ai: dict
         ai_focus_html = (
             f'<div class="card" style="margin-bottom:10px;border-{border_side}:4px solid #00c9a7;">'
             f'<h4 class="card-title">{T["ai_focus_title"]}: {focus.get("title","")}</h4>'
-            + (f'<p class="muted" style="margin:8px 0 4px;font-size:0.75em;text-transform:uppercase;">{T["ai_skills"]}</p><ul class="action-list">{skill_items}</ul>' if skill_items else '')
-            + (f'<p class="body-text" style="margin-top:8px;"><strong>{T["ai_exercise"]}:</strong> {ex.get("task","")}</p>' if ex.get('task') else '')
-            + (f'<p class="body-text"><strong>{T["ai_work_sample"]}:</strong> {ex.get("work_sample","")}</p>' if ex.get('work_sample') else '')
+            + (f'<p class="muted" style="margin:8px 0 4px;font-size:8.5pt;text-transform:uppercase;">{T["ai_skills"]}</p><ul class="action-list">{skill_items}</ul>' if skill_items else '')
+            + _note('green', T['ai_exercise'], ex.get('task', ''))
+            + _note('blue', T['ai_work_sample'], ex.get('work_sample', ''))
             + '</div>'
         )
 
@@ -1279,7 +1282,7 @@ def build_html_report(user_data: dict, summary: dict, raw_scores: list, ai: dict
             f'<div class="card" style="margin-bottom:14px;border-{border_side}:4px solid #0770ba;">'
             f'<h4 class="card-title">{T["dir_title"]}: {direction.get("label","")} <span class="pill">{badge}</span></h4>'
             + (f'<p class="body-text" style="margin-top:6px;">{dir_plan.get("fit_note","")}</p>' if dir_plan.get('fit_note') else '')
-            + (f'<p class="body-text"><strong>{T["dir_gap"]}:</strong> {dir_plan.get("gap","")}</p>' if dir_plan.get('gap') else '')
+            + _note('amber', T['dir_gap'], dir_plan.get('gap', ''))
             + (f'<p class="muted" style="margin-top:6px;">{dir_plan.get("reality_check","")}</p>' if dir_plan.get('reality_check') else '')
             + '</div>'
         )
@@ -1293,8 +1296,8 @@ def build_html_report(user_data: dict, summary: dict, raw_scores: list, ai: dict
             f'<h4 class="card-title">{T["action_first_step"]}</h4>'
             f'<p class="body-text" style="margin-top:6px;"><strong>{first_step.get("action","")}</strong></p>'
             f'<p class="body-text"><strong>{T["action_why"]}:</strong> {first_step.get("why","")}</p>'
-            f'<p class="body-text"><strong>{T["action_output"]}:</strong> {first_step.get("output","")}</p>'
-            f'<p class="body-text"><strong>{T["action_when"]}:</strong> {first_step.get("when","")}</p>'
+            + _note('green', T['action_output'], first_step.get('output', ''))
+            + _note('blue', T['action_when'], first_step.get('when', ''))
             + (f'<p class="body-text"><strong>{T["action_worksheet"]}:</strong></p><ul class="action-list">{worksheet_lis}</ul>' if worksheet_lis else '')
             + (f'<p class="body-text"><strong>{T["action_follow_on"]}:</strong> {first_step.get("follow_on","")}</p>' if first_step.get('follow_on') else '')
             + '</div>'
@@ -1348,79 +1351,79 @@ def build_html_report(user_data: dict, summary: dict, raw_scores: list, ai: dict
   .cover-accent { height:6px; background:linear-gradient(90deg,#00c9a7,#5eead4,#00c9a7); }
   .cover-body { flex:1; display:flex; flex-direction:column; justify-content:center; align-items:center; text-align:center; padding:40mm 20mm; }
   .cover-logo { margin-bottom:18px; }
-  .cover-eyebrow { display:inline-block; background:rgba(0,201,167,.15); border:1px solid rgba(0,201,167,.4); color:#00c9a7; font-size:8pt; letter-spacing:3px; text-transform:uppercase; padding:6px    
+  .cover-eyebrow { display:inline-block; background:rgba(0,201,167,.15); border:1px solid rgba(0,201,167,.4); color:#00c9a7; font-size:9pt; letter-spacing:3px; text-transform:uppercase; padding:6px    
   18px; border-radius:20px; margin-bottom:24px; }
   .cover-headline { font-size:36pt; font-weight:900; color:#fff; line-height:1.1; margin-bottom:8px; }
   .cover-sub { font-size:13pt; color:rgba(255,255,255,.55); margin-bottom:44px; letter-spacing:1px; }
   .cover-rule { width:56px; height:3px; background:#00c9a7; margin:0 auto 30px; }
   .cover-name { font-size:21pt; font-weight:700; color:#fff; margin-bottom:8px; }
   .cover-code { font-size:30pt; font-weight:900; color:#00c9a7; letter-spacing:8px; margin-bottom:6px; }
-  .cover-code-label { font-size:8pt; color:rgba(255,255,255,.45); letter-spacing:2px; text-transform:uppercase; margin-bottom:44px; }
+  .cover-code-label { font-size:9pt; color:rgba(255,255,255,.45); letter-spacing:2px; text-transform:uppercase; margin-bottom:44px; }
   .cover-type { display:inline-block; background:rgba(255,255,255,.08); border:1px solid rgba(255,255,255,.18); color:rgba(255,255,255,.88); font-size:13pt; font-weight:600; padding:10px 30px;
   border-radius:40px; margin-bottom:10px; }
   .cover-tagline { font-size:9.5pt; color:rgba(255,255,255,.45); }
   .cover-footer { display:flex; justify-content:space-between; align-items:center; padding:14px 40px; border-top:1px solid rgba(255,255,255,.08); background:rgba(0,0,0,.2); }
   .cover-brand { color:#00c9a7; font-size:9pt; font-weight:700; letter-spacing:2px; text-transform:uppercase; }
-  .cover-date  { color:rgba(255,255,255,.35); font-size:8pt; }
-  .cover-conf  { color:rgba(255,255,255,.25); font-size:7pt; letter-spacing:1px; text-transform:uppercase; }
+  .cover-date  { color:rgba(255,255,255,.35); font-size:9pt; }
+  .cover-conf  { color:rgba(255,255,255,.25); font-size:8.5pt; letter-spacing:1px; text-transform:uppercase; }
 
   /* Content pages */
   .page { padding:12mm 16mm 20mm; page-break-after:always; min-height:270mm; position:relative; }
   .page:last-child { page-break-after:avoid; }
   .page-hdr { display:flex; justify-content:space-between; align-items:center; padding-bottom:7px; border-bottom:2px solid #075288; margin-bottom:18px; }
   .page-hdr-brand-wrap { display:flex; align-items:center; gap:5px; }
-  .page-hdr-brand { font-size:7pt; font-weight:700; color:#00c9a7; letter-spacing:2px; text-transform:uppercase; }
-  .page-hdr-name  { font-size:7pt; color:#aaa; }
+  .page-hdr-brand { font-size:8.5pt; font-weight:700; color:#00c9a7; letter-spacing:2px; text-transform:uppercase; }
+  .page-hdr-name  { font-size:8.5pt; color:#777; }
   .page-ftr { position:absolute; bottom:10mm; left:16mm; right:16mm; display:flex; justify-content:space-between; border-top:1px solid #eee; padding-top:5px; }
-  .page-ftr span { font-size:7pt; color:#ccc; }
+  .page-ftr span { font-size:8.5pt; color:#888; }
 
   /* Section headings */
   .sec-heading { display:flex; align-items:center; gap:12px; margin-bottom:16px; }
   .sec-accent  { width:4px; height:34px; background:linear-gradient(180deg,#00c9a7,#5eead4); border-radius:2px; flex-shrink:0; }
-  .sec-num     { font-size:7.5pt; font-weight:700; color:#00c9a7; letter-spacing:2px; text-transform:uppercase; line-height:1; }
+  .sec-num     { font-size:8.5pt; font-weight:700; color:#00c9a7; letter-spacing:2px; text-transform:uppercase; line-height:1; }
   .sec-title   { font-size:15pt; font-weight:800; color:#075288; line-height:1.2; }
-  .intro-box   { background:#f7f8fc; border-left:3px solid #00c9a7; padding:11px 15px; border-radius:0 6px 6px 0; font-size:9.5pt; color:#555; font-style:italic; line-height:1.7; margin-bottom:18px; }   
+  .intro-box   { background:#f7f8fc; border-left:3px solid #00c9a7; padding:11px 15px; border-radius:0 6px 6px 0; font-size:10.5pt; color:#444; font-style:italic; line-height:1.7; margin-bottom:18px; }   
 
   /* Summary hero */
   .summary-hero { background:linear-gradient(135deg,#075288,#0770ba); color:#fff; padding:22px 26px; border-radius:8px; margin-bottom:20px; }
-  .summary-hero-label { font-size:8pt; font-weight:700; color:#00c9a7; letter-spacing:2px; text-transform:uppercase; margin-bottom:10px; }
-  .summary-hero-text  { font-size:10.5pt; line-height:1.85; color:rgba(255,255,255,.9); }
+  .summary-hero-label { font-size:9pt; font-weight:700; color:#00c9a7; letter-spacing:2px; text-transform:uppercase; margin-bottom:10px; }
+  .summary-hero-text  { font-size:11pt; line-height:1.85; color:rgba(255,255,255,.9); }
 
   /* Stat grid */
   .stat-grid { display:flex; gap:10px; margin-bottom:18px; }
   .stat-cell { flex:1; background:#f7f8fc; border:1px solid #e0e3ea; border-radius:6px; padding:11px 12px; text-align:center; page-break-inside:avoid; break-inside:avoid; }
-  .stat-lbl  { font-size:7pt; color:#aaa; text-transform:uppercase; letter-spacing:1px; margin-bottom:4px; }
-  .stat-val  { font-size:9.5pt; font-weight:700; color:#075288; }
+  .stat-lbl  { font-size:8.5pt; color:#666; text-transform:uppercase; letter-spacing:1px; margin-bottom:4px; }
+  .stat-val  { font-size:10.5pt; font-weight:700; color:#075288; }
 
   /* Score bars */
   .bar-row   { display:flex; align-items:center; gap:10px; margin-bottom:9px; }
-  .bar-label { font-size:8.5pt; color:#555; width:130px; flex-shrink:0; font-weight:500; }
-  .bar-label small { font-weight:400; color:#aaa; font-size:7pt; }
+  .bar-label { font-size:9.5pt; color:#444; width:130px; flex-shrink:0; font-weight:500; }
+  .bar-label small { font-weight:400; color:#777; font-size:8.5pt; }
   .bar-track { flex:1; height:8px; background:#e8eaf0; border-radius:4px; overflow:hidden; }
   .bar-fill  { height:100%; border-radius:4px; }
-  .bar-num   { font-size:8pt; font-weight:700; color:#666; width:26px; text-align:right; flex-shrink:0; }
+  .bar-num   { font-size:9pt; font-weight:700; color:#666; width:26px; text-align:right; flex-shrink:0; }
 
   /* Cards */
   .card       { background:#f7f8fc; border:1px solid #e0e3ea; border-radius:8px; padding:14px 16px; margin-bottom:12px; page-break-inside:avoid; break-inside:avoid; }
   .card-row   { display:flex; justify-content:space-between; align-items:flex-start; }
-  .card-title { font-size:11pt; font-weight:700; color:#075288; margin-bottom:3px; }
+  .card-title { font-size:12pt; font-weight:700; color:#075288; margin-bottom:3px; }
   .score-circle { width:50px; height:50px; background:#075288; color:#00c9a7; border-radius:50%; display:flex; align-items:center; justify-content:center; font-size:13pt; font-weight:800; flex-shrink:0; 
   }
-  .mini-badge { display:inline-block; background:rgba(0,201,167,.12); color:#00c9a7; font-size:7pt; font-weight:700; letter-spacing:1.5px; text-transform:uppercase; padding:2px 8px; border-radius:10px; 
+  .mini-badge { display:inline-block; background:rgba(0,201,167,.12); color:#00c9a7; font-size:8.5pt; font-weight:700; letter-spacing:1.5px; text-transform:uppercase; padding:2px 8px; border-radius:10px; 
   margin-bottom:4px; }
-  .muted      { font-size:8pt; color:#888; line-height:1.5; }
-  .body-text  { font-size:9pt; color:#444; line-height:1.7; }
-  .pill       { display:inline-block; background:#e8eaf0; color:#666; font-size:7.5pt; padding:2px 9px; border-radius:10px; margin-top:4px; }
+  .muted      { font-size:9.5pt; color:#666; line-height:1.5; }
+  .body-text  { font-size:10.5pt; color:#333; line-height:1.7; }
+  .pill       { display:inline-block; background:#eceef2; color:#545968; font-size:8.5pt; padding:2px 10px; border-radius:10px; margin-top:4px; }
 
   /* RIASEC overview */
   .riasec-overview    { background:rgba(0,201,167,.07); border:1px solid rgba(0,201,167,.3); border-radius:8px; padding:13px 16px; margin-bottom:18px; }
   .riasec-combo-title { font-size:13pt; font-weight:800; color:#075288; margin-bottom:6px; }
   .all-bars-box   { background:#f7f8fc; border:1px solid #e0e3ea; border-radius:8px; padding:14px 16px; margin-top:14px; }
-  .all-bars-label { font-size:7.5pt; font-weight:700; color:#bbb; letter-spacing:1.5px; text-transform:uppercase; margin-bottom:12px; }
+  .all-bars-label { font-size:8.5pt; font-weight:700; color:#777; letter-spacing:1.5px; text-transform:uppercase; margin-bottom:12px; }
 
   /* Strength card */
   .strength-card { border-left:4px solid #40916c !important; border-radius:0 8px 8px 0 !important; }
-  .dev-tip { background:rgba(64,145,108,.08); border:1px solid rgba(64,145,108,.2); border-radius:6px; padding:7px 11px; font-size:8pt; color:#2a9d5c; margin-top:9px; line-height:1.5; }
+  .dev-tip { background:rgba(64,145,108,.08); border:1px solid rgba(64,145,108,.2); border-radius:6px; padding:7px 11px; font-size:9.5pt; color:#2a9d5c; margin-top:9px; line-height:1.5; }
 
   /* Values grid */
   .values-grid { display:flex; gap:12px; }
@@ -1430,21 +1433,38 @@ def build_html_report(user_data: dict, summary: dict, raw_scores: list, ai: dict
   /* Two-col layout */
   .two-col { display:flex; gap:14px; }
   .col-box { flex:1; background:#f7f8fc; border:1px solid #e0e3ea; border-radius:8px; padding:14px; page-break-inside:avoid; break-inside:avoid; }
-  .col-title { font-size:8.5pt; font-weight:700; color:#075288; margin-bottom:12px; padding-bottom:8px; border-bottom:1.5px solid #e0e3ea; }
-  .narr-box { background:#f7f8fc; border:1px solid #e0e3ea; border-radius:8px; padding:12px 15px; margin-top:14px; font-size:9pt; color:#555; line-height:1.7; }
+  .col-title { font-size:9.5pt; font-weight:700; color:#075288; margin-bottom:12px; padding-bottom:8px; border-bottom:1.5px solid #e0e3ea; }
+  .narr-box { background:#f7f8fc; border:1px solid #e0e3ea; border-radius:8px; padding:12px 15px; margin-top:14px; font-size:10.5pt; color:#444; line-height:1.7; }
 
   /* Action plan */
   .action-phase { margin-bottom:18px; border-left:2px solid #e8eaf0; padding-left:14px; }
   .phase-title-row { display:flex; align-items:center; gap:8px; margin-bottom:9px; }
-  .phase-num    { display:inline-flex; align-items:center; justify-content:center; width:20px; height:20px; border-radius:50%; color:#fff; font-size:8pt; font-weight:800; flex-shrink:0; }
-  .phase-title  { font-size:11pt; font-weight:700; margin-bottom:0; }
+  .phase-num    { display:inline-flex; align-items:center; justify-content:center; width:20px; height:20px; border-radius:50%; color:#fff; font-size:9pt; font-weight:800; flex-shrink:0; }
+  .phase-title  { font-size:12pt; font-weight:700; margin-bottom:0; }
   .action-list  { list-style:none; display:flex; flex-direction:column; gap:7px; }
-  .action-item  { background:#f7f8fc; border-left:3px solid #00c9a7; border-radius:0 6px 6px 0; padding:8px 12px; font-size:9pt; color:#333; line-height:1.5; page-break-inside:avoid; break-inside:avoid; }
+  .action-item  { background:#f7f8fc; border-left:3px solid #00c9a7; border-radius:0 6px 6px 0; padding:8px 12px; font-size:10.5pt; color:#333; line-height:1.5; page-break-inside:avoid; break-inside:avoid; }
   .action-item.numbered { display:flex; align-items:flex-start; gap:8px; }
-  .step-num     { display:inline-flex; align-items:center; justify-content:center; width:16px; height:16px; border-radius:50%; background:rgba(0,201,167,.18); color:#00937d; font-size:7pt; font-weight:800; flex-shrink:0; margin-top:1px; }
+  .step-num     { display:inline-flex; align-items:center; justify-content:center; width:16px; height:16px; border-radius:50%; background:rgba(0,201,167,.18); color:#00937d; font-size:8.5pt; font-weight:800; flex-shrink:0; margin-top:1px; }
 
   /* Callout (career path narrative) */
-  .callout-box { background:rgba(7,112,186,.06); border-left:3px solid #0770ba; padding:12px 15px; border-radius:0 6px 6px 0; font-size:9pt; color:#444; line-height:1.7; margin-bottom:14px; }
+  .callout-box { background:rgba(7,112,186,.06); border-left:3px solid #0770ba; padding:12px 15px; border-radius:0 6px 6px 0; font-size:10.5pt; color:#444; line-height:1.7; margin-bottom:14px; }
+
+  /* Tags and notes: the same colour meanings as the results page (blue = information, green = good or do this,
+     amber = look closer or gap, rose = careful, purple = a new idea, gray = secondary) */
+  .tag { display:inline-block; font-size:8.5pt; font-weight:700; padding:2px 10px; border-radius:10px; margin:4px 3px 0 3px; border:1px solid; line-height:1.5; }
+  .tag-blue   { color:#0b5c99; background:#e6f1fa; border-color:#9cc7e8; }
+  .tag-green  { color:#0a705a; background:#e2f6f0; border-color:#8fd8c3; }
+  .tag-amber  { color:#8a5300; background:#fff1d1; border-color:#f0c25e; }
+  .tag-rose   { color:#ae2440; background:#fde7eb; border-color:#f0a3b2; }
+  .tag-purple { color:#6a3fa0; background:#efe8fa; border-color:#c3a8e6; }
+  .tag-gray   { color:#545968; background:#eceef2; border-color:#c6cad4; }
+  .note { border-left:3px solid; border-radius:0 6px 6px 0; padding:7px 11px; margin-top:7px; page-break-inside:avoid; break-inside:avoid; }
+  .note-label { display:block; font-size:8.5pt; font-weight:700; letter-spacing:.5px; text-transform:uppercase; margin-bottom:2px; }
+  .note-blue   { background:#e6f1fa; border-color:#9cc7e8; } .note-blue .note-label   { color:#0b5c99; }
+  .note-green  { background:#e2f6f0; border-color:#0a705a; } .note-green .note-label  { color:#0a705a; }
+  .note-amber  { background:#fff1d1; border-color:#f0c25e; } .note-amber .note-label  { color:#8a5300; }
+  .note-purple { background:#efe8fa; border-color:#c3a8e6; } .note-purple .note-label { color:#6a3fa0; }
+  .note-gray   { background:#eceef2; border-color:#c6cad4; } .note-gray .note-label   { color:#545968; }
 
   /* Back cover */
   .back-cover { background:linear-gradient(145deg,#075288,#0770ba); height:297mm; display:flex; flex-direction:column; justify-content:center; align-items:center; text-align:center; padding:20mm;        
@@ -1455,7 +1475,7 @@ def build_html_report(user_data: dict, summary: dict, raw_scores: list, ai: dict
   .back-rule     { width:48px; height:2px; background:#00c9a7; margin:0 auto 22px; }
   .back-logo     { margin-bottom:14px; }
   .back-brand    { font-size:10pt; font-weight:700; color:#00c9a7; letter-spacing:3px; text-transform:uppercase; margin-bottom:7px; }
-  .back-tagline  { font-size:8pt; color:rgba(255,255,255,.35); letter-spacing:2px; }
+  .back-tagline  { font-size:9pt; color:rgba(255,255,255,.35); letter-spacing:2px; }
   """
 
     if locale == 'ar':
@@ -1468,6 +1488,8 @@ def build_html_report(user_data: dict, summary: dict, raw_scores: list, ai: dict
   .action-item { border-left:none; border-right:3px solid #00c9a7; border-radius:6px 0 0 6px; }
   .action-phase { border-left:none; border-right:2px solid #e8eaf0; padding-left:0; padding-right:14px; }
   .callout-box { border-left:none; border-right:3px solid #0770ba; border-radius:6px 0 0 6px; }
+  .note { border-left:none; border-right-width:3px; border-right-style:solid; border-radius:6px 0 0 6px; }
+  .note-label { letter-spacing:0; text-transform:none; }
   .value-rank  { text-align: right; }
   .bar-num     { text-align: left; }
   .cover-eyebrow, .mini-badge, .stat-lbl, .sec-num, .all-bars-label, .page-hdr-brand, .cover-brand, .back-brand, .back-tagline { letter-spacing: 0; }
