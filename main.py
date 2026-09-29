@@ -177,7 +177,17 @@ def _get_semantic_scores(response_id: str, summary: dict, profile_data: dict) ->
     if cached.data and cached.data.get('career_semantic_scores_cache') is not None:
         return cached.data['career_semantic_scores_cache']
 
-    scores = get_career_semantic_scores(supabase, summary, profile_data)
+    # The embedding text includes the user's specific area of study (QO5D answers), which only lives
+    # in the answers jsonb — fetch it here (cache miss only) rather than in every caller's select.
+    embed_profile = dict(profile_data)
+    if 'education_specialisms' not in embed_profile:
+        try:
+            ans = _execute_with_retry(supabase.table('assessment_responses')
+                .select('answers').eq('id', response_id).single())
+            embed_profile['education_specialisms'] = extract_specialisms((ans.data or {}).get('answers'), profile_data.get('education_field'))
+        except Exception as e:
+            print("Could not load specialisms for embedding (continuing without):", e)
+    scores = get_career_semantic_scores(supabase, summary, embed_profile)
     if scores:
         _execute_with_retry(supabase.table('assessment_responses')
             .update({'career_semantic_scores_cache': scores}).eq('id', response_id))
@@ -311,7 +321,7 @@ class SubmitRequest(BaseModel):
     # Whether the user wants to stay close to education_field/current work, or
     # move into something different — used to weight the field-overlap scoring
     # in scoring_engine.score_careers() (see career_direction there).
-    career_direction: Literal["stay_in_field", "change_field", "not_sure"] | None = None
+    career_direction: Literal["stay_in_field", "change_field", "not_sure", "unsure_subject", "choosing_major", "explore_careers"] | None = None
     sectors_of_interest: list[str] = Field(max_length=50)
     career_structure: str = Field(max_length=200)
     languages: list[str] = Field(max_length=50)
@@ -1196,10 +1206,11 @@ def get_career_recommendations(response_id: str, locale: str | None = None, user
 def get_ai_impact(response_id: str, force: bool = False, locale: str | None = None, user=Depends(get_optional_user)):
     profile_row = _execute_with_retry(supabase.table('assessment_responses')
         .select('full_name,current_stage,country,education_field,career_direction,sectors_of_interest,'
-                'ai_impact_cache,ai_impact_cache_free,ai_impact_cache_ar,ai_impact_cache_ar_free,user_id')
+                'ai_impact_cache,ai_impact_cache_free,ai_impact_cache_ar,ai_impact_cache_ar_free,user_id,answers')
         .eq('id', response_id).single())
     if not profile_row.data:
         raise HTTPException(status_code=404, detail="No results found for this response")
+    enrich_profile(profile_row.data)
     owner_user_id = profile_row.data.get('user_id')
     _assert_can_view(owner_user_id, user)
     if force:
@@ -1251,10 +1262,11 @@ def get_student_track(response_id: str, force: bool = False, locale: str | None 
     404ing, so the frontend can just check for an empty response."""
     profile_row = _execute_with_retry(supabase.table('assessment_responses')
         .select('current_stage,country,education_field,career_direction,sectors_of_interest,'
-                'student_track_cache,student_track_cache_ar,user_id')
+                'student_track_cache,student_track_cache_ar,user_id,answers')
         .eq('id', response_id).single())
     if not profile_row.data:
         raise HTTPException(status_code=404, detail="No results found for this response")
+    enrich_profile(profile_row.data)
     owner_user_id = profile_row.data.get('user_id')
     _assert_can_view(owner_user_id, user)
     if force:
@@ -1294,10 +1306,11 @@ def get_certifications(response_id: str, force: bool = False, locale: str | None
     Returns {} for anyone else, same pattern as /student-track."""
     profile_row = _execute_with_retry(supabase.table('assessment_responses')
         .select('current_stage,country,education_field,career_direction,sectors_of_interest,'
-                'certifications_cache,certifications_cache_ar,user_id')
+                'certifications_cache,certifications_cache_ar,user_id,answers')
         .eq('id', response_id).single())
     if not profile_row.data:
         raise HTTPException(status_code=404, detail="No results found for this response")
+    enrich_profile(profile_row.data)
     owner_user_id = profile_row.data.get('user_id')
     _assert_can_view(owner_user_id, user)
     if force:
@@ -1337,10 +1350,11 @@ def get_career_path(response_id: str, force: bool = False, locale: str | None = 
     /student-track."""
     profile_row = _execute_with_retry(supabase.table('assessment_responses')
         .select('current_stage,country,experience_level,career_direction,sectors_of_interest,'
-                'career_path_cache,career_path_cache_ar,user_id')
+                'career_path_cache,career_path_cache_ar,user_id,answers')
         .eq('id', response_id).single())
     if not profile_row.data:
         raise HTTPException(status_code=404, detail="No results found for this response")
+    enrich_profile(profile_row.data)  # country to work in (QOTC)
     owner_user_id = profile_row.data.get('user_id')
     _assert_can_view(owner_user_id, user)
     if force:
@@ -2228,13 +2242,15 @@ def _search_matching_jobs(response_id: str) -> list[dict] | None:
     job-matching refresh job. Returns None (not []) if the response has no
     scored assessment data to match against."""
     profile = supabase.table('assessment_responses') \
-        .select('country, education_field, career_direction, sectors_of_interest, experience_level, current_stage') \
+        .select('country, education_field, career_direction, sectors_of_interest, experience_level, current_stage, answers') \
         .eq('id', response_id).single().execute()
     rows = supabase.table('assessment_results') \
         .select('*') \
         .eq('response_id', response_id).execute()
     if not rows.data or not profile.data:
         return None
+    # Uses the country they want to work in (QOTC) instead of where they live, and their study year.
+    enrich_profile(profile.data)
 
     summary = build_framework_output(rows.data)
     careers = supabase.table('careers').select('*').eq('is_approved', True).execute().data or []
@@ -2525,13 +2541,14 @@ def delete_application(application_id: str, user=Depends(get_current_user)):
 @app.get("/assessment/{response_id}/companies")
 def get_companies_suggestions(response_id: str, user=Depends(get_optional_user)):
     profile = _execute_with_retry(supabase.table('assessment_responses')
-        .select('country, education_field, career_direction, sectors_of_interest, user_id')
+        .select('country, education_field, career_direction, sectors_of_interest, user_id, current_stage, answers')
         .eq('id', response_id).single())
     rows = _execute_with_retry(supabase.table('assessment_results')
         .select('*')
         .eq('response_id', response_id))
     if not rows.data or not profile.data:
         raise HTTPException(status_code=404, detail="No results found for this response")
+    enrich_profile(profile.data)  # country to work in (QOTC)
     owner_user_id = profile.data.get('user_id')
     _assert_can_view(owner_user_id, user)
     tier = get_effective_tier(owner_user_id)

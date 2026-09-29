@@ -477,6 +477,57 @@ def _generate_json(prompt: str, retries: int = 1, timeout_s: float | None = None
 
     raise fallback_err
 
+def _first_step_context(user_data: dict) -> tuple[str, str]:
+    """Stage- and goal-specific guidance text for the first step / 7-day plan prompts (shared by the main
+    report and the chosen-direction plan)."""
+    stage = user_data.get('current_stage') or ''
+    if stage == 'high_school':
+        route_guidance = (
+            "This person is still in school choosing what to study. The first step and week plan must be about "
+            "EXPLORING the majors/fields that fit them (for example reading what a major involves, watching or "
+            "talking to someone who studied it, trying a free intro course) — not internships, CVs or job applications.\n"
+        )
+    elif stage == 'university':
+        route_guidance = (
+            "This person is still a student. The first step and week plan must be about EXPLORING and PREPARING "
+            "(for example internship preparation, testing interest in a field, talking to someone in a role) — "
+            "never applying for full-time jobs as if they had graduated.\n"
+            + {
+                'year_1': "They are early in their degree: focus on exploring the field, building skills and testing their interest.\n",
+                'year_2': "They are early in their degree: focus on exploring the field, building skills and testing their interest.\n",
+                'year_3': "They are mid-degree: focus on building real experience (a project, a short internship, a society role) before their final year.\n",
+                'year_4': "They are mid-degree: focus on building real experience (a project, a short internship, a society role) before their final year.\n",
+                'final_year': "They are in their FINAL year: include preparation for the step after graduating (a CV, graduate roles and internships that lead to jobs, a conversation with someone in the field).\n",
+                'postgraduate': "They are a postgraduate student: include how their research or thesis connects to work, and preparation for the step after graduating.\n",
+            }.get(user_data.get('study_year'), "")
+        )
+    elif stage == 'recent_graduate':
+        route_guidance = (
+            "This person is a recent graduate. The first step and week plan must be about job and application "
+            "preparation linked to their degree (for example reading real entry-level or internship postings, "
+            "comparing requirements with their coursework and projects, preparing a CV or application).\n"
+        )
+    elif stage:
+        route_guidance = (
+            "This person is already working, between roles or changing direction. The first step and week plan "
+            "must build on their transferable skills and test a possible move before they commit to it (for example "
+            "a conversation with someone in the target role, a small trial task, comparing a role's requirements "
+            "with their experience).\n"
+        )
+    else:
+        route_guidance = ""
+
+    goal = user_data.get('career_direction')
+    goal_guidance = {
+        'stay_in_field': "Their goal is to find options related to their current study/work, so the first step should deepen understanding of roles in or next to that field.\n",
+        'unsure_subject': "Their goal is to explore because they are unsure about their subject/current path, so the first step should be a low-cost exploration activity (for example comparing two or three fields or roles against their results) rather than committing to one direction.\n",
+        'choosing_major': "Their goal is choosing what to study, so the first step should compare two or three majors that fit them (what each involves, what it leads to).\n",
+        'explore_careers': "Their goal is exploring careers that suit them, so the first step should be a low-cost look at what people in one or two of their matched careers actually do.\n",
+        'change_field': "Their goal is a different direction, so the first step should test that direction cheaply (for example a conversation with someone in it, or reading what it requires) before they commit.\n",
+    }.get(goal, "")
+    return route_guidance, goal_guidance
+
+
 def generate_ai_content(user_data: dict, summary: dict, raw_scores: list, careers: list, country_profile: dict | None = None, coaching_chunks: list[dict] | None = None, locale: str = 'en', career_count: int = 8) -> dict:
     """Split into two independent Gemini calls (personality/values narratives + action plan,
     and career recommendations) run concurrently, instead of one call covering ~20 narrative
@@ -511,7 +562,9 @@ def generate_ai_content(user_data: dict, summary: dict, raw_scores: list, career
         f"Age: {user_data.get('age') or 'N/A'}\n"
         f"Work experience: {user_data.get('experience_level') or 'N/A'}\n"
         f"Current stage: {user_data.get('current_stage') or 'N/A'}\n"
-        f"Education field: {', '.join(user_data.get('education_field') or []) or 'N/A'}\n"
+        + (f"Year of study: {STUDY_YEAR_LABELS[user_data['study_year']]}\n" if user_data.get('study_year') in STUDY_YEAR_LABELS else "")
+        + ""        f"Education field: {', '.join(user_data.get('education_field') or []) or 'N/A'}\n"
+        + (f"Specific area of study: {', '.join(user_data['education_specialisms'])}\n" if user_data.get('education_specialisms') else "")
         + (
             f"Note: this field of study was NOT the person's own choice"
             f"{' (reason: ' + user_data['major_choice_reason'] + ')' if user_data.get('major_choice_reason') else ''}"
@@ -555,34 +608,14 @@ def generate_ai_content(user_data: dict, summary: dict, raw_scores: list, career
         if coaching_chunks else ""
     )
 
-    stage = user_data.get('current_stage') or ''
-    if stage in ('high_school', 'university'):
-        route_guidance = (
-            "This person is still a student. The first step and week plan must be about EXPLORING and PREPARING "
-            "(for example internship preparation, testing interest in a field, talking to someone in a role) — "
-            "never applying for full-time jobs as if they had graduated.\n"
-        )
-    elif stage == 'recent_graduate':
-        route_guidance = (
-            "This person is a recent graduate. The first step and week plan must be about job and application "
-            "preparation linked to their degree (for example reading real entry-level or internship postings, "
-            "comparing requirements with their coursework and projects, preparing a CV or application).\n"
-        )
-    elif stage:
-        route_guidance = (
-            "This person is already working, between roles or changing direction. The first step and week plan "
-            "must build on their transferable skills and test a possible move before they commit to it (for example "
-            "a conversation with someone in the target role, a small trial task, comparing a role's requirements "
-            "with their experience).\n"
-        )
-    else:
-        route_guidance = ""
+    route_guidance, goal_guidance = _first_step_context(user_data)
 
     first_step_guidance = (
         "=== FIRST STEP AND 7-DAY PLAN ===\n"
         "The action_plan must START with a specific 'first_step' this person can do THIS WEEK, followed by a "
         "'week_plan' of 5 short actions across the next 7 days, then the longer-term months plan.\n"
         + route_guidance
+        + goal_guidance
         + "Rules for first_step and every week_plan entry:\n"
         "- State what to do in concrete terms with a number or object (e.g. 'Read three internship postings for "
         "<one of the matched careers>'), never a vague verb like 'research', 'explore' or 'network more'.\n"
@@ -705,6 +738,15 @@ def generate_ai_content(user_data: dict, summary: dict, raw_scores: list, career
                 "avoid a career just because it doesn't match their field, and in fit_summary explain the "
                 "fit in terms of their personality/values/strengths results rather than their field.\n\n"
                 if user_data.get('career_direction') == 'change_field' else
+                "They are unsure whether their subject/current path is the right one and want to explore "
+                "options — do not assume passion for their field. Show a mix of careers that build on their field "
+                "and several genuinely different ones, and in fit_summary explain how each connects to "
+                "their results and what would be needed to reach it.\n\n"
+                if user_data.get('career_direction') == 'unsure_subject' else
+                "They are still in school with no field of study yet and want help "
+                + ("choosing what to study" if user_data.get('career_direction') == 'choosing_major' else "exploring careers that suit them")
+                + ". Recommend careers from their results and, in fit_summary, say what kind of major or study path leads there.\n\n"
+                if user_data.get('career_direction') in ('choosing_major', 'explore_careers') else
                 "Show a balanced mix of careers close to their field and careers outside it, and in "
                 "fit_summary note whether each one builds on their background or represents a new direction.\n\n"
             )
@@ -1696,6 +1738,10 @@ def generate_student_track(user_data: dict, summary: dict, careers: list, locale
         f"Stage: {user_data.get('current_stage', 'N/A')} (high_school = not yet in university; "
         "university = currently studying)\n"
         f"Current/declared field of study: {education_field}\n"
+        + (f"Specific area of study: {', '.join(user_data['education_specialisms'])}\n" if user_data.get('education_specialisms') else "")
+        + (f"Year of study: {STUDY_YEAR_LABELS[user_data['study_year']]}\n" if user_data.get('study_year') in STUDY_YEAR_LABELS else "")
+        +
+        f"What they want help with: {CAREER_DIRECTION_LABELS.get(user_data.get('career_direction'), 'Not specified')}\n"
         f"RIASEC top types: {', '.join(riasec_types)}\n"
         f"Top strengths: {', '.join(top_strengths)}\n"
         f"Top values: {', '.join(top_values)}\n"
@@ -1770,7 +1816,9 @@ def generate_certifications(user_data: dict, summary: dict, careers: list, local
         + (ARABIC_LANGUAGE_INSTRUCTION if locale == 'ar' else "")
         + "=== USER PROFILE ===\n"
         f"Education field: {education_field}\n"
-        f"Top strengths: {', '.join(top_strengths)}\n"
+        + (f"Specific area of study: {', '.join(user_data['education_specialisms'])}\n" if user_data.get('education_specialisms') else "")
+        + (f"Year of study: {STUDY_YEAR_LABELS[user_data['study_year']]} (pick certifications they can realistically complete before or soon after graduating)\n" if user_data.get('study_year') in STUDY_YEAR_LABELS else "")
+        + f"Top strengths: {', '.join(top_strengths)}\n"
         f"Country: {user_data.get('country', 'GCC')}\n\n"
         "=== TOP MATCHED CAREERS ===\n"
         f"{careers_text}\n\n"
@@ -2087,7 +2135,15 @@ def _get_cached_semantic_scores(response_id: str, summary: dict, profile_data: d
     except Exception as e:
         print(f"Semantic-scores cache read failed for {response_id} (not re-raised):", e)
 
-    scores = get_career_semantic_scores(supabase_client, summary, profile_data)
+    embed_profile = dict(profile_data)
+    if 'education_specialisms' not in embed_profile:
+        try:
+            ans = _execute_with_retry(supabase_client.table('assessment_responses')
+                .select('answers').eq('id', response_id).single())
+            embed_profile['education_specialisms'] = extract_specialisms((ans.data or {}).get('answers'), profile_data.get('education_field'))
+        except Exception as e:
+            print(f"Could not load specialisms for embedding {response_id} (continuing without):", e)
+    scores = get_career_semantic_scores(supabase_client, summary, embed_profile)
     if scores:
         try:
             _execute_with_retry(supabase_client.table('assessment_responses')
@@ -2162,6 +2218,7 @@ def get_or_generate_ai_content(response_id: str, supabase_client, tier: str = "l
         .eq('id', response_id).single())
     if not profile.data:
         raise ValueError(f"No assessment found for {response_id}")
+    enrich_profile(profile.data)
 
     is_free = tier == 'free'
     content_count = 5 if is_free else 8
@@ -2226,10 +2283,11 @@ def create_report(response_id: str, supabase_client, tier: str = "launchpad", lo
                 'ai_impact_cache,ai_content_cache,ai_impact_cache_ar,ai_content_cache_ar,'
                 'ai_impact_cache_free,ai_content_cache_free,ai_impact_cache_ar_free,ai_content_cache_ar_free,'
                 'student_track_cache,student_track_cache_ar,'
-                'certifications_cache,certifications_cache_ar,career_path_cache,career_path_cache_ar,locale')
+                'certifications_cache,certifications_cache_ar,career_path_cache,career_path_cache_ar,locale,answers')
         .eq('id', response_id).single())
     if not profile.data:
         raise ValueError(f"No assessment found for {response_id}")
+    enrich_profile(profile.data)
 
     scores_row = _execute_with_retry(supabase_client.table('assessment_results')
         .select('*').eq('response_id', response_id))
