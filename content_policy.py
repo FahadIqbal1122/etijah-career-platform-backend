@@ -265,6 +265,36 @@ PROFESSIONAL_STAGES = {"working_exploring", "career_changer", "returning", "betw
 #   recent_graduate -> entry-level jobs + internships, certifications, companies, courses.
 #   professionals -> jobs, career path (progression/transition), companies, courses. No majors.
 MAJORS_STAGES = {"high_school"}
+
+# People at the start of their path: school, university, recently graduated. For them the report shows what they can
+# realistically reach in the next 5 to 10 years, so careers that sit at the very top of a ladder are left out.
+EARLY_STAGES = STILL_ENROLLED_STAGES | ENTERING_MARKET_STAGES
+
+# Careers a 16-year-old (or a student / new graduate) cannot plausibly be aiming at in 5 to 10 years: top executive,
+# political and judicial posts, and roles that normally come after a long career or a lot of capital. Anything whose
+# title carries an executive word (chief, director, head of, executive, principal, president, ambassador, diplomat,
+# judge) is also treated this way, except the exceptions below, which people can begin working towards young.
+LONG_HORIZON_TITLES = {
+    "ceo", "ambassador", "diplomat", "judge", "hedge fund manager", "venture capitalist", "executive coach",
+    "creative director", "school principal", "athletic director", "university professor", "franchise owner",
+    "real estate developer",
+}
+_LONG_HORIZON_WORDS = re.compile(r"\b(chief|director|head of|executive|principal|president|vice president|ambassador|diplomat|judge)\b", re.I)
+LONG_HORIZON_EXCEPTIONS = {"film director"}
+
+def is_long_horizon_career(title: str | None) -> bool:
+    t = (title or "").strip().lower()
+    if not t or t in LONG_HORIZON_EXCEPTIONS:
+        return False
+    return t in LONG_HORIZON_TITLES or bool(_LONG_HORIZON_WORDS.search(t))
+
+def filter_careers_for_stage(careers: list, current_stage: str | None) -> list:
+    """Drops far-ahead careers for people at the start of their path; everyone else keeps the full list.
+    If that would leave too few careers to rank, the list is returned unchanged."""
+    if current_stage not in EARLY_STAGES:
+        return careers
+    kept = [c for c in careers if not is_long_horizon_career(c.get('title'))]
+    return kept if len(kept) >= 10 else careers
 CERTIFICATION_STAGES = {"university", "recent_graduate"}
 NO_LISTINGS_STAGES = {"high_school"}            # neither jobs nor internships
 NO_COMPANIES_STAGES = STILL_ENROLLED_STAGES     # employer target list is for graduates and up

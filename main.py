@@ -1178,7 +1178,7 @@ def get_career_suggestions(response_id: str, user=Depends(get_optional_user)):
         raise HTTPException(status_code=404, detail="No results found for this response")
 
     profile = supabase.table('assessment_responses') \
-        .select('education_field, career_direction, sectors_of_interest, user_id, answers') \
+        .select('education_field, career_direction, sectors_of_interest, user_id, current_stage, answers') \
         .eq('id', response_id).single().execute()
     if not profile.data:
         raise HTTPException(status_code=404, detail="No results found for this response")
@@ -2234,7 +2234,7 @@ def delete_course(course_id: str, _=Depends(require_admin)):
 def get_course_recommendations(response_id: str, user=Depends(get_optional_user)):
     rows = _execute_with_retry(supabase.table('assessment_results').select('*').eq('response_id', response_id))
     profile = _execute_with_retry(supabase.table('assessment_responses')
-        .select('country, education_field, career_direction, sectors_of_interest, user_id, answers')
+        .select('country, education_field, career_direction, sectors_of_interest, user_id, current_stage, answers')
         .eq('id', response_id).single())
     if not rows.data or not profile.data:
         raise HTTPException(status_code=404, detail="No results found for this response")

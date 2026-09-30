@@ -298,11 +298,13 @@ def score_careers(summary: dict, user_data: dict, careers: list, semantic_scores
     """Returns top 10 careers using deterministic tag-overlap scoring blended
     with embedding-similarity scoring (see get_career_semantic_scores)."""
 
-    from content_policy import is_appropriate
+    from content_policy import is_appropriate, filter_careers_for_stage
     careers = [
         c for c in careers
         if is_appropriate(c.get('title'), c.get('sector'), c.get('description'))
     ]
+    # Students and new graduates are shown what they can reach in 5 to 10 years, not top-of-ladder roles.
+    careers = filter_careers_for_stage(careers, user_data.get('current_stage'))
 
     semantic_scores = semantic_scores or {}
 

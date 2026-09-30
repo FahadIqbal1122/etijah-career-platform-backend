@@ -23,7 +23,7 @@ from db_client import disable_http2
 from scoring_engine import build_framework_output, score_careers, get_career_semantic_scores, COUNTRY_CODE_MAP
 from coaching_pipeline import _gemini_embed, client as anthropic_client
 from scoring_engine import extract_specialisms, enrich_profile
-from content_policy import opportunity_link, major_link, resolve_route, section_order, should_show_entrepreneurship, is_appropriate, with_typed_other, stage_text, typed_goal, typed_other, CULTURAL_GUARDRAIL, STILL_ENROLLED_STAGES, ENTERING_MARKET_STAGES, PROFESSIONAL_STAGES, MAJORS_STAGES, CERTIFICATION_STAGES, NO_LISTINGS_STAGES, NO_COMPANIES_STAGES
+from content_policy import opportunity_link, major_link, resolve_route, section_order, should_show_entrepreneurship, is_appropriate, with_typed_other, stage_text, typed_goal, typed_other, EARLY_STAGES, CULTURAL_GUARDRAIL, STILL_ENROLLED_STAGES, ENTERING_MARKET_STAGES, PROFESSIONAL_STAGES, MAJORS_STAGES, CERTIFICATION_STAGES, NO_LISTINGS_STAGES, NO_COMPANIES_STAGES
 from ai_provider import get_ai_provider
 
 # Self-contained client (like ai_provider.py / smtp_service.py) purely for the
@@ -645,6 +645,14 @@ def generate_ai_content(user_data: dict, summary: dict, raw_scores: list, career
         "concrete employers/certifications/roles that plausibly lead to them. Do not invent unrelated "
         "sectors, job titles, or industries that aren't represented in this list.\n\n"
         + first_step_guidance
+        + (
+            "REALISM: this person is at the start of their path (school, university or recently graduated). In "
+            "fit_summary, gap and next_action describe what they can realistically reach in the next 5 to 10 years: "
+            "an entry-level first role and the steps towards a solid mid-level position. Do not present senior or "
+            "executive end points (CEO, director, head of, ambassador) as the goal, and do not suggest an MBA or "
+            "other advanced degree unless the career clearly depends on it.\n\n"
+            if user_data.get('current_stage') in EARLY_STAGES else ""
+        )
         + "=== OUTPUT ===\n\n"
         "Return ONLY a valid JSON object (no markdown, no code fences) with exactly these keys:\n\n"
         "{\n"
