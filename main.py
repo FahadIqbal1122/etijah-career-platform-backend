@@ -1225,8 +1225,11 @@ def get_career_recommendations(response_id: str, locale: str | None = None, user
     if tier == "free" and not _is_admin(user):
         for k in ("week_plan", "weeks_2_4", "month_1", "months_2_3", "months_4_6"):
             action_plan.pop(k, None)
+    recs = ai_content.get("career_recommendations") or []
+    if tier == "free" and not _is_admin(user):
+        recs = [{k: v for k, v in r.items() if k != "next_steps"} if isinstance(r, dict) else r for r in recs]
     return {
-        "career_recommendations": ai_content.get("career_recommendations") or [],
+        "career_recommendations": recs,
         "action_plan": action_plan,
         # Lets the results page order the "Build on what you have" / "Paths you may not have considered" groups.
         "career_direction": owner_row.data.get('career_direction'),

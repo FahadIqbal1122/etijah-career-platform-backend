@@ -712,6 +712,24 @@ def generate_ai_content(user_data: dict, summary: dict, raw_scores: list, career
         "the matched careers list above, not a different sector or set of job titles."
     )
 
+    # Students and new graduates (paid): the first three careers also get three ordered next steps, each with a
+    # short "why it matters", so their action advice sits with the career it is for. Working people get a full plan
+    # per career on demand instead (direction plans), so they do not need this.
+    include_steps = career_count > 2 and user_data.get('current_stage') in EARLY_STAGES
+    steps_schema = (
+        ',\n      "next_steps": [ {"step": "one concrete action", "why": "one short sentence on why it matters for this career"} ]'
+    )
+    steps_instruction = (
+        "next_steps: for the FIRST THREE careers only (leave it out for the rest), give exactly 3 steps in the order "
+        "to do them over roughly the next 12 months. Each step is one concrete, realistic action for someone at this "
+        "person's stage (see the guidance above): a skill or subject to build, something to try, a person to talk to, "
+        "or a small project. Keep them free or low-cost where possible. Describe a type of course or project (for "
+        "example 'a beginner course in data analysis') rather than naming a provider or course you are not certain "
+        "exists. Each 'why' says in one plain sentence why that step matters for THIS career and this person. The "
+        "first step should be the same idea as next_action with more detail. Do not repeat the same step across "
+        "careers; a step that helps several careers should be worded for each one's own reason.\n"
+        if include_steps else ""
+    )
     careers_prompt = (
         f"You are selecting and explaining career recommendations for {user_data['full_name']}, "
         "as part of a professional, personalized career development report.\n"
@@ -774,7 +792,8 @@ def generate_ai_content(user_data: dict, summary: dict, raw_scores: list, career
         '      "gap": "1 sentence: what is missing between their current background and this career (a qualification, skill or experience). For a new_direction career, name the main steps or requirements to reach it from where they are.",\n'
         '      "next_action": "1 sentence: one concrete thing they can do now (within about a month) toward this career, and free or low-cost.",\n'
         '      "fit_tag": "strong_fit or worth_exploring — fixed code, not narrative text",\n'
-        '      "direction_tag": "builds_on_background or new_direction — fixed code, not narrative text"\n'
+        '      "direction_tag": "builds_on_background or new_direction — fixed code, not narrative text"'
+        + (steps_schema if include_steps else '') + '\n'
         '    }\n'
         '  ]\n'
         "}\n\n"
@@ -787,7 +806,8 @@ def generate_ai_content(user_data: dict, summary: dict, raw_scores: list, career
         "match_score reflects the assessment results honestly: do NOT raise or lower a score to fit what the person "
         "says they want; the goal only affects how you explain each career, never the score.\n"
         "gap and next_action must be honest and specific to this person's stage and background, in plain language, "
-        "and must never suggest a career is guaranteed or that their current field is a mistake.\n\n"
+        "and must never suggest a career is guaranteed or that their current field is a mistake.\n"
+        + steps_instruction + "\n"
         f"Provide exactly {career_count} career recommendations. Be specific, insightful, and empowering throughout."
     )
 
@@ -1068,6 +1088,13 @@ def build_html_report(user_data: dict, summary: dict, raw_scores: list, ai: dict
         gap_label = T['rec_gap_paths'] if rec.get('direction_tag') == 'new_direction' else T['rec_gap_build']
         gap_html = _note('amber', gap_label, rec.get('gap', ''))
         next_html = _note('green', T['rec_next'], rec.get('next_action', ''))
+        # Students / new graduates: three ordered steps (each with why) replace the single next action.
+        steps = [x for x in _as_list(rec.get('next_steps')) if isinstance(x, dict) and x.get('step')][:3]
+        if steps:
+            next_html = _note('green', T['rec_next'],
+                '<ol style="margin:4px 0 0 18px;padding:0;">'
+                + ''.join(f'<li><strong>{x.get("step")}</strong>' + (f' — {x.get("why")}' if x.get('why') else '') + '</li>' for x in steps)
+                + '</ol>')
         return (
             f'<div class="card" style="margin-bottom:10px;">'
             f'<div class="card-row">'
