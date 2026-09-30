@@ -89,6 +89,38 @@ def should_show_entrepreneurship(career_structure: str | None) -> bool:
 # few punctuation marks), and passed through the same cultural-content filter as everything else.
 _DIRECTION_ALLOWED = re.compile(r"^[\w\s&/,.'()+#-]+$", re.UNICODE)
 
+# Profanity / slurs, English and Arabic. Kept apart from is_appropriate() (which filters job topics) because this
+# one is only for text a person types about themselves. English uses whole-word matching so ordinary words
+# ("cocktail", "assessment") never match; Arabic is matched token by token after normalising letter variants and
+# stripping diacritics, so words such as "كسب" (earning) are safe.
+_PROFANE_EN = re.compile(
+    r"(?i)\b(?:fuck\w*|shit\w*|bitch\w*|cunt\w*|asshole\w*|bastard\w*|whore\w*|slut\w*|nigg\w+|fagg?ot\w*|"
+    r"dicks?|cocks?|pussy|pussies|motherfuck\w*|wank\w*|twat\w*)\b"
+)
+_PROFANE_AR = {
+    "كس", "كسم", "كسمك", "كسمه", "كسمها", "كسك", "كسها", "كسه", "كسختك", "كسامك", "طيز", "زب", "زبي", "زبر",
+    "نيك", "نيكه", "نيكها", "منيوك", "منيوكه", "متناك", "متناكه", "شرموط", "شرموطه", "عاهر", "عاهره", "قحبه",
+    "خرا", "خره", "عرص", "عرصه", "ديوث", "ابن الكلب", "ابن الحرام", "ولد الحرام", "ياحمار", "لعنه",
+}
+_AR_MARKS = re.compile("[\u0610-\u061A\u064B-\u065F\u0670\u0640]")
+
+def _norm_ar(text: str) -> str:
+    t = _AR_MARKS.sub("", text)
+    return (t.replace("أ", "ا").replace("إ", "ا").replace("آ", "ا").replace("ى", "ي").replace("ة", "ه"))
+
+def is_clean_text(text: str | None) -> bool:
+    """False if typed text contains English or Arabic profanity."""
+    if not text:
+        return True
+    if _PROFANE_EN.search(text):
+        return False
+    norm = _norm_ar(text)
+    tokens = re.findall(r"[\u0600-\u06FF]+", norm)
+    if any(t in _PROFANE_AR for t in tokens):
+        return False
+    joined = " ".join(tokens)
+    return not any(" " in bad and bad in joined for bad in _PROFANE_AR)
+
 def clean_direction_label(text: str | None) -> str | None:
     """Sanitised direction label, or None if it should be rejected."""
     if not isinstance(text, str):
@@ -98,7 +130,7 @@ def clean_direction_label(text: str | None) -> str | None:
         return None
     if not _DIRECTION_ALLOWED.match(label):
         return None
-    if not is_appropriate(label):
+    if not is_appropriate(label) or not is_clean_text(label):
         return None
     return label
 
