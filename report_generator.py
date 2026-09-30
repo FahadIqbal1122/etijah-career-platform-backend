@@ -164,16 +164,34 @@ UI_TEXT = {
         'generated': 'Generated', 'confidential': 'Confidential',
         'report_confidential_footer': 'Etijahi Report · Confidential',
         'page': 'Page',
-        'sec01': 'Your Career Profile', 'sec02': 'Career Personality', 'sec03': 'Personality Traits',
-        'sec04': 'Core Values', 'sec05': 'Strengths Profile', 'sec06': 'Work Style & Resilience',
-        'sec07': 'Entrepreneurial Profile', 'sec08': 'Career Pathways',
-        'sec09': 'AI Impact on Your Careers',
+        'sec01': 'Your Career Profile', 'sec02': 'Your interests', 'sec03': 'How you think and act',
+        'sec04': 'What matters to you', 'sec05': 'What you are good at', 'sec06': 'How you like to work',
+        'sec07': 'Entrepreneurial Profile', 'sec08': 'Careers that fit you',
+        'sec09': 'How AI may change your careers',
         'sec_jobs': 'Job Listings', 'sec_jobs_internships': 'Internships & Exposure',
-        'sec_student_track': 'Majors & Exposure',
+        'sec_student_track': 'Subjects and ways to explore',
         'sec_certifications': 'Certifications to Pursue', 'sec_career_path': 'Your Path Forward',
         'sec_companies': 'Companies to Target', 'sec_courses': 'Recommended Courses',
         'course_for': 'For', 'course_about': 'What it is about', 'course_why': 'Why it is suggested',
-        'sec_action_plan': 'Your Action Plan',
+        'sec_action_plan': 'Your plan',
+        'howto_title': 'How to read this report',
+        'howto_intro': 'This is not a test with right or wrong answers. It shows what your answers say about you and what that could mean for your future.',
+        'howto_careers': 'Careers that fit you: how well each one matches you, what to build, one thing to do now, and how AI may change it.',
+        'howto_majors': 'Subjects to explore: university subjects that lead to those careers, with a simple way to try each one before you choose.',
+        'howto_plan': 'Your plan: one small step for this week, then a 90-day path.',
+        'howto_profile': 'Your profile, at the end: your interests, values, strengths and work style. This is why the careers were chosen.',
+        'intro_careers': 'We compared your personality, values and strengths with each career. The percentage shows how close the fit is. Each card also shows how AI may change that career.',
+        'intro_student_track': 'Ways to explore before you choose. Each idea leads to the careers above, and you can try it before you commit.',
+        'intro_plan': 'One small step for this week, then a simple 90-day path, built around your top career match',
+        'intro_ai': 'Which tasks may change, which human skills stay valuable, and how to prepare',
+        'intro_certs': 'Short qualifications employers recognise, chosen to fit your matched careers',
+        'intro_courses': 'Courses that build the skills your matched careers need',
+        'intro_companies': 'Employers hiring in your field and country. Use them to see what real jobs ask for.',
+        'intro_riasec': 'The kinds of work you enjoy most (your RIASEC profile)',
+        'intro_bigfive': 'Your personality, using the Big Five traits',
+        'intro_values': 'What you want from work and life',
+        'intro_strengths': 'Your natural strengths',
+        'intro_workstyle': 'Your pace, setting and how you handle pressure',
         'matched_to': 'Matched to', 'government': 'Government',
         'exec_summary': 'Executive Summary',
         'riasec_code_stat': 'RIASEC Code', 'primary_type_stat': 'Primary Type',
@@ -209,16 +227,34 @@ UI_TEXT = {
         'generated': 'تاريخ الإصدار', 'confidential': 'سرّي',
         'report_confidential_footer': 'تقرير إتجاهي · سرّي',
         'page': 'صفحة',
-        'sec01': 'ملفك المهني', 'sec02': 'شخصيتك المهنية', 'sec03': 'سمات الشخصية',
-        'sec04': 'القيم الجوهرية', 'sec05': 'ملف نقاط القوة', 'sec06': 'أسلوب العمل والمرونة',
-        'sec07': 'الملف الريادي', 'sec08': 'المسارات المهنية',
-        'sec09': 'تأثير الذكاء الاصطناعي على مساراتك المهنية',
+        'sec01': 'ملفك المهني', 'sec02': 'اهتماماتك', 'sec03': 'كيف تفكر وتتصرف',
+        'sec04': 'ما يهمك', 'sec05': 'ما تجيده', 'sec06': 'كيف تحب أن تعمل',
+        'sec07': 'الملف الريادي', 'sec08': 'مسارات مهنية تناسبك',
+        'sec09': 'كيف قد يغيّر الذكاء الاصطناعي مساراتك المهنية',
         'sec_jobs': 'فرص وظيفية', 'sec_jobs_internships': 'فرص تدريب وتعرّف على المجال',
-        'sec_student_track': 'التخصصات والتعرّف على المجال',
+        'sec_student_track': 'تخصصات وطرق للاستكشاف',
         'sec_certifications': 'شهادات يُنصح بها', 'sec_career_path': 'مسارك المهني القادم',
         'sec_companies': 'شركات مستهدفة', 'sec_courses': 'دورات موصى بها',
         'course_for': 'لمسار', 'course_about': 'عن ماذا تدور', 'course_why': 'لماذا نقترحها',
-        'sec_action_plan': 'خطة عملك',
+        'sec_action_plan': 'خطتك',
+        'howto_title': 'كيف تقرأ هذا التقرير',
+        'howto_intro': 'هذا ليس اختباراً له إجابات صحيحة أو خاطئة. إنه يوضح ما تقوله إجاباتك عنك وما قد يعنيه ذلك لمستقبلك.',
+        'howto_careers': 'مسارات مهنية تناسبك: مدى توافق كل مسار معك، وما تحتاج إلى بنائه، وخطوة تفعلها الآن، وكيف قد يغيّره الذكاء الاصطناعي.',
+        'howto_majors': 'مواد للاستكشاف: تخصصات جامعية تقود إلى هذه المسارات، مع طريقة بسيطة لتجربة كل منها قبل أن تختار.',
+        'howto_plan': 'خطتك: خطوة صغيرة لهذا الأسبوع، ثم مسار لـ 90 يوماً.',
+        'howto_profile': 'ملفك في النهاية: اهتماماتك وقيمك ونقاط قوتك وأسلوب عملك. ولهذا اختيرت هذه المسارات.',
+        'intro_careers': 'قارنّا شخصيتك وقيمك ونقاط قوتك مع كل مسار مهني. تُظهر النسبة مدى قرب التوافق، وتوضح كل بطاقة كيف قد يغيّر الذكاء الاصطناعي هذا المسار.',
+        'intro_student_track': 'طرق تستكشف بها قبل أن تختار. كل فكرة تقود إلى المسارات المهنية أعلاه، ويمكنك تجربتها قبل الالتزام.',
+        'intro_plan': 'خطوة صغيرة لهذا الأسبوع، ثم مسار بسيط لـ 90 يوماً، مبني على أفضل مسار مهني يناسبك',
+        'intro_ai': 'أي المهام قد تتغير، وأي المهارات الإنسانية تبقى ذات قيمة، وكيف تستعد',
+        'intro_certs': 'مؤهلات قصيرة يعترف بها أصحاب العمل، مختارة لتناسب مساراتك المهنية',
+        'intro_courses': 'دورات تبني المهارات التي تحتاجها مساراتك المهنية',
+        'intro_companies': 'جهات توظّف في مجالك ودولتك. استخدمها لترى ما تطلبه الوظائف الحقيقية.',
+        'intro_riasec': 'أنواع العمل التي تستمتع بها أكثر (ملف RIASEC)',
+        'intro_bigfive': 'شخصيتك وفق سمات العوامل الخمسة الكبرى',
+        'intro_values': 'ما تريده من العمل والحياة',
+        'intro_strengths': 'نقاط قوتك الطبيعية',
+        'intro_workstyle': 'وتيرتك وبيئتك وكيف تتعامل مع الضغط',
         'matched_to': 'مطابقة لـ', 'government': 'حكومي',
         'exec_summary': 'الملخص التنفيذي',
         'riasec_code_stat': 'رمز RIASEC', 'primary_type_stat': 'النمط الأساسي',
@@ -1208,11 +1244,14 @@ def build_html_report(user_data: dict, summary: dict, raw_scores: list, ai: dict
     certification_cards = ""
     for cert in (certifications.get('certifications') or []) if certifications else []:
         provider_pill = f'<span class="pill">{cert.get("provider_type","")}</span>' if cert.get("provider_type") else ""
+        for_html = f'<span class="tag tag-blue">{T["course_for"]}: {cert.get("for_career")}</span>' if cert.get("for_career") else ""
+        about_html = f'<p class="body-text" style="margin-top:6px;"><strong>{T["course_about"]}:</strong> {cert.get("about")}</p>' if cert.get("about") else ""
         certification_cards += (
             f'<div class="card" style="margin-bottom:10px;">'
             f'<h4 class="card-title">{cert.get("title","")}</h4>'
-            f'{provider_pill}'
-            f'<p class="body-text" style="margin-top:6px;">{cert.get("why","")}</p>'
+            f'{provider_pill}{for_html}'
+            f'{about_html}'
+            f'<p class="body-text" style="margin-top:6px;">' + (f'<strong>{T["course_why"]}:</strong> ' if cert.get("for_career") else '') + f'{cert.get("why","")}</p>'
             f'</div>'
         )
 
@@ -1445,6 +1484,11 @@ def build_html_report(user_data: dict, summary: dict, raw_scores: list, ai: dict
   .sec-accent  { width:4px; height:34px; background:linear-gradient(180deg,#00c9a7,#5eead4); border-radius:2px; flex-shrink:0; }
   .sec-num     { font-size:8.5pt; font-weight:700; color:#00c9a7; letter-spacing:2px; text-transform:uppercase; line-height:1; }
   .sec-title   { font-size:15pt; font-weight:800; color:#075288; line-height:1.2; }
+  .sec-intro   { font-size:10pt; color:#555; line-height:1.6; margin:-6px 0 14px; }
+  .howto-box   { background:#f7f8fc; border:1px solid #e0e3ea; border-radius:8px; padding:12px 15px; margin-bottom:14px; font-size:10pt; color:#333; line-height:1.6; }
+  .howto-box .howto-title { font-weight:800; color:#075288; font-size:11pt; margin-bottom:3px; }
+  .howto-box ul { margin:6px 0 0 16px; padding:0; }
+  .howto-box li { margin-bottom:3px; }
   .intro-box   { background:#f7f8fc; border-left:3px solid #00c9a7; padding:11px 15px; border-radius:0 6px 6px 0; font-size:10.5pt; color:#444; font-style:italic; line-height:1.7; margin-bottom:18px; }   
 
   /* Summary hero */
@@ -1547,6 +1591,7 @@ def build_html_report(user_data: dict, summary: dict, raw_scores: list, ai: dict
   body { direction: rtl; text-align: right; }
   .page-ftr { left:16mm; right:16mm; }
   .intro-box   { border-left:none; border-right:3px solid #00c9a7; border-radius:6px 0 0 6px; }
+  .howto-box ul { margin:6px 16px 0 0; }
   .strength-card { border-left:none !important; border-right:4px solid #40916c !important; border-radius:8px 0 0 8px !important; }
   .action-item { border-left:none; border-right:3px solid #00c9a7; border-radius:6px 0 0 6px; }
   .action-phase { border-left:none; border-right:2px solid #e8eaf0; padding-left:0; padding-right:14px; }
@@ -1575,8 +1620,12 @@ def build_html_report(user_data: dict, summary: dict, raw_scores: list, ai: dict
             return ''
         return f'<div class="{cls}"{(" style=" + chr(34) + style + chr(34)) if style else ""}>{text}</div>'
 
+    _howto_keys = ['howto_careers'] + (['howto_majors'] if user_data.get('current_stage') in MAJORS_STAGES else []) + ['howto_plan', 'howto_profile']
+    _howto_items = ''.join(
+        f'<li><strong>{T[k].split(": ", 1)[0]}:</strong> {T[k].split(": ", 1)[1] if ": " in T[k] else ""}</li>' for k in _howto_keys)
+    howto_box = f'<div class="howto-box"><div class="howto-title">{T["howto_title"]}</div>{T["howto_intro"]}<ul>{_howto_items}</ul></div>'
     summary_body = (
-        (f'<div class="summary-hero"><div class="summary-hero-label">{T["exec_summary"]}</div>'
+        howto_box + (f'<div class="summary-hero"><div class="summary-hero-label">{T["exec_summary"]}</div>'
          f'<div class="summary-hero-text">{ai.get("executive_summary","")}</div></div>' if str(ai.get('executive_summary') or '').strip() else '')
         + f'''<div class="stat-grid">
       <div class="stat-cell"><div class="stat-lbl">{T['riasec_code_stat']}</div><div class="stat-val">{riasec_code}</div></div>
@@ -1634,6 +1683,13 @@ def build_html_report(user_data: dict, summary: dict, raw_scores: list, ai: dict
             [(T['sec06'], workstyle_body), (T['sec07'], entre_body)],
         ],
     }
+    # one plain sentence under a section title: why it is there / what to do with it (same wording as the web page)
+    intro_by_title = {
+        T['sec08']: T['intro_careers'], T['sec_student_track']: T['intro_student_track'], T['sec_action_plan']: T['intro_plan'],
+        T['sec09']: T['intro_ai'], T['sec_certifications']: T['intro_certs'], T['sec_courses']: T['intro_courses'],
+        T['sec_companies']: T['intro_companies'], T['sec02']: T['intro_riasec'], T['sec03']: T['intro_bigfive'],
+        T['sec04']: T['intro_values'], T['sec05']: T['intro_strengths'], T['sec06']: T['intro_workstyle'],
+    }
     pages_html = ""
     sec_num, page_no = 1, 1
     for key in section_order(user_data.get('current_stage')):
@@ -1646,7 +1702,9 @@ def build_html_report(user_data: dict, summary: dict, raw_scores: list, ai: dict
                 margin = ' style="margin-top:20px;"' if i > 0 else ''
                 content += (
                     f'<div class="sec-heading"{margin}><div class="sec-accent"></div>'
-                    f'<div><div class="sec-num">{sec_num:02d}</div><div class="sec-title">{t}</div></div></div>{b}'
+                    f'<div><div class="sec-num">{sec_num:02d}</div><div class="sec-title">{t}</div></div></div>'
+                    + (f'<p class="sec-intro">{intro_by_title[t]}</p>' if t in intro_by_title else '')
+                    + f'{b}'
                 )
                 sec_num += 1
             pages_html += f'''
@@ -1999,7 +2057,8 @@ def generate_certifications(user_data: dict, summary: dict, careers: list, local
     employers are already covered by the existing job listings/companies
     sections for this stage, this is the net-new content."""
     top_strengths = summary.get('strengths', {}).get('top_strengths', [])
-    careers_text  = "\n".join(f" - {c['title']} ({c['sector']})" for c in careers[:career_count])
+    top = [c for c in careers[:career_count] if isinstance(c, dict) and c.get('title')]
+    careers_text  = "\n".join(f" {i + 1}. {c['title']} ({c['sector']})" for i, c in enumerate(top))
     education_field = ', '.join(with_typed_other(user_data.get('education_field'), user_data.get('answers'), 'QO5_other')) or 'not specified'
 
     is_student = user_data.get('current_stage') in STILL_ENROLLED_STAGES
@@ -2027,15 +2086,46 @@ def generate_certifications(user_data: dict, summary: dict, careers: list, local
         "Return ONLY valid JSON (no markdown, no code fences):\n"
         "{\n"
         '  "certifications": [\n'
-        '    {"title": "certification or short course name", "provider_type": '
-        '"e.g. Coursera, PMI, Google, a professional body, or a local institution", '
-        '"why": "1 sentence on how it makes them more competitive for these careers"}\n'
+        '    {"career": the NUMBER of the ONE career above this is for, "title": "certification or short course name", '
+        '"provider_type": "the provider, in a few words (e.g. Google via Coursera, a professional body)", '
+        '"about": "one sentence: what it covers and what you have at the end", '
+        '"why": "one sentence: why it helps THIS career and this person"}\n'
         '  ]\n'
         "}\n\n"
-        "Provide exactly 4 certifications, real and specific where possible (actual well-known "
-        "providers/programmes), covering a mix of the matched careers rather than all for one."
+        "Provide 4 to 6 certifications, at most 2 per career, each tied to ONE career from the list (use its number). "
+        "Only well-known certifications or programmes that really exist and are still offered. If you are not sure of the "
+        "exact official name, describe it by type (for example 'an introductory cloud computing certification') rather "
+        "than inventing a name. Prefer ones a person with no work experience can take now: do NOT suggest credentials "
+        "that require years of professional experience (for example PMP, CPA, CFA charter, CISSP). Not every career "
+        "needs one, so skip a career rather than force a weak match. Use plain, simple language a 16-year-old can "
+        "follow, and never promise a job or an outcome."
     )
-    return _generate_json(prompt, label="certifications")
+    return _validate_certifications(_generate_json(prompt, label="certifications"), top)
+
+
+def _validate_certifications(result, top: list) -> dict:
+    """Ties each certification to one of the top careers (the model refers to it by number, so translating a title cannot
+    break the match), caps them at 2 per career and 6 in all, and drops empty ones. If nothing usable comes back the
+    original result is returned unchanged, so the section never disappears because of a formatting slip."""
+    items = result.get('certifications') if isinstance(result, dict) else None
+    title_by_num = {str(i + 1): c['title'] for i, c in enumerate(top)}
+    per_career: dict[str, int] = {}
+    kept = []
+    for it in items or []:
+        if not isinstance(it, dict):
+            continue
+        career = title_by_num.get(str(it.get('career') or '').strip().rstrip('.'))
+        title, why = _one_line(it.get('title'), 140), _one_line(it.get('why'))
+        if not (career and title and why) or per_career.get(career, 0) >= 2 or len(kept) >= 6:
+            continue
+        per_career[career] = per_career.get(career, 0) + 1
+        kept.append({'for_career': career, 'title': title, 'provider_type': _one_line(it.get('provider_type'), 90),
+                     'about': _one_line(it.get('about')), 'why': why})
+    if not kept:
+        return result if isinstance(result, dict) else {'certifications': []}
+    order = {c['title']: i for i, c in enumerate(top)}
+    kept.sort(key=lambda k: order.get(k['for_career'], 99))
+    return {'certifications': kept}
 
 
 def get_or_generate_certifications(response_id: str, summary: dict, profile_data: dict, top_careers: list,
