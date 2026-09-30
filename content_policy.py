@@ -145,6 +145,18 @@ def typed_other(answers, qid: str) -> str | None:
         return None
     return clean_typed_text(answers.get(f'{qid}_other'))
 
+def typed_terms(user_data: dict) -> dict:
+    """Everything the person typed under an "Other" option, cleaned, for career matching: fields / sectors (lists,
+    empty unless they chose "other" there) and goal / structure / stage (str or None)."""
+    a = user_data.get('answers')
+    return {
+        'fields': [t for t in with_typed_other(['other'] if 'other' in (user_data.get('education_field') or []) else [], a, 'QO5_other')],
+        'sectors': [t for t in with_typed_other(['other'] if 'other' in (user_data.get('sectors_of_interest') or []) else [], a, 'QO6_other')],
+        'goal': typed_goal(a),
+        'structure': typed_other(a, 'QO7'),
+        'stage': typed_other(a, 'QO4') if user_data.get('current_stage') == 'other' else None,
+    }
+
 def stage_text(user_data: dict) -> str:
     """current_stage for AI prompts; a typed "other" stage is shown with what the person wrote."""
     stage = user_data.get('current_stage') or 'N/A'

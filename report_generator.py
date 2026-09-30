@@ -2294,10 +2294,11 @@ def _get_cached_semantic_scores(response_id: str, summary: dict, profile_data: d
         print(f"Semantic-scores cache read failed for {response_id} (not re-raised):", e)
 
     embed_profile = dict(profile_data)
-    if 'education_specialisms' not in embed_profile:
+    if 'education_specialisms' not in embed_profile or 'answers' not in embed_profile:
         try:
             ans = _execute_with_retry(supabase_client.table('assessment_responses')
                 .select('answers').eq('id', response_id).single())
+            embed_profile['answers'] = (ans.data or {}).get('answers')
             embed_profile['education_specialisms'] = extract_specialisms((ans.data or {}).get('answers'), profile_data.get('education_field'))
         except Exception as e:
             print(f"Could not load specialisms for embedding {response_id} (continuing without):", e)

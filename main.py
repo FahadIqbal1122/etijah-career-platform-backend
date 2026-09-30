@@ -181,10 +181,11 @@ def _get_semantic_scores(response_id: str, summary: dict, profile_data: dict) ->
     # The embedding text includes the user's specific area of study (QO5D answers), which only lives
     # in the answers jsonb — fetch it here (cache miss only) rather than in every caller's select.
     embed_profile = dict(profile_data)
-    if 'education_specialisms' not in embed_profile:
+    if 'education_specialisms' not in embed_profile or 'answers' not in embed_profile:
         try:
             ans = _execute_with_retry(supabase.table('assessment_responses')
                 .select('answers').eq('id', response_id).single())
+            embed_profile['answers'] = (ans.data or {}).get('answers')
             embed_profile['education_specialisms'] = extract_specialisms((ans.data or {}).get('answers'), profile_data.get('education_field'))
         except Exception as e:
             print("Could not load specialisms for embedding (continuing without):", e)
@@ -1177,7 +1178,7 @@ def get_career_suggestions(response_id: str, user=Depends(get_optional_user)):
         raise HTTPException(status_code=404, detail="No results found for this response")
 
     profile = supabase.table('assessment_responses') \
-        .select('education_field, career_direction, sectors_of_interest, user_id') \
+        .select('education_field, career_direction, sectors_of_interest, user_id, answers') \
         .eq('id', response_id).single().execute()
     if not profile.data:
         raise HTTPException(status_code=404, detail="No results found for this response")
@@ -2233,7 +2234,7 @@ def delete_course(course_id: str, _=Depends(require_admin)):
 def get_course_recommendations(response_id: str, user=Depends(get_optional_user)):
     rows = _execute_with_retry(supabase.table('assessment_results').select('*').eq('response_id', response_id))
     profile = _execute_with_retry(supabase.table('assessment_responses')
-        .select('country, education_field, career_direction, sectors_of_interest, user_id')
+        .select('country, education_field, career_direction, sectors_of_interest, user_id, answers')
         .eq('id', response_id).single())
     if not rows.data or not profile.data:
         raise HTTPException(status_code=404, detail="No results found for this response")

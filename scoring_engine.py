@@ -245,6 +245,21 @@ def build_framework_output(scores: list[dict]) -> dict:
 
     return output
 
+# Word matching for typed "Other" answers: words of 5+ letters, compared on their first five letters so
+# "environmental" meets "Environment" and "biology" meets "Biologist". Latin script only (career names are English);
+# typed Arabic reaches matching through the embedding query instead. Very common words are ignored for fields, or
+# "sports management" would boost every management career.
+import re as _re
+_FIELD_STOPWORDS = {
+    'management', 'manager', 'engineering', 'engineer', 'science', 'sciences', 'studies', 'business', 'systems',
+    'system', 'technology', 'general', 'specialist', 'officer', 'analyst', 'senior', 'assistant', 'administration',
+    'applied', 'development', 'program', 'programme', 'design', 'designer', 'research', 'researcher', 'consultant',
+    'director', 'advanced', 'international', 'services', 'service', 'professional',
+}
+
+def _word_stems(text: str, stopwords: set | None = None) -> set:
+    return {w[:5] for w in _re.findall(r"[a-z]{5,}", (text or '').lower()) if not stopwords or w not in stopwords}
+
 def get_career_semantic_scores(supabase_client, summary: dict, user_data: dict) -> dict:
     """Embedding-similarity scores {career_id: similarity} for all careers with an embedding.
 
@@ -255,14 +270,20 @@ def get_career_semantic_scores(supabase_client, summary: dict, user_data: dict) 
     """
     try:
         from coaching_pipeline import _gemini_embed
+        from content_policy import with_typed_other, stage_text, typed_terms
+        answers = user_data.get('answers')
+        typed = typed_terms(user_data)
         query_text = (
             f"RIASEC: {', '.join(summary.get('riasec', {}).get('top_types', []))}. "
             f"Top values: {', '.join(summary.get('values', {}).get('top_values', []))}. "
             f"Top strengths: {', '.join(summary.get('strengths', {}).get('top_strengths', []))}. "
-            f"Sectors of interest: {', '.join(user_data.get('sectors_of_interest', []) or [])}. "
-            f"Education field: {', '.join(user_data.get('education_field', []) or [])}. "
+            # a bare "other" is replaced by what the person typed for it (dropped if it fails the content filter)
+            f"Sectors of interest: {', '.join(with_typed_other(user_data.get('sectors_of_interest'), answers, 'QO6_other'))}. "
+            f"Education field: {', '.join(with_typed_other(user_data.get('education_field'), answers, 'QO5_other'))}. "
             + (f"Specific area of study: {', '.join(user_data.get('education_specialisms') or [])}. " if user_data.get('education_specialisms') else "")
-            + f"Current stage: {user_data.get('current_stage', '')}."
+            + (f"Wants help with: {typed['goal']}. " if typed['goal'] else "")
+            + (f"Preferred career structure: {typed['structure']}. " if typed['structure'] else "")
+            + f"Current stage: {stage_text(user_data) if user_data.get('current_stage') else ''}."
         )
         embedding = _gemini_embed(query_text)
         matches = supabase_client.rpc("match_careers", {
@@ -300,6 +321,14 @@ def score_careers(summary: dict, user_data: dict, careers: list, semantic_scores
 
     user_education = [e for e in (user_data.get('education_field') or []) if e and e not in ('not_applicable', 'other')]
     user_sectors   = user_data.get('sectors_of_interest', [])
+
+    # What the person typed under "Other (type your own)" for field of study / sectors has no tag to match, so it is
+    # matched on words instead: a typed sector against the career's sector name, a typed field against the career's
+    # title and sector. (The same text also goes into the embedding query, see get_career_semantic_scores.)
+    from content_policy import typed_terms
+    typed = typed_terms(user_data)
+    typed_sector_stems = set().union(*[_word_stems(t) for t in typed['sectors']]) if typed['sectors'] else set()
+    typed_field_stems = set().union(*[_word_stems(t, _FIELD_STOPWORDS) for t in typed['fields']]) if typed['fields'] else set()
 
     # career_direction ('stay_in_field' / 'change_field' / 'unsure_subject' / 'not_sure' / None)
     # scales how hard the education-field overlap below pulls the ranking:
@@ -360,6 +389,10 @@ def score_careers(summary: dict, user_data: dict, careers: list, semantic_scores
                 score += field_mismatch_penalty
         if career.get('sector') in user_sector_names:
             score += 2
+        if typed_sector_stems and typed_sector_stems & _word_stems(career.get('sector') or ''):
+            score += 2
+        if typed_field_stems and typed_field_stems & _word_stems(f"{career.get('title') or ''} {career.get('sector') or ''}", _FIELD_STOPWORDS):
+            score += field_match_boost
         # Similarity is 0-1; weighted to be comparable to the tag signals above
         # without letting it fully override an exact tag match on its own.
         score += semantic_scores.get(career.get('id'), 0) * 5
