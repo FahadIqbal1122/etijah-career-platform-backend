@@ -121,6 +121,46 @@ def is_clean_text(text: str | None) -> bool:
     joined = " ".join(tokens)
     return not any(" " in bad and bad in joined for bad in _PROFANE_AR)
 
+# Anything typed under an "Other (type your own)" option (answers['<QID>_other']) can end up inside an AI prompt. It is
+# cleaned once at submit (clean_typed_text) and again wherever it is read. Unlike clean_direction_label it does not
+# reject ordinary sentence punctuation; it strips everything outside letters (any script), digits, spaces and a few
+# punctuation marks, so quotes, brackets and other prompt-shaping characters never survive.
+_TYPED_STRIP = re.compile(r"[^\w\sً-ٰٟ̀-ͯ&/,.'()+#!?:;\-]", re.UNICODE)
+
+def clean_typed_text(text, max_len: int = 100) -> str | None:
+    """Sanitised free text, or None if empty, too short, or it fails the content filters."""
+    if not isinstance(text, str):
+        return None
+    t = re.sub(r"\s+", " ", _TYPED_STRIP.sub(" ", text)).strip()[:max_len].strip()
+    if len(t) < 2 or not is_appropriate(t) or not is_clean_text(t):
+        return None
+    return t
+
+def typed_other(answers, qid: str) -> str | None:
+    """What the person typed for question `qid`, but only if they actually chose "other" there."""
+    if not isinstance(answers, dict):
+        return None
+    chosen = answers.get(qid)
+    if chosen != 'other' and not (isinstance(chosen, list) and 'other' in chosen):
+        return None
+    return clean_typed_text(answers.get(f'{qid}_other'))
+
+def stage_text(user_data: dict) -> str:
+    """current_stage for AI prompts; a typed "other" stage is shown with what the person wrote."""
+    stage = user_data.get('current_stage') or 'N/A'
+    if stage == 'other':
+        typed = typed_other(user_data.get('answers'), 'QO4')
+        return f"other ({typed})" if typed else 'other'
+    return stage
+
+def typed_goal(answers) -> str | None:
+    """The goal (QO5C / QO5C_PRO / QO5C_HS) in the person's own words, when they chose "Other"."""
+    for qid in ('QO5C', 'QO5C_PRO', 'QO5C_HS'):
+        t = typed_other(answers, qid)
+        if t:
+            return t
+    return None
+
 def with_typed_other(values, answers, answer_key: str) -> list[str]:
     """Selected option values with a bare 'other' replaced by what the user typed for it (answers[answer_key]).
     The typed text goes into AI prompts, so it is whitespace-collapsed, capped and run through the content
@@ -130,8 +170,8 @@ def with_typed_other(values, answers, answer_key: str) -> list[str]:
         if v != 'other':
             out.append(v)
             continue
-        typed = re.sub(r'\s+', ' ', str((answers or {}).get(answer_key) or '')).strip()[:60]
-        if len(typed) >= 2 and is_appropriate(typed) and is_clean_text(typed):
+        typed = clean_typed_text((answers or {}).get(answer_key), 60)
+        if typed:
             out.append(typed)
     return out
 
@@ -201,7 +241,9 @@ STILL_ENROLLED_STAGES = {"high_school", "university"}
 # employers already exist (job listings + companies, unchanged); certifications
 # and the progression/transition write-up are the net-new content per track.
 ENTERING_MARKET_STAGES = {"recent_graduate"}
-PROFESSIONAL_STAGES = {"working_exploring", "career_changer", "returning", "between_roles"}
+# "other" (QO4, typed by the person) is routed like the working / exploring stages: it needs the same job, career-path
+# and company sections, and none of the student-only ones.
+PROFESSIONAL_STAGES = {"working_exploring", "career_changer", "returning", "between_roles", "other"}
 
 # Which results sections each kind of user sees (decided 29 Sept 2026):
 #   high_school   -> majors to compare (+ the careers they lead to), courses, exposure ideas.

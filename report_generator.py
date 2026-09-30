@@ -23,7 +23,7 @@ from db_client import disable_http2
 from scoring_engine import build_framework_output, score_careers, get_career_semantic_scores, COUNTRY_CODE_MAP
 from coaching_pipeline import _gemini_embed, client as anthropic_client
 from scoring_engine import extract_specialisms, enrich_profile
-from content_policy import opportunity_link, major_link, resolve_route, section_order, should_show_entrepreneurship, is_appropriate, with_typed_other, CULTURAL_GUARDRAIL, STILL_ENROLLED_STAGES, ENTERING_MARKET_STAGES, PROFESSIONAL_STAGES, MAJORS_STAGES, CERTIFICATION_STAGES, NO_LISTINGS_STAGES, NO_COMPANIES_STAGES
+from content_policy import opportunity_link, major_link, resolve_route, section_order, should_show_entrepreneurship, is_appropriate, with_typed_other, stage_text, typed_goal, typed_other, CULTURAL_GUARDRAIL, STILL_ENROLLED_STAGES, ENTERING_MARKET_STAGES, PROFESSIONAL_STAGES, MAJORS_STAGES, CERTIFICATION_STAGES, NO_LISTINGS_STAGES, NO_COMPANIES_STAGES
 from ai_provider import get_ai_provider
 
 # Self-contained client (like ai_provider.py / smtp_service.py) purely for the
@@ -561,7 +561,7 @@ def generate_ai_content(user_data: dict, summary: dict, raw_scores: list, career
         f"Name: {user_data['full_name']}\n"
         f"Age: {user_data.get('age') or 'N/A'}\n"
         f"Work experience: {user_data.get('experience_level') or 'N/A'}\n"
-        f"Current stage: {user_data.get('current_stage') or 'N/A'}\n"
+        f"Current stage: {stage_text(user_data)}\n"
         + (f"Year of study: {STUDY_YEAR_LABELS[user_data['study_year']]}\n" if user_data.get('study_year') in STUDY_YEAR_LABELS else "")
         + ""        f"Education field: {', '.join(with_typed_other(user_data.get('education_field'), user_data.get('answers'), 'QO5_other')) or 'N/A'}\n"
         + (f"Specific area of study: {', '.join(user_data['education_specialisms'])}\n" if user_data.get('education_specialisms') else "")
@@ -573,6 +573,8 @@ def generate_ai_content(user_data: dict, summary: dict, raw_scores: list, career
             if user_data.get('major_was_own_choice') == 'no' else ""
         )
         + f"Career direction preference: {CAREER_DIRECTION_LABELS.get(user_data.get('career_direction'), 'Not specified')}\n"
+        + (f"What they want help with, in their own words: {typed_goal(user_data.get('answers'))}\n" if typed_goal(user_data.get('answers')) else "")
+        + (f"Ideal career structure, in their own words: {typed_other(user_data.get('answers'), 'QO7')}\n" if typed_other(user_data.get('answers'), 'QO7') else "")
         + f"Sectors of interest: {', '.join(with_typed_other(user_data.get('sectors_of_interest'), user_data.get('answers'), 'QO6_other'))}\n"
         f"Geographic openness: {user_data.get('geographic_openness','N/A')}\n"
         f"Why taking assessment: {user_data.get('why_here','N/A')}\n\n"
@@ -1719,7 +1721,7 @@ def generate_ai_impact(user_data: dict, summary: dict, careers: list, locale: st
     f"RIASEC top types: {', '.join(riasec_types)}\n"
     f"Top strengths: {', '.join(top_strengths)}\n"
     f"Top values: {', '.join(top_values)}\n"
-    f"Current stage: {user_data.get('current_stage', 'N/A')}\n"
+    f"Current stage: {stage_text(user_data)}\n"
     f"Work experience: {user_data.get('experience_level') or 'N/A'}\n"
     f"Education field: {education_field}\n"
     + (f"Specific area of study: {', '.join(user_data['education_specialisms'])}\n" if user_data.get('education_specialisms') else "")
@@ -1811,7 +1813,7 @@ def generate_direction_plan(user_data: dict, summary: dict, direction: dict, loc
         f"Related careers we know of: {related}\n"
         + (f"What the report already says about it: {direction['context']}\n" if direction.get('context') else "")
         + "\n=== USER PROFILE ===\n"
-        f"Current stage: {user_data.get('current_stage', 'N/A')}\n"
+        f"Current stage: {stage_text(user_data)}\n"
         f"Work experience: {user_data.get('experience_level') or 'N/A'}\n"
         f"Education field: {education_field}\n"
         + (f"Specific area of study: {', '.join(user_data['education_specialisms'])}\n" if user_data.get('education_specialisms') else "")
@@ -1866,7 +1868,7 @@ def generate_student_track(user_data: dict, summary: dict, careers: list, locale
         f"{CULTURAL_GUARDRAIL}\n\n"
         + (ARABIC_LANGUAGE_INSTRUCTION if locale == 'ar' else "")
         + "=== USER PROFILE ===\n"
-        f"Stage: {user_data.get('current_stage', 'N/A')} (high_school = not yet in university; "
+        f"Stage: {stage_text(user_data)} (high_school = not yet in university; "
         "university = currently studying)\n"
         f"Current/declared field of study: {education_field}\n"
         + (f"Specific area of study: {', '.join(user_data['education_specialisms'])}\n" if user_data.get('education_specialisms') else "")
@@ -2056,7 +2058,7 @@ def generate_career_path(user_data: dict, summary: dict, careers: list, locale: 
         f"{CULTURAL_GUARDRAIL}\n\n"
         + (ARABIC_LANGUAGE_INSTRUCTION if locale == 'ar' else "")
         + "=== USER PROFILE ===\n"
-        f"Stage: {user_data.get('current_stage', 'N/A')}\n"
+        f"Stage: {stage_text(user_data)}\n"
         f"Work experience: {user_data.get('experience_level', 'N/A')}\n"
         f"Top strengths: {', '.join(top_strengths)}\n"
         f"Top values: {', '.join(top_values)}\n"

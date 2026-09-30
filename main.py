@@ -22,7 +22,7 @@ from smtp_service import send_report_email, send_feedback_email, send_results_re
 import httpx, hmac, hashlib, json, secrets, time
 from coaching_methodology import METHODOLOGY_DOC
 from coaching_pipeline import chunk_transcript, embed_and_store_chunks, client, embed_country_profile, sync_country_profile_embedding, sync_career_embedding, _gemini_embed
-from content_policy import add_student_track_links, section_order, job_posted_date, is_job_fresh, job_requirements as parse_job_requirements, meets_requirements, MAX_EXPERIENCE_MONTHS_EARLY_CAREER, MAX_EXPERIENCE_MONTHS_INTERNSHIP, EDUCATION_RANK, clean_direction_label, direction_key, resolve_route, MAJORS_STAGES, CERTIFICATION_STAGES, NO_LISTINGS_STAGES, NO_COMPANIES_STAGES, is_appropriate, is_region_eligible, is_seniority_appropriate, STILL_ENROLLED_STAGES, ENTERING_MARKET_STAGES, PROFESSIONAL_STAGES, CULTURAL_GUARDRAIL
+from content_policy import add_student_track_links, section_order, job_posted_date, is_job_fresh, job_requirements as parse_job_requirements, meets_requirements, MAX_EXPERIENCE_MONTHS_EARLY_CAREER, MAX_EXPERIENCE_MONTHS_INTERNSHIP, EDUCATION_RANK, clean_typed_text, clean_direction_label, direction_key, resolve_route, MAJORS_STAGES, CERTIFICATION_STAGES, NO_LISTINGS_STAGES, NO_COMPANIES_STAGES, is_appropriate, is_region_eligible, is_seniority_appropriate, STILL_ENROLLED_STAGES, ENTERING_MARKET_STAGES, PROFESSIONAL_STAGES, CULTURAL_GUARDRAIL
 from ai_provider import get_ai_provider, invalidate_ai_provider_cache, AI_PROVIDER_KEY, VALID_PROVIDERS
 
 load_dotenv()
@@ -294,6 +294,10 @@ class CheckExistingRequest(BaseModel):
     email: str
     phone: str
 
+# Values the assessment can send as why_here (QO10 options, the goal-question options, and the fallbacks).
+WHY_HERE_VALUES = {"choosing_study", "first_job", "career_change", "curious", "recommended", "other", "not_asked",
+    "stay_in_field", "unsure_subject", "change_field", "not_sure", "choosing_major", "explore_careers"}
+
 class SubmitRequest(BaseModel):
     full_name: str = Field(max_length=200)
     email: EmailStr
@@ -308,7 +312,7 @@ class SubmitRequest(BaseModel):
     # 7 known values — an arbitrary string would silently fail every stage
     # check (no track ever generated) rather than erroring loudly.
     current_stage: Literal["high_school", "university", "recent_graduate",
-        "working_exploring", "career_changer", "returning", "between_roles"]
+        "working_exploring", "career_changer", "returning", "between_roles", "other"]
     # Matches QO5's exact option set — also interpolated raw into LLM prompts
     # (student-track/certifications/ai-impact/ai-content), so constraining it
     # here closes that off as a prompt-injection surface, not just a length cap.
@@ -585,6 +589,17 @@ def submit_assessment(body: SubmitRequest, background_tasks: BackgroundTasks, us
         body.answers['QOFIELD'] = field_in_mind
     else:
         body.answers.pop('QOFIELD', None)
+    # Text typed under any "Other (type your own)" option is cleaned once here, before it is stored, because it later
+    # feeds AI prompts: unusable text (empty, profane, off-topic) is dropped rather than kept.
+    for key in [k for k in body.answers if isinstance(k, str) and k.endswith('_other')]:
+        cleaned = clean_typed_text(body.answers.get(key))
+        if cleaned:
+            body.answers[key] = cleaned
+        else:
+            body.answers.pop(key, None)
+    # why_here is printed in the report prompt; it only ever holds an option value, so anything else becomes 'other'.
+    if body.why_here not in WHY_HERE_VALUES:
+        body.why_here = 'other'
     results = compute_scores(body.answers)
     if not results:
         raise HTTPException(status_code=422, detail="No scoreable answers found in payload")
