@@ -878,7 +878,7 @@ def build_html_report(user_data: dict, summary: dict, raw_scores: list, ai: dict
     career_path    = _escape_deep(career_path) if career_path else career_path
     direction      = _escape_deep(direction) if direction else direction
     career_rec_cap = 5 if tier == 'free' else 8
-    ai_impact_cap  = 2 if tier == 'free' else 5
+    ai_impact_cap  = 2 if tier == 'free' else 8
     T = UI_TEXT.get(locale, UI_TEXT['en'])
     riasec_meta_src    = RIASEC_META_AR    if locale == 'ar' else RIASEC_META
     values_meta_src    = VALUES_META_AR    if locale == 'ar' else VALUES_META
@@ -1751,7 +1751,7 @@ def generate_ai_impact(user_data: dict, summary: dict, careers: list, locale: st
 
   # The paid call is larger now (5 careers with evidence, plus the focus block): give it a longer budget than the
   # small free-tier call.
-  return _generate_json(prompt, timeout_s=90 if include_focus else None, label="ai_impact")
+  return _generate_json(prompt, timeout_s=120 if include_focus else None, label="ai_impact")
 
 
 def get_or_generate_ai_impact(response_id: str, summary: dict, profile_data: dict, top_careers: list,
@@ -2490,7 +2490,7 @@ def create_report(response_id: str, supabase_client, tier: str = "launchpad", lo
     # user upgrades, _activate_plan() nulls out their *_free columns so the next report
     # request here regenerates at full size instead of reusing the smaller cache.
     is_free = tier == 'free'
-    impact_count = 2 if is_free else 5
+    impact_count = 2 if is_free else 8  # same as content_count so every career card has its AI row
     content_count = 5 if is_free else 8
     impact_col = 'ai_impact_cache_free' if is_free else 'ai_impact_cache'
     content_col = 'ai_content_cache_free' if is_free else 'ai_content_cache'

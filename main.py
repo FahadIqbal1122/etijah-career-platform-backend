@@ -1234,7 +1234,7 @@ def get_ai_impact(response_id: str, force: bool = False, locale: str | None = No
     # of paying for a 5-career Gemini call and discarding 3 — see create_report()'s
     # matching *_free cache columns for why paid tiers share a single "full" cache.
     is_free = tier == "free"
-    careers_cap = 2 if is_free else 5
+    careers_cap = 2 if is_free else 8  # paid: one AI-impact row for every career card shown (8)
     cache_col = 'ai_impact_cache_free' if is_free else 'ai_impact_cache'
     cache_col_ar = 'ai_impact_cache_ar_free' if is_free else 'ai_impact_cache_ar'
     locale = locale or 'en'
