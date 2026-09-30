@@ -402,6 +402,100 @@ def score_careers(summary: dict, user_data: dict, careers: list, semantic_scores
 
     return sorted(careers, key=_score, reverse=True)[:10]
 
+# Words too common in course and career names to prove a link ("management" would tie every manager role to every
+# management course).
+_COURSE_STOPWORDS = _FIELD_STOPWORDS | {
+    'fundamentals', 'essentials', 'introduction', 'certificate', 'specialization', 'learning', 'skills', 'basics',
+    'analytics', 'analysis', 'digital', 'strategy', 'communication', 'leadership', 'operations',
+}
+
+def _clean_ws(text) -> str:
+    return _re.sub(r"\s+", " ", str(text or "")).strip()
+
+def _course_why(skills: list[str], career: str, level: str | None, locale: str) -> str:
+    """One plain sentence on why a course is suggested for a career: what it builds, and how hard it is to start."""
+    lvl = (level or '').strip().lower()
+    if locale == 'ar':
+        text = (f"تبني {'، '.join(skills)}، وهي مهارات تُستخدم في مسار «{career}»." if skills
+                else f"مناسبة لمسار «{career}».")
+        if lvl == 'beginner':
+            text += " تبدأ من المستوى المبتدئ، فلا تحتاج إلى خبرة سابقة."
+        elif lvl == 'intermediate':
+            text += " مستواها متوسط، لذا تفيد بعض المعرفة الأساسية."
+        return text
+    text = (f"Builds {', '.join(skills)}, which are used in {career} work." if skills
+            else f"A good fit for {career}.")
+    if lvl == 'beginner':
+        text += " It starts at beginner level, so no experience is needed."
+    elif lvl == 'intermediate':
+        text += " It is intermediate level, so some basics will help."
+    return text
+
+def recommend_courses(summary: dict, top_careers: list, all_courses: list, current_stage: str | None = None,
+                      locale: str = 'en', limit: int = 8, per_career: int = 2) -> list:
+    """Courses for the person's top careers, each tied to ONE career, with what it is about and why it is suggested.
+    A course is only suggested if it is really linked to a career: its sector tag matches the career's sector, or its
+    title / skills share a word with the career's title. Nothing is added just to fill the list (the old version
+    padded with unrelated courses when nothing matched). Advanced courses are skipped for students and new graduates.
+    Returned items are copies of the course rows plus: for_career, for_sector, skills, about, why.
+    This is the fallback for when the AI course picker (report_generator.build_course_recommendations) is unavailable:
+    it only trusts a shared word between the course's title / skills and the career's title, so it returns few courses."""
+    from content_policy import EARLY_STAGES
+    top = [c for c in (top_careers or [])[:5] if isinstance(c, dict)]
+    user_riasec = set((summary.get('riasec') or {}).get('top_types', []))
+    early = current_stage in EARLY_STAGES
+
+    best: dict = {}   # course id -> (score, career_rank)
+    for course in all_courses or []:
+        if early and (str(course.get('level') or '').lower() == 'advanced' or _re.search(r"\bMBA\b", course.get('title') or '')):
+            continue
+        tags = set(course.get('career_tags') or [])
+        course_riasec = set(course.get('riasec_tags') or [])
+        course_words = _word_stems(f"{course.get('title') or ''} {' '.join(course.get('skill_tags') or [])}", _COURSE_STOPWORDS)
+        for rank, career in enumerate(top):
+            # Evidence that the course is for THIS career. A shared sector alone is not enough (the course catalogue
+            # is small and its sector tags are broad, so that paired a chef with a healthcare course): either the
+            # course's title / skills share a word with the career's title, or the sector matches AND the
+            # course's personality (RIASEC) tags overlap the career's.
+            overlap = course_words & _word_stems(career.get('title') or '', _COURSE_STOPWORDS)
+            score = 0.0
+            if overlap:
+                score += 6 + 3 * (len(overlap) > 1)
+            if score == 0:
+                continue   # not linked to this career
+            score += 2 * len(user_riasec & course_riasec)
+            score += (5 - rank) * 0.5   # a higher-ranked career wins ties
+            if course['id'] not in best or score > best[course['id']][0]:
+                best[course['id']] = (score, rank)
+
+    by_id = {c['id']: c for c in all_courses or [] if c.get('id') in best}
+    per: dict = {}
+    for cid, (score, rank) in best.items():
+        per.setdefault(rank, []).append((score, cid))
+    for rank in per:
+        per[rank].sort(key=lambda x: -x[0])
+
+    picked: list = []   # (rank, score, cid): first the best course of each career, then second-best, ... until the limit
+    for round_i in range(per_career):
+        for rank in sorted(per):
+            if len(picked) < limit and len(per[rank]) > round_i:
+                score, cid = per[rank][round_i]
+                picked.append((rank, score, cid))
+    picked.sort(key=lambda x: (x[0], -x[1]))
+
+    out = []
+    for rank, _score, cid in picked:
+        c = dict(by_id[cid])
+        career = top[rank]
+        skills = [_clean_ws(s) for s in (c.get('skill_tags') or []) if _clean_ws(s)][:3]
+        c.update({
+            'for_career': career.get('title'), 'for_sector': career.get('sector'), 'skills': skills,
+            'about': _clean_ws(c.get('description')),
+            'why': _course_why(skills, career.get('title') or '', c.get('level'), locale),
+        })
+        out.append(c)
+    return out
+
 COUNTRY_CODE_MAP = {
     'saudi_arabia': 'SA',
     'bahrain': 'BH',

@@ -22,7 +22,7 @@ from supabase import create_client as _create_supabase_client
 from db_client import disable_http2
 from scoring_engine import build_framework_output, score_careers, get_career_semantic_scores, COUNTRY_CODE_MAP
 from coaching_pipeline import _gemini_embed, client as anthropic_client
-from scoring_engine import extract_specialisms, enrich_profile
+from scoring_engine import extract_specialisms, enrich_profile, recommend_courses
 from content_policy import opportunity_link, major_link, resolve_route, section_order, should_show_entrepreneurship, is_appropriate, with_typed_other, stage_text, typed_goal, typed_other, EARLY_STAGES, CULTURAL_GUARDRAIL, STILL_ENROLLED_STAGES, ENTERING_MARKET_STAGES, PROFESSIONAL_STAGES, MAJORS_STAGES, CERTIFICATION_STAGES, NO_LISTINGS_STAGES, NO_COMPANIES_STAGES
 from ai_provider import get_ai_provider
 
@@ -172,6 +172,7 @@ UI_TEXT = {
         'sec_student_track': 'Majors & Exposure',
         'sec_certifications': 'Certifications to Pursue', 'sec_career_path': 'Your Path Forward',
         'sec_companies': 'Companies to Target', 'sec_courses': 'Recommended Courses',
+        'course_for': 'For', 'course_about': 'What it is about', 'course_why': 'Why it is suggested',
         'sec_action_plan': 'Your Action Plan',
         'matched_to': 'Matched to', 'government': 'Government',
         'exec_summary': 'Executive Summary',
@@ -216,6 +217,7 @@ UI_TEXT = {
         'sec_student_track': 'التخصصات والتعرّف على المجال',
         'sec_certifications': 'شهادات يُنصح بها', 'sec_career_path': 'مسارك المهني القادم',
         'sec_companies': 'شركات مستهدفة', 'sec_courses': 'دورات موصى بها',
+        'course_for': 'لمسار', 'course_about': 'عن ماذا تدور', 'course_why': 'لماذا نقترحها',
         'sec_action_plan': 'خطة عملك',
         'matched_to': 'مطابقة لـ', 'government': 'حكومي',
         'exec_summary': 'الملخص التنفيذي',
@@ -1233,11 +1235,17 @@ def build_html_report(user_data: dict, summary: dict, raw_scores: list, ai: dict
     course_cards = ""
     for course in courses:
         level = course.get("level", "")
+        for_html = (f'<span class="tag tag-blue">{T["course_for"]}: {course.get("for_career")}</span>'
+                    if course.get("for_career") else '')
+        about = course.get("about") or course.get("description", "")
+        why_html = _note('green', T['course_why'], course.get("why", ""))
         course_cards += (
             f'<div class="card" style="margin-bottom:10px;">'
             f'<h4 class="card-title">{course.get("title","")}</h4>'
             f'<p class="muted">{course.get("provider","")}{" · " + level if level else ""}</p>'
-            f'<p class="body-text" style="margin-top:6px;">{course.get("description","")}</p>'
+            f'<div style="margin-top:4px;">{for_html}</div>'
+            f'<p class="body-text" style="margin-top:6px;"><strong>{T["course_about"]}:</strong> {about}</p>'
+            f'{why_html}'
             f'</div>'
         )
 
@@ -2060,6 +2068,115 @@ def get_or_generate_certifications(response_id: str, summary: dict, profile_data
         lambda: _translate_piece_with_retry(result_en, 'ar'))
 
 
+# ─── Course recommendations: an AI picks from the real course list ───────────────────────────────
+# The course list is small and its tags are broad (sectors), so matching by tags paired unrelated things (a chef with
+# a healthcare course). Instead the model is shown the person's top careers and the whole course list and may only
+# choose courses from it (by id); it writes, in the person's language, what each course is about and why it fits that
+# career. Anything it returns that is not in the list, or not one of the top careers, is dropped. Cached per response
+# and language (courses_cache / courses_cache_ar).
+
+COURSE_PICKS_MAX = 8
+COURSE_PICKS_PER_CAREER = 2
+
+def _one_line(text, limit: int = 240) -> str:
+    return re.sub(r"\s+", " ", str(text or "")).strip()[:limit]
+
+def generate_course_picks(user_data: dict, summary: dict, top_careers: list, courses: list, locale: str = 'en') -> dict:
+    top = [c for c in top_careers[:5] if isinstance(c, dict) and c.get('title')]
+    careers_text = "\n".join(f"  {i + 1}. {c['title']} ({c.get('sector', '')})" for i, c in enumerate(top))
+    catalogue = "\n".join(
+        f"  {c['id']} | {_one_line(c.get('title'), 90)} | {_one_line(c.get('provider'), 40)} | {c.get('level') or ''} | "
+        f"{'free' if c.get('is_free') else 'paid'} | skills: {', '.join(_one_line(s, 30) for s in (c.get('skill_tags') or [])[:6])} | "
+        f"{_one_line(c.get('description'), 160)}"
+        for c in courses
+    )
+    early = user_data.get('current_stage') in EARLY_STAGES
+    prompt = (
+        f"{CULTURAL_GUARDRAIL}\n\n"
+        + (ARABIC_LANGUAGE_INSTRUCTION if locale == 'ar' else "")
+        + "You match courses to careers for one person. Use ONLY the courses in the CATALOGUE below and refer to "
+        "them by their exact id.\n\n"
+        f"=== PERSON ===\n"
+        f"Current stage: {stage_text(user_data)}\n"
+        f"Education field: {', '.join(with_typed_other(user_data.get('education_field'), user_data.get('answers'), 'QO5_other')) or 'not specified'}\n"
+        f"Top personality types: {', '.join(summary.get('riasec', {}).get('top_types', []))}\n\n"
+        f"=== THEIR TOP CAREERS ===\n{careers_text}\n\n"
+        f"=== CATALOGUE (id | title | provider | level | cost | skills | description) ===\n{catalogue}\n\n"
+        "=== TASK ===\n"
+        f"Choose up to {COURSE_PICKS_MAX} courses in total, at most {COURSE_PICKS_PER_CAREER} per career. Pick a course for a "
+        "career ONLY if it teaches something that career depends on day to day, so you could confidently tell the person "
+        "it is directly useful for that career. General courses (communication, Excel, leadership, emotional "
+        "intelligence, learning techniques) do NOT count unless the career truly centres on that skill. Most careers "
+        "will have one course or none, and that is correct: returning fewer courses, or an empty list, is much better "
+        "than suggesting one that does not really fit. Never add a course just to fill the list. Each course may appear once. "
+        + ("This person is at the start of their path, so do not pick advanced or MBA-style courses; prefer beginner and "
+           "free courses when two are equally good. " if early else "")
+        + "Use plain, simple language a 16-year-old can follow, and never promise a job or an outcome.\n\n"
+        "Return ONLY a valid JSON object (no markdown, no code fences):\n"
+        '{"picks": [ {"course_id": "exact id from the catalogue", "career": the NUMBER of the career in the list above (1-5), '
+        '"career_label": "that career title in the language of this reply", '
+        '"about": "one sentence: what the course covers, using only the catalogue information", '
+        '"why": "one sentence: why this course helps THIS career and this person"} ]}'
+    )
+    result = _generate_json(prompt, 1, CLAUDE_CONTENT_TIMEOUT_S, "courses:picks")
+    return _validate_course_picks(result, courses, top)
+
+def _validate_course_picks(result, courses: list, top: list) -> dict:
+    ids = {str(c['id']) for c in courses if c.get('id')}
+    # careers are referred to by their number in the prompt (so translating a title cannot break the match)
+    title_by_num = {str(i + 1): c['title'] for i, c in enumerate(top)}
+    per_career: dict[str, int] = {}
+    seen: set[str] = set()
+    picks = []
+    for p in (result.get('picks') if isinstance(result, dict) else None) or []:
+        if not isinstance(p, dict):
+            continue
+        cid = str(p.get('course_id') or '')
+        career = title_by_num.get(str(p.get('career') or '').strip().rstrip('.'))
+        if cid not in ids or cid in seen or not career:
+            continue
+        if per_career.get(career, 0) >= COURSE_PICKS_PER_CAREER or len(picks) >= COURSE_PICKS_MAX:
+            continue
+        why = _one_line(p.get('why'))
+        if not why:
+            continue
+        seen.add(cid)
+        per_career[career] = per_career.get(career, 0) + 1
+        picks.append({'course_id': cid, 'career': career, 'career_label': _one_line(p.get('career_label'), 80) or career,
+                      'about': _one_line(p.get('about')), 'why': why})
+    return {'picks': picks}
+
+def build_course_recommendations(response_id: str, summary: dict, profile_data: dict, top_careers: list,
+                                 supabase_client, locale: str = 'en', force: bool = False) -> list:
+    """The courses to show (page and PDF): course rows from the catalogue plus for_career, about and why.
+    Falls back to the strict word-match version if the AI call fails, so a report never loses the section to an
+    outage, and never caches a failure."""
+    loc = 'ar' if locale == 'ar' else 'en'
+    courses = _execute_with_retry(supabase_client.table('courses').select('*')).data or []
+    by_id = {str(c['id']): c for c in courses}
+    col = 'courses_cache_ar' if loc == 'ar' else 'courses_cache'
+    try:
+        if force:
+            picks = generate_course_picks(profile_data, summary, top_careers, courses, loc)
+            _execute_with_retry(supabase_client.table('assessment_responses').update({col: picks}).eq('id', response_id))
+        else:
+            picks = _generate_and_cache(supabase_client, response_id, col,
+                lambda: generate_course_picks(profile_data, summary, top_careers, courses, loc))
+    except Exception as e:
+        print(f"Course picks failed for {response_id} (using the word-match fallback):", type(e).__name__, e)
+        return recommend_courses(summary, top_careers, courses, profile_data.get('current_stage'), loc)
+    out = []
+    for p in (picks or {}).get('picks', []):
+        c = by_id.get(str(p.get('course_id')))
+        if not c:
+            continue   # removed from the catalogue since this was cached
+        row = dict(c)
+        row.update({'for_career': p.get('career_label') or p.get('career'), 'about': p.get('about') or re.sub(r"\s+", " ", str(c.get('description') or '')).strip(),
+                    'why': p.get('why')})
+        out.append(row)
+    return out
+
+
 def generate_career_path(user_data: dict, summary: dict, careers: list, locale: str = 'en', career_count: int = 5) -> dict:
     """'Working professionals' track: progression (stay_in_field) or transition
     (change_field) write-up — framed by career_direction, same as the fit_tag/
@@ -2624,18 +2741,7 @@ def create_report(response_id: str, supabase_client, tier: str = "launchpad", lo
         if profile.data.get('current_stage') in NO_COMPANIES_STAGES:
             companies = []
 
-        user_riasec = set(summary.get('riasec', {}).get('top_types', []))
-        course_sectors = set(c['sector'] for c in top5)
-        all_courses = _execute_with_retry(supabase_client.table('courses').select('*')).data or []
-
-        def _score_course(course):
-            riasec_overlap = len(set(course.get('riasec_tags') or []) & user_riasec)
-            sector_overlap = len(set(course.get('career_tags') or []) & course_sectors)
-            return sector_overlap * 3 + riasec_overlap * 2
-
-        scored_courses = sorted(all_courses, key=_score_course, reverse=True)
-        matched_courses = [c for c in scored_courses if _score_course(c) > 0][:8]
-        courses = matched_courses if matched_courses else scored_courses[:8]
+        courses = build_course_recommendations(response_id, summary, profile.data, top5, supabase_client, locale)
 
     html = build_html_report(profile.data, summary, raw_scores, ai_content, top_careers, ai_impact, locale, tier=tier, jobs=jobs, companies=companies, courses=courses, student_track=student_track, certifications=certifications, career_path=career_path, direction=direction)
     return generate_pdf(html)

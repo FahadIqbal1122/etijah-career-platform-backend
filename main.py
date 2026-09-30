@@ -7,7 +7,7 @@ from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.middleware.cors import CORSMiddleware
 from supabase import create_client, Client
 from dotenv import load_dotenv
-from scoring_engine import compute_scores, build_framework_output, score_careers, get_career_semantic_scores, extract_specialisms, enrich_profile, COUNTRY_CODE_MAP, COUNTRY_NAMES
+from scoring_engine import compute_scores, build_framework_output, score_careers, get_career_semantic_scores, extract_specialisms, enrich_profile, recommend_courses, COUNTRY_CODE_MAP, COUNTRY_NAMES
 from pydantic import BaseModel, EmailStr, Field, field_validator
 from typing import Any, Literal
 import io
@@ -2234,7 +2234,7 @@ def delete_course(course_id: str, _=Depends(require_admin)):
     return {"deleted": course_id}
 
 @app.get("/assessment/{response_id}/courses")
-def get_course_recommendations(response_id: str, user=Depends(get_optional_user)):
+def get_course_recommendations(response_id: str, locale: str | None = None, user=Depends(get_optional_user)):
     rows = _execute_with_retry(supabase.table('assessment_results').select('*').eq('response_id', response_id))
     profile = _execute_with_retry(supabase.table('assessment_responses')
         .select('country, education_field, career_direction, sectors_of_interest, user_id, current_stage, answers')
@@ -2250,19 +2250,11 @@ def get_course_recommendations(response_id: str, user=Depends(get_optional_user)
     semantic_scores = _get_semantic_scores(response_id, summary, profile.data)
     top5    = score_careers(summary, profile.data, careers, semantic_scores)[:5]
 
-    user_riasec = set(summary.get('riasec', {}).get('top_types', []))
-    sectors     = set(c['sector'] for c in top5)
-
-    all_courses = _execute_with_retry(supabase.table('courses').select('*')).data or []
-
-    def score_course(course):
-        riasec_overlap = len(set(course.get('riasec_tags') or []) & user_riasec)
-        sector_overlap = len(set(course.get('career_tags') or []) & sectors)
-        return sector_overlap * 3 + riasec_overlap * 2
-
-    scored  = sorted(all_courses, key=score_course, reverse=True)
-    matched = [c for c in scored if score_course(c) > 0][:10]
-    return matched if matched else scored[:10]
+    # Each course is tied to one of the top careers, with what it is about and why it is suggested. An AI picks from
+    # the real course list (report_generator.build_course_recommendations); nothing is added just to fill the list.
+    from report_generator import build_course_recommendations
+    return build_course_recommendations(response_id, summary, profile.data, top5, supabase,
+                                        locale if locale in ('en', 'ar') else 'en')
 
 JOB_LISTINGS_CACHE_TTL = timedelta(hours=24)
 
