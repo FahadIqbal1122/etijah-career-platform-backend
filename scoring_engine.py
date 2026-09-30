@@ -298,7 +298,7 @@ def score_careers(summary: dict, user_data: dict, careers: list, semantic_scores
         entrepreneurship.get('portfolio_interest', 0)
     ) / 2
 
-    user_education = [e for e in (user_data.get('education_field') or []) if e and e != 'not_applicable']
+    user_education = [e for e in (user_data.get('education_field') or []) if e and e not in ('not_applicable', 'other')]
     user_sectors   = user_data.get('sectors_of_interest', [])
 
     # career_direction ('stay_in_field' / 'change_field' / 'unsure_subject' / 'not_sure' / None)

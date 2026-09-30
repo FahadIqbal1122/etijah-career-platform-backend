@@ -23,7 +23,7 @@ from db_client import disable_http2
 from scoring_engine import build_framework_output, score_careers, get_career_semantic_scores, COUNTRY_CODE_MAP
 from coaching_pipeline import _gemini_embed, client as anthropic_client
 from scoring_engine import extract_specialisms, enrich_profile
-from content_policy import opportunity_link, major_link, resolve_route, section_order, should_show_entrepreneurship, is_appropriate, CULTURAL_GUARDRAIL, STILL_ENROLLED_STAGES, ENTERING_MARKET_STAGES, PROFESSIONAL_STAGES, MAJORS_STAGES, CERTIFICATION_STAGES, NO_LISTINGS_STAGES, NO_COMPANIES_STAGES
+from content_policy import opportunity_link, major_link, resolve_route, section_order, should_show_entrepreneurship, is_appropriate, with_typed_other, CULTURAL_GUARDRAIL, STILL_ENROLLED_STAGES, ENTERING_MARKET_STAGES, PROFESSIONAL_STAGES, MAJORS_STAGES, CERTIFICATION_STAGES, NO_LISTINGS_STAGES, NO_COMPANIES_STAGES
 from ai_provider import get_ai_provider
 
 # Self-contained client (like ai_provider.py / smtp_service.py) purely for the
@@ -563,7 +563,7 @@ def generate_ai_content(user_data: dict, summary: dict, raw_scores: list, career
         f"Work experience: {user_data.get('experience_level') or 'N/A'}\n"
         f"Current stage: {user_data.get('current_stage') or 'N/A'}\n"
         + (f"Year of study: {STUDY_YEAR_LABELS[user_data['study_year']]}\n" if user_data.get('study_year') in STUDY_YEAR_LABELS else "")
-        + ""        f"Education field: {', '.join(user_data.get('education_field') or []) or 'N/A'}\n"
+        + ""        f"Education field: {', '.join(with_typed_other(user_data.get('education_field'), user_data.get('answers'), 'QO5_other')) or 'N/A'}\n"
         + (f"Specific area of study: {', '.join(user_data['education_specialisms'])}\n" if user_data.get('education_specialisms') else "")
         + (
             f"Note: this field of study was NOT the person's own choice"
@@ -573,7 +573,7 @@ def generate_ai_content(user_data: dict, summary: dict, raw_scores: list, career
             if user_data.get('major_was_own_choice') == 'no' else ""
         )
         + f"Career direction preference: {CAREER_DIRECTION_LABELS.get(user_data.get('career_direction'), 'Not specified')}\n"
-        + f"Sectors of interest: {', '.join(user_data.get('sectors_of_interest',[]))}\n"
+        + f"Sectors of interest: {', '.join(with_typed_other(user_data.get('sectors_of_interest'), user_data.get('answers'), 'QO6_other'))}\n"
         f"Geographic openness: {user_data.get('geographic_openness','N/A')}\n"
         f"Why taking assessment: {user_data.get('why_here','N/A')}\n\n"
         f"RIASEC top 3 (0-100):\n{riasec_lines}\n"
@@ -1672,7 +1672,7 @@ def generate_ai_impact(user_data: dict, summary: dict, careers: list, locale: st
   # The free tier only shows 2 careers; the skills-to-build and practice-exercise block is part of
   # the paid plan, so it is only generated for the full (paid) call.
   include_focus = career_count > 2
-  education_field = ', '.join(user_data.get('education_field') or []) or 'not specified'
+  education_field = ', '.join(with_typed_other(user_data.get('education_field'), user_data.get('answers'), 'QO5_other')) or 'not specified'
 
   focus_label = user_data.get('focus_direction')
   focus_target = (
@@ -1796,7 +1796,7 @@ def generate_direction_plan(user_data: dict, summary: dict, direction: dict, loc
     riasec_types  = summary.get('riasec', {}).get('top_types', [])
     top_strengths = summary.get('strengths', {}).get('top_strengths', [])
     top_values    = summary.get('values', {}).get('top_values', [])
-    education_field = ', '.join(user_data.get('education_field') or []) or 'not specified'
+    education_field = ', '.join(with_typed_other(user_data.get('education_field'), user_data.get('answers'), 'QO5_other')) or 'not specified'
     route_guidance, goal_guidance = _first_step_context(user_data)
     related = ", ".join(direction.get('related') or []) or "none found"
     prompt = (
@@ -1857,7 +1857,7 @@ def generate_student_track(user_data: dict, summary: dict, careers: list, locale
     top_strengths = summary.get('strengths', {}).get('top_strengths', [])
     top_values    = summary.get('values', {}).get('top_values', [])
     careers_text  = "\n".join(f" - {c['title']} ({c['sector']})" for c in careers[:career_count])
-    education_field = ', '.join(user_data.get('education_field') or []) or 'not yet decided'
+    education_field = ', '.join(with_typed_other(user_data.get('education_field'), user_data.get('answers'), 'QO5_other')) or 'not yet decided'
     is_high_school = user_data.get('current_stage') in MAJORS_STAGES
 
     prompt = (
@@ -1955,7 +1955,7 @@ def generate_certifications(user_data: dict, summary: dict, careers: list, local
     sections for this stage, this is the net-new content."""
     top_strengths = summary.get('strengths', {}).get('top_strengths', [])
     careers_text  = "\n".join(f" - {c['title']} ({c['sector']})" for c in careers[:career_count])
-    education_field = ', '.join(user_data.get('education_field') or []) or 'not specified'
+    education_field = ', '.join(with_typed_other(user_data.get('education_field'), user_data.get('answers'), 'QO5_other')) or 'not specified'
 
     is_student = user_data.get('current_stage') in STILL_ENROLLED_STAGES
     prompt = (

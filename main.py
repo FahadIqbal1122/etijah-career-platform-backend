@@ -313,7 +313,7 @@ class SubmitRequest(BaseModel):
     # (student-track/certifications/ai-impact/ai-content), so constraining it
     # here closes that off as a prompt-injection surface, not just a length cap.
     education_field: list[Literal["business", "engineering", "computer_science", "medicine",
-        "sciences", "humanities", "arts", "education", "law", "not_applicable"]] = Field(max_length=2)
+        "sciences", "humanities", "arts", "education", "law", "other", "not_applicable"]] = Field(max_length=2)
     # Whether the user's field of study (education_field) was their own choice —
     # relevant especially for Saudi users, where university placement is often
     # not a free choice. major_choice_reason is only meaningful when this is 'no'.

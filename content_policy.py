@@ -121,6 +121,21 @@ def is_clean_text(text: str | None) -> bool:
     joined = " ".join(tokens)
     return not any(" " in bad and bad in joined for bad in _PROFANE_AR)
 
+def with_typed_other(values, answers, answer_key: str) -> list[str]:
+    """Selected option values with a bare 'other' replaced by what the user typed for it (answers[answer_key]).
+    The typed text goes into AI prompts, so it is whitespace-collapsed, capped and run through the content
+    filters; if it fails them, the 'other' entry is dropped rather than passed on."""
+    out: list[str] = []
+    for v in (values or []):
+        if v != 'other':
+            out.append(v)
+            continue
+        typed = re.sub(r'\s+', ' ', str((answers or {}).get(answer_key) or '')).strip()[:60]
+        if len(typed) >= 2 and is_appropriate(typed) and is_clean_text(typed):
+            out.append(typed)
+    return out
+
+
 def clean_direction_label(text: str | None) -> str | None:
     """Sanitised direction label, or None if it should be rejected."""
     if not isinstance(text, str):
