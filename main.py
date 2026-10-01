@@ -22,7 +22,7 @@ from smtp_service import send_report_email, send_feedback_email, send_results_re
 import httpx, hmac, hashlib, json, secrets, time
 from coaching_methodology import METHODOLOGY_DOC
 from coaching_pipeline import chunk_transcript, embed_and_store_chunks, client, embed_country_profile, sync_country_profile_embedding, sync_career_embedding, _gemini_embed
-from content_policy import add_student_track_links, section_order, job_posted_date, is_job_fresh, job_requirements as parse_job_requirements, meets_requirements, MAX_EXPERIENCE_MONTHS_EARLY_CAREER, MAX_EXPERIENCE_MONTHS_INTERNSHIP, EDUCATION_RANK, clean_typed_text, clean_direction_label, direction_key, resolve_route, MAJORS_STAGES, CERTIFICATION_STAGES, NO_LISTINGS_STAGES, NO_COMPANIES_STAGES, is_appropriate, is_region_eligible, is_seniority_appropriate, STILL_ENROLLED_STAGES, ENTERING_MARKET_STAGES, PROFESSIONAL_STAGES, CULTURAL_GUARDRAIL
+from content_policy import drop_weak_matches, add_student_track_links, section_order, job_posted_date, is_job_fresh, job_requirements as parse_job_requirements, meets_requirements, MAX_EXPERIENCE_MONTHS_EARLY_CAREER, MAX_EXPERIENCE_MONTHS_INTERNSHIP, EDUCATION_RANK, clean_typed_text, clean_direction_label, direction_key, resolve_route, MAJORS_STAGES, CERTIFICATION_STAGES, NO_LISTINGS_STAGES, NO_COMPANIES_STAGES, is_appropriate, is_region_eligible, is_seniority_appropriate, STILL_ENROLLED_STAGES, ENTERING_MARKET_STAGES, PROFESSIONAL_STAGES, CULTURAL_GUARDRAIL
 from ai_provider import get_ai_provider, invalidate_ai_provider_cache, AI_PROVIDER_KEY, VALID_PROVIDERS
 
 load_dotenv()
@@ -1242,7 +1242,7 @@ def get_career_recommendations(response_id: str, locale: str | None = None, user
     if tier == "free" and not _is_admin(user):
         for k in ("week_plan", "weeks_2_4", "month_1", "months_2_3", "months_4_6"):
             action_plan.pop(k, None)
-    recs = ai_content.get("career_recommendations") or []
+    recs = drop_weak_matches(ai_content.get("career_recommendations") or [])
     if tier == "free" and not _is_admin(user):
         recs = [{k: v for k, v in r.items() if k != "next_steps"} if isinstance(r, dict) else r for r in recs]
     return {

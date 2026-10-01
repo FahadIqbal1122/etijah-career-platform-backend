@@ -23,7 +23,7 @@ from db_client import disable_http2
 from scoring_engine import build_framework_output, score_careers, get_career_semantic_scores, COUNTRY_CODE_MAP
 from coaching_pipeline import _gemini_embed, client as anthropic_client
 from scoring_engine import extract_specialisms, enrich_profile, recommend_courses
-from content_policy import opportunity_link, major_link, resolve_route, section_order, should_show_entrepreneurship, is_appropriate, with_typed_other, stage_text, typed_goal, typed_other, EARLY_STAGES, CULTURAL_GUARDRAIL, STILL_ENROLLED_STAGES, ENTERING_MARKET_STAGES, PROFESSIONAL_STAGES, MAJORS_STAGES, CERTIFICATION_STAGES, NO_LISTINGS_STAGES, NO_COMPANIES_STAGES
+from content_policy import drop_weak_matches, opportunity_link, major_link, resolve_route, section_order, should_show_entrepreneurship, is_appropriate, with_typed_other, stage_text, typed_goal, typed_other, EARLY_STAGES, CULTURAL_GUARDRAIL, STILL_ENROLLED_STAGES, ENTERING_MARKET_STAGES, PROFESSIONAL_STAGES, MAJORS_STAGES, CERTIFICATION_STAGES, NO_LISTINGS_STAGES, NO_COMPANIES_STAGES
 from ai_provider import get_ai_provider
 
 # Self-contained client (like ai_provider.py / smtp_service.py) purely for the
@@ -206,7 +206,7 @@ UI_TEXT = {
         'sector_lo': 'Public', 'sector_hi': 'Private', 'mobility_lo': 'Local', 'mobility_hi': 'International',
         'prior_experience': 'Prior Experience', 'risk_tolerance': 'Risk Tolerance', 'portfolio_interest': 'Portfolio Interest',
         'match': 'MATCH', 'development_tip': 'Development tip:',
-        'risk_suffix': 'RISK',
+        'risk_suffix': 'RISK', 'risk_label': 'AI impact risk',
         'group_build': 'Build on what you have', 'group_paths': 'Paths you may not have considered', 'rec_gap_build': 'Gap to close', 'rec_gap_paths': 'What it takes to get there', 'rec_next': 'What you can do now', 'fit_tag_strong_fit': 'Strong fit', 'fit_tag_worth_exploring': 'Worth exploring',
         'direction_tag_builds_on_background': 'Builds on your background', 'direction_tag_new_direction': 'New direction',
         'protected_skills_label': 'Human skills that stay valuable',
@@ -269,7 +269,7 @@ UI_TEXT = {
         'sector_lo': 'حكومي', 'sector_hi': 'خاص', 'mobility_lo': 'محلي', 'mobility_hi': 'دولي',
         'prior_experience': 'خبرة سابقة', 'risk_tolerance': 'تقبّل المخاطرة', 'portfolio_interest': 'الاهتمام بمشاريع متعددة',
         'match': 'نسبة التوافق', 'development_tip': 'نصيحة للتطوير:',
-        'risk_suffix': 'المخاطر',
+        'risk_suffix': 'المخاطر', 'risk_label': 'خطر تأثير الذكاء الاصطناعي',
         'group_build': 'ابنِ على ما لديك', 'group_paths': 'مسارات ربما لم تفكر بها', 'rec_gap_build': 'الفجوة التي تسدّها', 'rec_gap_paths': 'ما يلزم للوصول إليه', 'rec_next': 'ما يمكنك فعله الآن', 'fit_tag_strong_fit': 'تطابق قوي', 'fit_tag_worth_exploring': 'يستحق الاستكشاف',
         'direction_tag_builds_on_background': 'يبني على خلفيتك', 'direction_tag_new_direction': 'اتجاه جديد',
         'protected_skills_label': 'مهارات إنسانية تبقى ذات قيمة',
@@ -912,9 +912,12 @@ def _bar(score: float, color: str = "#00c9a7") -> str:
 RISK_LABELS_AR = {'low': 'منخفضة', 'medium': 'متوسطة', 'high': 'عالية'}
 
 def _risk_badge(risk: str, locale: str = 'en') -> str:
+    # Says which risk it is ("AI impact risk: Medium"), not just "MEDIUM RISK".
     tone = {'low': 'green', 'medium': 'amber', 'high': 'rose'}.get(risk, 'gray')
-    label = f'{RISK_LABELS_AR.get(risk, risk or "")} {UI_TEXT["ar"]["risk_suffix"]}' if locale == 'ar' \
-        else f'{(risk or "").upper()} {UI_TEXT["en"]["risk_suffix"]}'
+    if locale == 'ar':
+        label = f'{UI_TEXT["ar"]["risk_label"]}: {LEVEL_LABELS_AR.get(risk, risk or "")}'
+    else:
+        label = f'{UI_TEXT["en"]["risk_label"]}: {(risk or "").capitalize()}'
     return f'<span class="tag tag-{tone}" style="white-space:nowrap;">{label}</span>'
 
 LEVEL_LABELS_AR = {'high': 'مرتفع', 'medium': 'متوسط', 'low': 'منخفض'}
@@ -1177,7 +1180,7 @@ def build_html_report(user_data: dict, summary: dict, raw_scores: list, ai: dict
     # (in or near their current field) and "Paths you may not have considered". Group order follows
     # their goal (a different direction leads with the paths). High-school users have no field to
     # build on, so they get a single list; older cached reports without tags also stay flat.
-    recs = [_as_dict(r) for r in _as_list(ai.get('career_recommendations'))[:career_rec_cap]]
+    recs = [_as_dict(r) for r in drop_weak_matches(_as_list(ai.get('career_recommendations')))[:career_rec_cap]]
     build_recs = [r for r in recs if r.get('direction_tag') == 'builds_on_background']
     path_recs = [r for r in recs if r.get('direction_tag') == 'new_direction']
     can_group = (
@@ -1312,7 +1315,12 @@ def build_html_report(user_data: dict, summary: dict, raw_scores: list, ai: dict
 
     # ── AI impact cards ───────────────────────────────────────────────────────
     ai_impact_cards = ""
-    for c in (ai_impact or {}).get('careers', [])[:ai_impact_cap]:
+    # Only the careers that are shown as cards (weak matches are dropped from the list); if titles do not line up
+    # (older or translated reports), keep them all rather than show an empty page.
+    _shown = {_tkey(r.get('title')) for r in recs}
+    _impact_all = [c for c in _as_list((ai_impact or {}).get('careers')) if isinstance(c, dict)]
+    _impact_shown = [c for c in _impact_all if _tkey(c.get('title')) in _shown] or _impact_all
+    for c in _impact_shown[:ai_impact_cap]:
         pill_margin = 'margin:2px 0 2px 4px;' if locale == 'ar' else 'margin:2px 4px 2px 0;'
         protected_pills = "".join(
             f'<span class="tag tag-green" style="{pill_margin}">{s}</span>'

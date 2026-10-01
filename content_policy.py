@@ -477,3 +477,20 @@ def add_student_track_links(track: dict | None) -> dict | None:
             {**m, "link": major_link(m.get("name"))} if isinstance(m, dict) else m for m in track["majors"]
         ]
     return out
+
+
+# Careers that match below this are not worth a card: a weak match on the page only makes the report longer and the
+# list less believable. At least MIN_CAREERS_SHOWN are always kept (best first, in the order given) so a person with
+# unusual answers never ends up with an empty list.
+MIN_MATCH_SHOWN = 50
+MIN_CAREERS_SHOWN = 3
+
+def drop_weak_matches(recs: list) -> list:
+    recs = list(recs or [])
+    def score(r):
+        try:
+            return float(r.get("match_score")) if isinstance(r, dict) and r.get("match_score") is not None else None
+        except (TypeError, ValueError):
+            return None
+    strong = [r for r in recs if (score(r) is None or score(r) >= MIN_MATCH_SHOWN)]
+    return strong if len(strong) >= MIN_CAREERS_SHOWN else recs[:max(MIN_CAREERS_SHOWN, len(strong))]
