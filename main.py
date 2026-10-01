@@ -46,6 +46,11 @@ class CatchAllMiddleware(BaseHTTPMiddleware):
         try:
             return await call_next(request)
         except Exception as e:
+            # A lookup of an id that does not exist (0 rows, PGRST116) or is not a valid UUID (22P02) is the
+            # caller's mistake (an old link, a typo, a probe), not a server fault: answer 404 and keep it out of
+            # the admin Bugs tab, which is for real faults.
+            if getattr(e, "code", None) in ("PGRST116", "22P02"):
+                return JSONResponse(status_code=404, content={"detail": "No results found for this response"})
             traceback.print_exc()
             # Best-effort: these are uncaught 500s that bypass send_failure_alert
             # entirely (no @app-level try/except reported them), so without this
