@@ -511,6 +511,9 @@ STUDY_YEARS = ['year_1', 'year_2', 'year_3', 'year_4', 'final_year', 'postgradua
 
 def extract_study_year(answers) -> str | None:
     v = answers.get('QOYR') if isinstance(answers, dict) else None
+    # "Longer than that, or something else" (typed text is cleaned at submit): studying past a standard degree.
+    if v == 'other':
+        return 'extended'
     return v if v in STUDY_YEARS else None
 
 def extract_target_country(answers) -> str | None:

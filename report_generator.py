@@ -169,7 +169,7 @@ UI_TEXT = {
         'sec07': 'Entrepreneurial Profile', 'sec08': 'Careers that fit you',
         'sec09': 'How AI may change your careers',
         'sec_jobs': 'Job Listings', 'sec_jobs_internships': 'Internships & Exposure',
-        'sec_student_track': 'Subjects and ways to explore',
+        'sec_student_track': 'Fields of study and ways to explore',
         'sec_certifications': 'Certifications to Pursue', 'sec_career_path': 'Your Path Forward',
         'sec_companies': 'Companies to Target', 'sec_courses': 'Recommended Courses',
         'course_for': 'For', 'course_about': 'What it is about', 'course_why': 'Why it is suggested',
@@ -177,7 +177,7 @@ UI_TEXT = {
         'howto_title': 'How to read this report',
         'howto_intro': 'This is not a test with right or wrong answers. It shows what your answers say about you and what that could mean for your future.',
         'howto_careers': 'Careers that fit you: how well each one matches you, what to build, one thing to do now, and how AI may change it.',
-        'howto_majors': 'Subjects to explore: university subjects that lead to those careers, with a simple way to try each one before you choose.',
+        'howto_majors': 'Fields of study to explore: degrees and fields that lead to those careers, with a simple way to try each one before you choose.',
         'howto_plan': 'Your plan: one small step for this week, then a 90-day path.',
         'howto_profile': 'Your profile, at the end: your interests, values, strengths and work style. This is why the careers were chosen.',
         'intro_careers': 'We compared your personality, values and strengths with each career. The percentage shows how close the fit is. Each card also shows how AI may change that career.',
@@ -240,7 +240,7 @@ UI_TEXT = {
         'howto_title': 'كيف تقرأ هذا التقرير',
         'howto_intro': 'هذا ليس اختباراً له إجابات صحيحة أو خاطئة. إنه يوضح ما تقوله إجاباتك عنك وما قد يعنيه ذلك لمستقبلك.',
         'howto_careers': 'مسارات مهنية تناسبك: مدى توافق كل مسار معك، وما تحتاج إلى بنائه، وخطوة تفعلها الآن، وكيف قد يغيّره الذكاء الاصطناعي.',
-        'howto_majors': 'مواد للاستكشاف: تخصصات جامعية تقود إلى هذه المسارات، مع طريقة بسيطة لتجربة كل منها قبل أن تختار.',
+        'howto_majors': 'تخصصات للاستكشاف: تخصصات جامعية تقود إلى هذه المسارات، مع طريقة بسيطة لتجربة كل منها قبل أن تختار.',
         'howto_plan': 'خطتك: خطوة صغيرة لهذا الأسبوع، ثم مسار لـ 90 يوماً.',
         'howto_profile': 'ملفك في النهاية: اهتماماتك وقيمك ونقاط قوتك وأسلوب عملك. ولهذا اختيرت هذه المسارات.',
         'intro_careers': 'قارنّا شخصيتك وقيمك ونقاط قوتك مع كل مسار مهني. تُظهر النسبة مدى قرب التوافق، وتوضح كل بطاقة كيف قد يغيّر الذكاء الاصطناعي هذا المسار.',
@@ -304,6 +304,7 @@ CAREER_DIRECTION_LABELS = {
 STUDY_YEAR_LABELS = {
     'year_1': "1st year", 'year_2': "2nd year", 'year_3': "3rd year", 'year_4': "4th year",
     'final_year': "final year", 'postgraduate': "postgraduate (master's / PhD)",
+    'extended': "studying longer than a standard degree (5th year or later)",
 }
 
 ARABIC_LANGUAGE_INSTRUCTION = (
@@ -551,6 +552,7 @@ def _first_step_context(user_data: dict) -> tuple[str, str]:
                 'year_2': "They are early in their degree: focus on exploring the field, building skills and testing their interest.\n",
                 'year_3': "They are mid-degree: focus on building real experience (a project, a short internship, a society role) before their final year.\n",
                 'year_4': "They are mid-degree: focus on building real experience (a project, a short internship, a society role) before their final year.\n",
+                'extended': "They have been studying longer than a standard degree: focus on finishing, on real experience (a project, an internship) and on the step after graduating (a CV, graduate roles, a conversation with someone in the field).\n",
                 'final_year': "They are in their FINAL year: include preparation for the step after graduating (a CV, graduate roles and internships that lead to jobs, a conversation with someone in the field).\n",
                 'postgraduate': "They are a postgraduate student: include how their research or thesis connects to work, and preparation for the step after graduating.\n",
             }.get(user_data.get('study_year'), "")

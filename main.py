@@ -2600,7 +2600,7 @@ def _search_matching_jobs(response_id: str) -> list[dict] | None:
     # their top career); still-enrolled users get internships only; everyone else regular jobs.
     # Final-year and postgraduate students are about to enter the market, so they also get entry-level jobs
     # (one extra search for their top career) alongside their internships.
-    final_year_student = profile.data.get('current_stage') == 'university' and profile.data.get('study_year') in ('final_year', 'postgraduate')
+    final_year_student = profile.data.get('current_stage') == 'university' and profile.data.get('study_year') in ('final_year', 'postgraduate', 'extended')
     searches = [(career, is_still_enrolled) for career in top3]
     if is_early_career and top3:
         searches.append((top3[0], True))
