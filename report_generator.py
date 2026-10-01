@@ -1827,7 +1827,7 @@ def generate_ai_impact(user_data: dict, summary: dict, careers: list, locale: st
     f"Education field: {education_field}\n"
     + (f"Specific area of study: {', '.join(user_data['education_specialisms'])}\n" if user_data.get('education_specialisms') else "")
     + f"What they want help with: {CAREER_DIRECTION_LABELS.get(user_data.get('career_direction'), 'Not specified')}\n"
-    f"Country: {user_data.get('country', 'GCC')}\n\n"
+    f"Country: {user_data.get('country', 'GCC')}{country_extra(user_data)}\n\n"
     "=== TOP MATCHED CAREERS ===\n"
     f"{careers_text}\n\n"
     "=== OUTPUT ===\n"
@@ -1922,7 +1922,7 @@ def generate_direction_plan(user_data: dict, summary: dict, direction: dict, loc
         f"RIASEC top types: {', '.join(riasec_types)}\n"
         f"Top strengths: {', '.join(top_strengths)}\n"
         f"Top values: {', '.join(top_values)}\n"
-        f"Country: {user_data.get('country', 'GCC')}\n\n"
+        f"Country: {user_data.get('country', 'GCC')}{country_extra(user_data)}\n\n"
         "=== FIRST STEP, DAYS 2-7 AND 90-DAY ROADMAP ===\n"
         + route_guidance + goal_guidance
         + "Rules for first_step and every week_plan entry: state what to do in concrete terms with a number or object "
@@ -1979,7 +1979,7 @@ def generate_student_track(user_data: dict, summary: dict, careers: list, locale
         f"RIASEC top types: {', '.join(riasec_types)}\n"
         f"Top strengths: {', '.join(top_strengths)}\n"
         f"Top values: {', '.join(top_values)}\n"
-        f"Country: {user_data.get('country', 'GCC')}\n\n"
+        f"Country: {user_data.get('country', 'GCC')}{country_extra(user_data)}\n\n"
         "=== TOP MATCHED CAREERS ===\n"
         f"{careers_text}\n\n"
         "=== OUTPUT ===\n"
@@ -2079,7 +2079,7 @@ def generate_certifications(user_data: dict, summary: dict, careers: list, local
         + (f"Specific area of study: {', '.join(user_data['education_specialisms'])}\n" if user_data.get('education_specialisms') else "")
         + (f"Year of study: {STUDY_YEAR_LABELS[user_data['study_year']]} (pick certifications they can realistically complete before or soon after graduating)\n" if user_data.get('study_year') in STUDY_YEAR_LABELS else "")
         + f"Top strengths: {', '.join(top_strengths)}\n"
-        f"Country: {user_data.get('country', 'GCC')}\n\n"
+        f"Country: {user_data.get('country', 'GCC')}{country_extra(user_data)}\n\n"
         "=== TOP MATCHED CAREERS ===\n"
         f"{careers_text}\n\n"
         "=== OUTPUT ===\n"
@@ -2102,6 +2102,11 @@ def generate_certifications(user_data: dict, summary: dict, careers: list, local
     )
     return _validate_certifications(_generate_json(prompt, label="certifications"), top)
 
+
+def country_extra(user_data) -> str:
+    """One extra prompt line when they typed 'Another country' for where to work (cleaned at submit)."""
+    c = user_data.get('work_country_other')
+    return (f"\nWants to work in: {c} (outside the GCC; keep advice general where GCC market data does not apply)" if c else "")
 
 def _validate_certifications(result, top: list) -> dict:
     """Ties each certification to one of the top careers (the model refers to it by number, so translating a title cannot
@@ -2304,7 +2309,7 @@ def generate_career_path(user_data: dict, summary: dict, careers: list, locale: 
         f"Work experience: {user_data.get('experience_level', 'N/A')}\n"
         f"Top strengths: {', '.join(top_strengths)}\n"
         f"Top values: {', '.join(top_values)}\n"
-        f"Country: {user_data.get('country', 'GCC')}\n\n"
+        f"Country: {user_data.get('country', 'GCC')}{country_extra(user_data)}\n\n"
         "=== TOP MATCHED CAREERS ===\n"
         f"{careers_text}\n\n"
         f"=== FRAMING ===\n{framing}\n\n"

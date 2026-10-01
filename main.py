@@ -153,6 +153,17 @@ def _assert_can_view(owner_user_id: str | None, user):
     if user.id != owner_user_id and (user.app_metadata or {}).get("role") != "admin":
         raise HTTPException(status_code=404, detail="No results found for this response")
 
+def _assert_can_view_shared(owner_user_id: str | None, user):
+    """Read-only report views open for anyone holding the link, so people can share their report.
+    Safe because the response id is a random UUID (unguessable) and the owner's email is hidden
+    from other viewers (see get_results). Anything that writes, emails or spends the owner's
+    quota (feedback, building plans, emailing the report, force refresh) still uses
+    _assert_can_view / _assert_can_force_refresh."""
+    return
+
+def _is_owner_or_admin(owner_user_id: str | None, user) -> bool:
+    return bool(user) and (user.id == owner_user_id or (user.app_metadata or {}).get("role") == "admin")
+
 def _is_admin(user) -> bool:
     return bool(user) and (user.app_metadata or {}).get("role") == "admin"
 
@@ -792,7 +803,7 @@ def get_results(response_id: str, user=Depends(get_optional_user)):
         .eq('id', response_id).single())
     if not profile.data:
         raise HTTPException(status_code=404, detail="No results found for this response")
-    _assert_can_view(profile.data.get('user_id'), user)
+    _assert_can_view_shared(profile.data.get('user_id'), user)
 
     rows = _execute_with_retry(supabase.table('assessment_results')
         .select('*')
@@ -803,7 +814,8 @@ def get_results(response_id: str, user=Depends(get_optional_user)):
     summary = build_framework_output(rows.data)
     tier = get_effective_tier(profile.data.get('user_id'))
     return {
-        'results': rows.data, 'summary': summary, 'email': profile.data.get('email'),
+        'results': rows.data, 'summary': summary,
+        'email': profile.data.get('email') if (not profile.data.get('user_id') or _is_owner_or_admin(profile.data.get('user_id'), user)) else None,
         'tier': tier, 'locale': profile.data.get('locale') or 'en',
         'is_still_enrolled': profile.data.get('current_stage') in STILL_ENROLLED_STAGES,
         'route': resolve_route(profile.data.get('current_stage')),
@@ -1182,7 +1194,7 @@ def get_career_suggestions(response_id: str, user=Depends(get_optional_user)):
         .eq('id', response_id).single().execute()
     if not profile.data:
         raise HTTPException(status_code=404, detail="No results found for this response")
-    _assert_can_view(profile.data.get('user_id'), user)
+    _assert_can_view_shared(profile.data.get('user_id'), user)
 
     summary = build_framework_output(rows.data)
     careers = supabase.table('careers').select('*').eq('is_approved', True).execute().data or []
@@ -1207,7 +1219,7 @@ def get_career_recommendations(response_id: str, locale: str | None = None, user
     if not owner_row.data:
         raise HTTPException(status_code=404, detail="No results found for this response")
     owner_user_id = owner_row.data.get('user_id')
-    _assert_can_view(owner_user_id, user)
+    _assert_can_view_shared(owner_user_id, user)
     tier = get_effective_tier(owner_user_id)
 
     from report_generator import get_or_generate_ai_content
@@ -1245,7 +1257,7 @@ def get_ai_impact(response_id: str, force: bool = False, locale: str | None = No
         raise HTTPException(status_code=404, detail="No results found for this response")
     enrich_profile(profile_row.data)
     owner_user_id = profile_row.data.get('user_id')
-    _assert_can_view(owner_user_id, user)
+    _assert_can_view_shared(owner_user_id, user)
     if force:
         _assert_can_force_refresh(owner_user_id, user)
     tier = get_effective_tier(owner_user_id)
@@ -1314,7 +1326,7 @@ def get_student_track(response_id: str, force: bool = False, locale: str | None 
         raise HTTPException(status_code=404, detail="No results found for this response")
     enrich_profile(profile_row.data)
     owner_user_id = profile_row.data.get('user_id')
-    _assert_can_view(owner_user_id, user)
+    _assert_can_view_shared(owner_user_id, user)
     if force:
         _assert_can_force_refresh(owner_user_id, user)
 
@@ -1359,7 +1371,7 @@ def get_certifications(response_id: str, force: bool = False, locale: str | None
         raise HTTPException(status_code=404, detail="No results found for this response")
     enrich_profile(profile_row.data)
     owner_user_id = profile_row.data.get('user_id')
-    _assert_can_view(owner_user_id, user)
+    _assert_can_view_shared(owner_user_id, user)
     if force:
         _assert_can_force_refresh(owner_user_id, user)
 
@@ -1407,7 +1419,7 @@ def get_career_path(response_id: str, force: bool = False, locale: str | None = 
         raise HTTPException(status_code=404, detail="No results found for this response")
     enrich_profile(profile_row.data)  # country to work in (QOTC)
     owner_user_id = profile_row.data.get('user_id')
-    _assert_can_view(owner_user_id, user)
+    _assert_can_view_shared(owner_user_id, user)
     if force:
         _assert_can_force_refresh(owner_user_id, user)
 
@@ -1572,7 +1584,7 @@ def get_direction(response_id: str, background_tasks: BackgroundTasks, locale: s
     if not owner_row.data:
         raise HTTPException(status_code=404, detail="No results found for this response")
     owner_user_id = owner_row.data.get('user_id')
-    _assert_can_view(owner_user_id, user)
+    _assert_can_view_shared(owner_user_id, user)
     try:
         rows = _execute_with_retry(supabase.table('direction_plans')
             .select('*').eq('response_id', response_id).eq('is_selected', True)).data or []
@@ -1706,7 +1718,7 @@ def get_report(response_id: str, locale: str | None = None, user=Depends(get_opt
     if not owner_row.data:
         raise HTTPException(status_code=404, detail="No results found for this response")
     owner_user_id = owner_row.data.get('user_id')
-    _assert_can_view(owner_user_id, user)
+    _assert_can_view_shared(owner_user_id, user)
     tier = get_effective_tier(owner_user_id)
 
     if locale not in (None, 'en', 'ar'):
@@ -2242,7 +2254,7 @@ def get_course_recommendations(response_id: str, locale: str | None = None, user
     if not rows.data or not profile.data:
         raise HTTPException(status_code=404, detail="No results found for this response")
     owner_user_id = profile.data.get('user_id')
-    _assert_can_view(owner_user_id, user)
+    _assert_can_view_shared(owner_user_id, user)
     if get_effective_tier(owner_user_id) == "free":
         return []
     summary = build_framework_output(rows.data)
@@ -2689,7 +2701,7 @@ def get_job_listings(response_id: str, force: bool = False, user=Depends(get_opt
     owner_row = _execute_with_retry(supabase.table('assessment_responses').select('user_id,current_stage').eq('id', response_id).single())
     if not owner_row.data:
         raise HTTPException(status_code=404, detail="No results found for this response")
-    _assert_can_view(owner_row.data.get('user_id'), user)
+    _assert_can_view_shared(owner_row.data.get('user_id'), user)
     if force:
         _assert_can_force_refresh(owner_row.data.get('user_id'), user)
     # High-school users see majors and courses instead — no jobs or internships (and no JSearch spend).
@@ -2908,7 +2920,7 @@ def get_companies_suggestions(response_id: str, user=Depends(get_optional_user))
         raise HTTPException(status_code=404, detail="No results found for this response")
     enrich_profile(profile.data)  # country to work in (QOTC)
     owner_user_id = profile.data.get('user_id')
-    _assert_can_view(owner_user_id, user)
+    _assert_can_view_shared(owner_user_id, user)
     tier = get_effective_tier(owner_user_id)
     if tier == "free":
         return []
