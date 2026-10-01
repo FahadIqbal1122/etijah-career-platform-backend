@@ -2621,7 +2621,7 @@ def _search_matching_jobs(response_id: str) -> list[dict] | None:
         try:
             if internship_mode:
                 query_prefix = "internship "
-                job_requirements = "internship"
+                job_requirements = None  # "internship" is not a valid job_requirements value (JSearch answers 400); use employment_types instead
             elif is_early_career or final_year_student:
                 query_prefix = "entry level graduate "
                 job_requirements = "under_3_years_experience,no_experience,no_degree"
@@ -2639,6 +2639,7 @@ def _search_matching_jobs(response_id: str) -> list[dict] | None:
                     # postings for students/fresh grads rather than relying
                     # only on the post-fetch title/description filter below.
                     **({"job_requirements": job_requirements} if job_requirements else {}),
+                    **({"employment_types": "INTERN"} if internship_mode else {}),
                 },
                 headers={
                     "X-RapidAPI-Key": rapidapi_key,

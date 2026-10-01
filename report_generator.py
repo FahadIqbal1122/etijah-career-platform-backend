@@ -1902,7 +1902,7 @@ def get_or_generate_ai_impact(response_id: str, summary: dict, profile_data: dic
         return ai_impact_en
 
     if force:
-        ai_impact_ar = _translate_piece_with_retry(ai_impact_en, 'ar')
+        ai_impact_ar = _translate_ai_impact(ai_impact_en, 'ar')
         _execute_with_retry(supabase_client.table('assessment_responses')
             .update({cache_col_ar: ai_impact_ar}).eq('id', response_id))
         return ai_impact_ar
@@ -1911,7 +1911,7 @@ def get_or_generate_ai_impact(response_id: str, summary: dict, profile_data: dic
     if cached_ar:
         return cached_ar
     return _generate_and_cache(supabase_client, response_id, cache_col_ar,
-        lambda: _translate_piece_with_retry(ai_impact_en, 'ar'))
+        lambda: _translate_ai_impact(ai_impact_en, 'ar'))
 
 
 def generate_direction_plan(user_data: dict, summary: dict, direction: dict, locale: str = 'en') -> dict:
@@ -2467,6 +2467,24 @@ def _translate_careers_with_retry(careers: list, target_locale: str, max_attempt
             last_err = e
     raise last_err
 
+def _translate_ai_impact(data: dict, target_locale: str = 'ar') -> dict:
+    """The AI-impact JSON (up to 8 careers, each with several lists) is too big to translate in one call: in Arabic
+    it ran past the request timeout again and again, so a results page waited many minutes. Translate the top-level
+    fields and each career as its own small piece, all at once; wall-clock time is that of the slowest piece."""
+    careers = data.get('careers') if isinstance(data.get('careers'), list) else []
+    top = {k: v for k, v in data.items() if k != 'careers'}
+    if not careers:
+        return _translate_piece_with_retry(data, target_locale)
+    with ThreadPoolExecutor(max_workers=len(careers) + 1) as pool:
+        top_future = pool.submit(_translate_piece_with_retry, top, target_locale) if top else None
+        career_futures = [pool.submit(_translate_careers_with_retry, [c], target_locale) for c in careers]
+        merged = dict(top_future.result()) if top_future else {}
+        translated: list = []
+        for f in career_futures:
+            translated.extend(f.result())
+    merged['careers'] = translated
+    return merged
+
 def translate_ai_content(data: dict, target_locale: str = 'ar') -> dict:
     """ai_content carries the same ~20 narrative fields + up to 8 career objects that made
     generate_ai_content unreliable as a single call (see its docstring). Translation is worse:
@@ -2782,7 +2800,7 @@ def create_report(response_id: str, supabase_client, tier: str = "launchpad", lo
             with ThreadPoolExecutor(max_workers=2) as pool:
                 impact_future = pool.submit(
                     lambda: profile.data.get(impact_col_ar) or _generate_and_cache(supabase_client, response_id,
-                        impact_col_ar, lambda: _translate_piece_with_retry(ai_impact, 'ar')))
+                        impact_col_ar, lambda: _translate_ai_impact(ai_impact, 'ar')))
                 content_future = pool.submit(
                     lambda: profile.data.get(content_col_ar) or _generate_and_cache(supabase_client, response_id,
                         content_col_ar, lambda: translate_ai_content(ai_content, 'ar')))
