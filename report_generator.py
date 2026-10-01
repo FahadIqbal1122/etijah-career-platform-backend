@@ -538,6 +538,17 @@ def _generate_json(prompt: str, retries: int = 1, timeout_s: float | None = None
 
     raise fallback_err
 
+EXPERIENCE_LABELS = {
+    'no_experience': 'no work experience yet',
+    'internships_only': 'only internships or training placements so far (no full-time job yet)',
+    'up_to_1yr': 'less than 1 year', 'up_to_3yrs': '1-3 years', 'up_to_5yrs': '3-5 years',
+    'up_to_10yrs': '5-10 years', '10yrs_plus': '10+ years',
+}
+
+def _experience_text(user_data: dict) -> str:
+    v = user_data.get('experience_level')
+    return EXPERIENCE_LABELS.get(v, v) or 'N/A'
+
 def _first_step_context(user_data: dict) -> tuple[str, str]:
     """Stage- and goal-specific guidance text for the first step / 7-day plan prompts (shared by the main
     report and the chosen-direction plan)."""
@@ -622,7 +633,7 @@ def generate_ai_content(user_data: dict, summary: dict, raw_scores: list, career
         + "=== ASSESSMENT DATA ===\n\n"
         f"Name: {user_data['full_name']}\n"
         f"Age: {user_data.get('age') or 'N/A'}\n"
-        f"Work experience: {user_data.get('experience_level') or 'N/A'}\n"
+        f"Work experience: {_experience_text(user_data)}\n"
         f"Current stage: {stage_text(user_data)}\n"
         + (f"Year of study: {STUDY_YEAR_LABELS[user_data['study_year']]}\n" if user_data.get('study_year') in STUDY_YEAR_LABELS else "")
         + ""        f"Education field: {', '.join(with_typed_other(user_data.get('education_field'), user_data.get('answers'), 'QO5_other')) or 'N/A'}\n"
@@ -682,8 +693,10 @@ def generate_ai_content(user_data: dict, summary: dict, raw_scores: list, career
         + route_guidance
         + goal_guidance
         + "Rules for first_step and every week_plan entry:\n"
-        "- State what to do in concrete terms with a number or object (e.g. 'Read three internship postings for "
-        "<one of the matched careers>'), never a vague verb like 'research', 'explore' or 'network more'.\n"
+        "- State what to do in concrete terms with a number or object (e.g. 'A good first step is to read three "
+        "internship postings for <one of the matched careers>'), never a vague verb like 'research', 'explore' or "
+        "'network more'.\n"
+        "- Write every action as friendly advice, not an order. Start with 'A good first step is to…', 'We suggest…', 'It would help to…' or 'You could…', never with a bare verb like 'Find', 'Look up', 'Write', 'Review' or 'Choose'. Only refer to something made on a day that comes EARLIER in the plan.\n"
         "- Say why it helps, tied to their matched careers, education field or career direction preference.\n"
         "- Say what they will PRODUCE (a short list, a comparison table, a draft, a note) so they can see it was done.\n"
         "- Say WHEN to do it and roughly how long it takes. It must be free, doable alone, and take no more than "
@@ -763,10 +776,10 @@ def generate_ai_content(user_data: dict, summary: dict, raw_scores: list, career
         '      {"when": "Days 2-3", "action": "...", "output": "What they will produce"},\n'
         '      {"when": "Day 4", "action": "...", "output": "..."},\n'
         '      {"when": "Days 5-6", "action": "...", "output": "..."},\n'
-        '      {"when": "Day 7", "action": "Review what you produced and choose the next step", "output": "..."}\n'
+        '      {"when": "Day 7", "action": "A good way to end the week is to review what you produced and pick the next step", "output": "..."}\n'
         '    ],\n'
-        '    "weeks_2_4":  ["Specific action 1 (toward the matched careers above)", "Specific action 2", "Specific action 3"],\n'
-        '    "months_2_3": ["Specific action 1 (toward the matched careers above)", "Specific action 2", "Specific action 3"]\n'
+        '    "weeks_2_4":  ["Specific action 1, written as advice (toward the matched careers above)", "Specific action 2", "Specific action 3"],\n'
+        '    "months_2_3": ["Specific action 1, written as advice (toward the matched careers above)", "Specific action 2", "Specific action 3"]\n'
         '  },\n\n'
         '  "closing_message": "2-3 warm encouraging sentences tying back to this persons unique profile."\n'
         "}\n\n"
@@ -780,7 +793,7 @@ def generate_ai_content(user_data: dict, summary: dict, raw_scores: list, career
     # per career on demand instead (direction plans), so they do not need this.
     include_steps = career_count > 2 and user_data.get('current_stage') in EARLY_STAGES
     steps_schema = (
-        ',\n      "next_steps": [ {"step": "one concrete action", "why": "one short sentence on why it matters for this career"} ]'
+        ',\n      "next_steps": [ {"step": "one concrete action written as advice (for example \'Taking a free beginner course in X is a good way to…\')", "why": "one short sentence on why it matters for this career"} ]'
     )
     steps_instruction = (
         "next_steps: for the FIRST THREE careers only (leave it out for the rest), give exactly 3 steps in the order "
@@ -789,7 +802,9 @@ def generate_ai_content(user_data: dict, summary: dict, raw_scores: list, career
         "or a small project. Keep them free or low-cost where possible. Describe a type of course or project (for "
         "example 'a beginner course in data analysis') rather than naming a provider or course you are not certain "
         "exists. Each 'why' says in one plain sentence why that step matters for THIS career and this person. The "
-        "first step should be the same idea as next_action with more detail. Do not repeat the same step across "
+        "first step should be the same idea as next_action with more detail. Write each step as advice, never as an "
+        "order: do not start a step with a bare verb like 'Take', 'Complete', 'Find' or 'Look'; use 'It would help to…', "
+        "'Taking… is recommended', 'A good step is to…'. Do not repeat the same step across "
         "careers; a step that helps several careers should be worded for each one's own reason.\n"
         if include_steps else ""
     )
@@ -1825,7 +1840,7 @@ def generate_ai_impact(user_data: dict, summary: dict, careers: list, locale: st
     '      {"skill": "one skill", "why": "1 sentence: why this skill matters as AI changes this work"}\n'
     '    ],\n'
     '    "exercise": {\n'
-    '      "task": "a small exercise they can finish alone in about 2 hours or less, using a free AI tool where it makes sense, "'
+    '      "task": "a small exercise, written as a suggestion (\'A good exercise would be to…\'), that they can finish alone in about 2 hours or less, using a free AI tool where it makes sense, "'
     '"that practises the skill(s) above",\n'
     '      "work_sample": "what they will have afterwards to show for it (e.g. a before-and-after document with notes on their decisions)"\n'
     '    }\n'
@@ -1858,7 +1873,7 @@ def generate_ai_impact(user_data: dict, summary: dict, careers: list, locale: st
     f"Top strengths: {', '.join(top_strengths)}\n"
     f"Top values: {', '.join(top_values)}\n"
     f"Current stage: {stage_text(user_data)}\n"
-    f"Work experience: {user_data.get('experience_level') or 'N/A'}\n"
+    f"Work experience: {_experience_text(user_data)}\n"
     f"Education field: {education_field}\n"
     + (f"Specific area of study: {', '.join(user_data['education_specialisms'])}\n" if user_data.get('education_specialisms') else "")
     + f"What they want help with: {CAREER_DIRECTION_LABELS.get(user_data.get('career_direction'), 'Not specified')}\n"
@@ -1950,7 +1965,7 @@ def generate_direction_plan(user_data: dict, summary: dict, direction: dict, loc
         + (f"What the report already says about it: {direction['context']}\n" if direction.get('context') else "")
         + "\n=== USER PROFILE ===\n"
         f"Current stage: {stage_text(user_data)}\n"
-        f"Work experience: {user_data.get('experience_level') or 'N/A'}\n"
+        f"Work experience: {_experience_text(user_data)}\n"
         f"Education field: {education_field}\n"
         + (f"Specific area of study: {', '.join(user_data['education_specialisms'])}\n" if user_data.get('education_specialisms') else "")
         + f"What they want help with: {CAREER_DIRECTION_LABELS.get(user_data.get('career_direction'), 'Not specified')}\n"
@@ -1961,7 +1976,8 @@ def generate_direction_plan(user_data: dict, summary: dict, direction: dict, loc
         "=== FIRST STEP, DAYS 2-7 AND 90-DAY ROADMAP ===\n"
         + route_guidance + goal_guidance
         + "Rules for first_step and every week_plan entry: state what to do in concrete terms with a number or object "
-        "(never a vague verb like 'research' or 'explore'); say what they will PRODUCE; first_step also says why it helps "
+        "(never a vague verb like 'research' or 'explore'), written as friendly advice ('A good first step is to…', "
+        "'We suggest…', 'It would help to…'), never as a bare-verb order; say what they will PRODUCE; first_step also says why it helps "
         "and WHEN and roughly how long (free, doable alone, about an hour or less per action). first_step is day 1: do "
         "not repeat it in week_plan (days 2-7). weeks_2_4 and months_2_3 continue after the first week. Never promise a "
         "job, or that the direction is safe or future-proof.\n\n"
@@ -1976,7 +1992,7 @@ def generate_direction_plan(user_data: dict, summary: dict, direction: dict, loc
         '  "reality_check": "1 sentence on entry requirements or market realities in their country, marked as a general outlook, not verified job data",\n'
         '  "first_step": {"action": "...", "why": "...", "output": "...", "when": "...", "worksheet": ["3 prompts"]},\n'
         '  "week_plan": [{"when": "Days 2-3", "action": "...", "output": "..."}, {"when": "Day 4", "action": "...", "output": "..."}, '
-        '{"when": "Days 5-6", "action": "...", "output": "..."}, {"when": "Day 7", "action": "Review what you produced and choose the next step", "output": "..."}],\n'
+        '{"when": "Days 5-6", "action": "...", "output": "..."}, {"when": "Day 7", "action": "A good way to end the week is to review what you produced and pick the next step", "output": "..."}],\n'
         '  "weeks_2_4": ["3 specific actions toward this direction"],\n'
         '  "months_2_3": ["3 specific actions toward this direction, continuing after weeks 2-4"]\n'
         "}\n\n"
@@ -2341,7 +2357,7 @@ def generate_career_path(user_data: dict, summary: dict, careers: list, locale: 
         + (ARABIC_LANGUAGE_INSTRUCTION if locale == 'ar' else "")
         + "=== USER PROFILE ===\n"
         f"Stage: {stage_text(user_data)}\n"
-        f"Work experience: {user_data.get('experience_level', 'N/A')}\n"
+        f"Work experience: {_experience_text(user_data)}\n"
         f"Top strengths: {', '.join(top_strengths)}\n"
         f"Top values: {', '.join(top_values)}\n"
         f"Country: {user_data.get('country', 'GCC')}{country_extra(user_data)}\n\n"
