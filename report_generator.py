@@ -1126,7 +1126,9 @@ def build_html_report(user_data: dict, summary: dict, raw_scores: list, ai: dict
         )
 
     # ── Career recommendation cards ───────────────────────────────────────────
-    risk_by_title = {str(c.get('title', '')).strip().lower(): c.get('ai_risk_level')
+    def _tkey(v) -> str:  # AI text sometimes adds the sector, e.g. "Systems Analyst (Technology)"
+        return re.sub(r"\s*\([^)]*\)\s*$", "", str(v or "")).strip().lower()
+    risk_by_title = {_tkey(c.get('title')): c.get('ai_risk_level')
                      for c in _as_list((ai_impact or {}).get('careers')) if isinstance(c, dict)}
 
     def _career_card(rec: dict) -> str:
@@ -1136,7 +1138,7 @@ def build_html_report(user_data: dict, summary: dict, raw_scores: list, ai: dict
             tag_pills += f'<span class="tag tag-{"green" if rec["fit_tag"] == "strong_fit" else "amber"}">{T["fit_tag_" + rec["fit_tag"]]}</span>'
         if rec.get('direction_tag') in ('builds_on_background', 'new_direction'):
             tag_pills += f'<span class="tag tag-{"purple" if rec["direction_tag"] == "new_direction" else "blue"}">{T["direction_tag_" + rec["direction_tag"]]}</span>'
-        risk = risk_by_title.get(str(rec.get('title', '')).strip().lower())
+        risk = risk_by_title.get(_tkey(rec.get('title')))
         if risk in ('low', 'medium', 'high'):
             tag_pills += _risk_badge(risk, locale)
         gap_label = T['rec_gap_paths'] if rec.get('direction_tag') == 'new_direction' else T['rec_gap_build']
