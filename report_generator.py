@@ -629,6 +629,7 @@ def generate_ai_content(user_data: dict, summary: dict, raw_scores: list, career
             "Be sensitive to this in career framing; don't assume passion for this field.\n"
             if user_data.get('major_was_own_choice') == 'no' else ""
         )
+        + (f"How they describe choosing their field of study, in their own words: {typed_other(user_data.get('answers'), 'QO5A')}\n" if typed_other(user_data.get('answers'), 'QO5A') else "")
         + f"Career direction preference: {CAREER_DIRECTION_LABELS.get(user_data.get('career_direction'), 'Not specified')}\n"
         + (f"What they want help with, in their own words: {typed_goal(user_data.get('answers'))}\n" if typed_goal(user_data.get('answers')) else "")
         + (f"Ideal career structure, in their own words: {typed_other(user_data.get('answers'), 'QO7')}\n" if typed_other(user_data.get('answers'), 'QO7') else "")
