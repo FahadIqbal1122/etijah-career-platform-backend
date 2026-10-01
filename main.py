@@ -14,7 +14,7 @@ import io
 from datetime import datetime, timezone, timedelta
 from collections import Counter
 from fastapi.responses import StreamingResponse
-from report_generator import create_report, _execute_with_retry
+from report_generator import create_report, _execute_with_retry, WRITING_RULES
 from db_client import disable_http2
 from google.api_core.exceptions import GoogleAPICallError
 from requests.exceptions import RequestException
@@ -3018,7 +3018,7 @@ def coach(payload: CoachRequest, user=Depends(get_current_user)):
             for c in country_matches
         )
 
-    system_prompt = f"{METHODOLOGY_DOC}\n\n{CULTURAL_GUARDRAIL}\n\nRelevant past examples:\n{examples}{country_context}"
+    system_prompt = f"{WRITING_RULES}{METHODOLOGY_DOC}\n\n{CULTURAL_GUARDRAIL}\n\nRelevant past examples:\n{examples}{country_context}"
 
     try:
         response = client.messages.create(

@@ -318,6 +318,20 @@ ARABIC_LANGUAGE_INSTRUCTION = (
     "free-text narrative fields.\n\n"
 )
 
+WRITING_RULES = (
+    "WRITING RULES (apply to every sentence you write):\n"
+    "- Write like a career coach explaining things to someone sitting across the table. Explain; do not sell or hype. "
+    "No marketing or sales language (no 'unlock', 'transform', 'supercharge', 'game-changer', 'dream career', "
+    "'world-class', 'cutting-edge', 'powerful', 'exciting opportunity'). Do not promise jobs, salaries or results.\n"
+    "- Use very simple, everyday words that a 16-year-old reading in a second language would understand. Short "
+    "sentences. If you must use a technical term, explain it in a few plain words the first time. Avoid jargon and "
+    "buzzwords (for example 'leverage', 'upskill', 'pivot', 'stakeholders', 'ecosystem', 'competencies', 'trajectory').\n"
+    "- Never tell the person to study at, apply to, or take a programme from a specific university, college, school, "
+    "bootcamp or training company, and never recommend a specific MBA or master's programme. Describe the TYPE of "
+    "option instead (for example 'a short beginner course in data analysis' or 'a bachelor's degree in nursing'). "
+    "Real, existing professional certifications named by their own title are fine.\n\n"
+)
+
 def _as_dict(value) -> dict:
     """Gemini's JSON mode is reliable but not schema-enforced — an occasional
     response (especially after a translate_report_json() re-generation pass)
@@ -460,6 +474,8 @@ def _generate_json(prompt: str, retries: int = 1, timeout_s: float | None = None
     `label` identifies the call (e.g. "ai_impact", "content:narrative") in that alert
     and in the retry/fallback log lines below — before this, a timeout only showed up
     as an admin email with no trace in `docker logs` of which call it even was."""
+    if not label.startswith("translate"):  # translation must keep the wording it is given
+        prompt = WRITING_RULES + prompt
     primary = get_ai_provider()
     fallback = "gemini" if primary == "claude" else "claude"
 
@@ -670,7 +686,7 @@ def generate_ai_content(user_data: dict, summary: dict, raw_scores: list, career
 
     narrative_prompt = (
         f"You are writing a professional, personalized career development report for {user_data['full_name']}.\n"
-        "Write in second person (you, your). Be warm, specific, and empowering — not generic.\n"
+        "Write in second person (you, your). Be calm, specific and encouraging — not generic, and never salesy.\n"
         "Reference actual scores and combinations. Do not write boilerplate.\n\n"
         + shared_header
         + coaching_block
@@ -694,7 +710,7 @@ def generate_ai_content(user_data: dict, summary: dict, raw_scores: list, career
         + "=== OUTPUT ===\n\n"
         "Return ONLY a valid JSON object (no markdown, no code fences) with exactly these keys:\n\n"
         "{\n"
-        '  "executive_summary": "3-4 sentences: compelling personalized overview referencing RIASEC combination, a key value, and primary strength.",\n\n'
+        '  "executive_summary": "3-4 sentences: plain, personal overview referencing RIASEC combination, a key value, and primary strength.",\n\n'
         '  "riasec_combination_title": "3-5 word creative title for this RIASEC combination e.g. The Visionary Problem-Solver",\n'
         '  "riasec_overview": "2 sentences about what this RIASEC combination means holistically.",\n'
         '  "riasec_primary_narrative": "3-4 sentences about primary RIASEC type and career implications.",\n'
@@ -746,7 +762,7 @@ def generate_ai_content(user_data: dict, summary: dict, raw_scores: list, career
         '  "closing_message": "2-3 warm encouraging sentences tying back to this persons unique profile."\n'
         "}\n\n"
         "weeks_2_4 and months_2_3 are the 90-day roadmap: they continue AFTER the first week and must not repeat it.\n"
-        "Be specific, insightful, and empowering throughout. Remember: action_plan must stay grounded in "
+        "Be specific and plain-spoken throughout. Remember: action_plan must stay grounded in "
         "the matched careers list above, not a different sector or set of job titles."
     )
 
@@ -771,7 +787,7 @@ def generate_ai_content(user_data: dict, summary: dict, raw_scores: list, career
     careers_prompt = (
         f"You are selecting and explaining career recommendations for {user_data['full_name']}, "
         "as part of a professional, personalized career development report.\n"
-        "Write in second person (you, your). Be warm, specific, and empowering — not generic.\n"
+        "Write in second person (you, your). Be calm, specific and encouraging — not generic, and never salesy.\n"
         "Reference actual scores and combinations. Do not write boilerplate.\n\n"
         + shared_header
         + f"Matched careers:\n{careers_text}\n\n"
@@ -846,7 +862,7 @@ def generate_ai_content(user_data: dict, summary: dict, raw_scores: list, career
         "gap and next_action must be honest and specific to this person's stage and background, in plain language, "
         "and must never suggest a career is guaranteed or that their current field is a mistake.\n"
         + steps_instruction + "\n"
-        f"Provide exactly {career_count} career recommendations. Be specific, insightful, and empowering throughout."
+        f"Provide exactly {career_count} career recommendations. Be specific and plain-spoken throughout."
     )
 
     with ThreadPoolExecutor(max_workers=2) as pool:
@@ -2087,7 +2103,7 @@ def generate_certifications(user_data: dict, summary: dict, careers: list, local
         "{\n"
         '  "certifications": [\n'
         '    {"career": the NUMBER of the ONE career above this is for, "title": "certification or short course name", '
-        '"provider_type": "the provider, in a few words (e.g. Google via Coursera, a professional body)", '
+        '"provider_type": "the kind of provider, in a few words (e.g. an online learning platform, a professional body)", '
         '"about": "one sentence: what it covers and what you have at the end", '
         '"why": "one sentence: why it helps THIS career and this person"}\n'
         '  ]\n'
