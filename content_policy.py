@@ -58,12 +58,14 @@ def is_appropriate(*fields: str | None) -> bool:
 # matters for that stage (learn / build for students, apply for graduates, transition for working users). The AI impact page sits right after the careers it is about (the results
 # page shows it inside each career card instead, so it ignores the "ai" entry). Related sections sit next to each other:
 # courses with certifications, jobs with companies.
+# "companies" (Companies to Target) was removed from every order on 1 Oct 2026 (the company lists are limited and could
+# mislead people). The section code is kept, just never listed here.
 SECTION_ORDER = {
     "choosing_studies": ["summary", "profile", "majors", "careers", "ai", "plan", "courses"],
     "student":          ["summary", "profile", "careers", "ai", "plan", "courses", "certs", "majors", "jobs"],
-    "graduate":         ["summary", "profile", "careers", "ai", "plan", "jobs", "certs", "courses", "companies"],
-    "next_move":        ["summary", "profile", "careers", "ai", "plan", "path", "jobs", "courses", "companies"],
-    "default":          ["summary", "profile", "careers", "ai", "plan", "jobs", "courses", "companies"],
+    "graduate":         ["summary", "profile", "careers", "ai", "plan", "jobs", "certs", "courses"],
+    "next_move":        ["summary", "profile", "careers", "ai", "plan", "path", "jobs", "courses"],
+    "default":          ["summary", "profile", "careers", "ai", "plan", "jobs", "courses"],
 }
 
 def section_order(current_stage: str | None) -> list[str]:

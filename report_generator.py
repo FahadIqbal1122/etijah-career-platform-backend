@@ -156,7 +156,7 @@ BIG_FIVE_LABELS_AR = {
 UI_TEXT = {
     'en': {
         'lang': 'en', 'dir': 'ltr',
-        'brand': 'Etijah Coaching', 'brand_header': 'Etijahi · Etijah Coaching',
+        'brand': 'Etijah Coaching', 'brand_header': 'Etijahi',
         'cover_eyebrow': 'Etijahi · Personal Report',
         'cover_headline1': 'Your Career', 'cover_headline2': 'Identity Report',
         'cover_sub': 'Powered by Etijahi Assessment',
@@ -168,9 +168,9 @@ UI_TEXT = {
         'sec04': 'What matters to you', 'sec05': 'What you are good at', 'sec06': 'How you like to work',
         'sec07': 'Entrepreneurial Profile', 'sec08': 'Careers that fit you',
         'sec09': 'How AI may change your careers',
-        'sec_jobs': 'Job Listings', 'sec_jobs_internships': 'Internships & Exposure',
+        'sec_jobs': 'Proposed Jobs', 'sec_jobs_internships': 'Proposed Internships',
         'sec_student_track': 'Fields of study and ways to explore',
-        'sec_certifications': 'Certifications to Pursue', 'sec_career_path': 'Your Path Forward',
+        'sec_certifications': 'Recommended Certifications', 'sec_career_path': 'Your Path Forward',
         'sec_companies': 'Companies to Target', 'sec_courses': 'Recommended Courses',
         'course_for': 'For', 'course_about': 'What it is about', 'course_why': 'Why it is suggested',
         'sec_action_plan': 'Your plan',
@@ -219,7 +219,7 @@ UI_TEXT = {
     },
     'ar': {
         'lang': 'ar', 'dir': 'rtl',
-        'brand': 'اتجاه للتدريب والاستشارات', 'brand_header': 'إتجاهي · اتجاه للتدريب والاستشارات',
+        'brand': 'اتجاه للتدريب والاستشارات', 'brand_header': 'إتجاهي',
         'cover_eyebrow': 'إتجاهي · تقرير شخصي',
         'cover_headline1': 'تقرير هويتك', 'cover_headline2': 'المهنية',
         'cover_sub': 'مبني على تقييم إتجاهي',
@@ -231,7 +231,7 @@ UI_TEXT = {
         'sec04': 'ما يهمك', 'sec05': 'ما تجيده', 'sec06': 'كيف تحب أن تعمل',
         'sec07': 'الملف الريادي', 'sec08': 'مسارات مهنية تناسبك',
         'sec09': 'كيف قد يغيّر الذكاء الاصطناعي مساراتك المهنية',
-        'sec_jobs': 'فرص وظيفية', 'sec_jobs_internships': 'فرص تدريب وتعرّف على المجال',
+        'sec_jobs': 'وظائف مقترحة', 'sec_jobs_internships': 'فرص تدريب مقترحة',
         'sec_student_track': 'تخصصات وطرق للاستكشاف',
         'sec_certifications': 'شهادات يُنصح بها', 'sec_career_path': 'مسارك المهني القادم',
         'sec_companies': 'شركات مستهدفة', 'sec_courses': 'دورات موصى بها',
@@ -331,7 +331,12 @@ WRITING_RULES = (
     "bootcamp or training company or named learning website (say 'a free online course' instead of naming the site), "
     "and never recommend a specific MBA or master's programme. Describe the TYPE of "
     "option instead (for example 'a short beginner course in data analysis' or 'a bachelor's degree in nursing'). "
-    "Real, existing professional certifications named by their own title are fine.\n\n"
+    "Real, existing professional certifications named by their own title are fine.\n"
+    "- Give advice, never orders. Do not start sentences with commands such as 'Take this course', 'Do this', 'Choose X', "
+    "'Get the certification', 'Study Y', 'Apply to Z'. Write it as a recommendation instead, for example 'Taking a short "
+    "beginner course in X is recommended', 'We advise you to choose Y', 'A good next step would be Z', 'You could "
+    "consider W', 'It would help to ...'. This applies to every step, plan, course, certification, job and career "
+    "suggestion, including each action in a plan and each next step.\n\n"
 )
 
 def _as_dict(value) -> dict:
@@ -2868,6 +2873,7 @@ def create_report(response_id: str, supabase_client, tier: str = "launchpad", lo
     if tier != 'free':
         top5 = top_careers[:5]
 
+        # Companies to Target is no longer part of the report (removed 1 Oct 2026); query kept below for later.
         company_sectors = list(dict.fromkeys(c['sector'] for c in top5))
         country_code = COUNTRY_CODE_MAP.get(profile.data.get('country', ''))
         company_query = supabase_client.table('companies').select(
@@ -2878,8 +2884,8 @@ def create_report(response_id: str, supabase_client, tier: str = "launchpad", lo
         if company_sectors:
             company_query = company_query.in_('sector', company_sectors)
         company_limit = 50 if tier == 'launchpad' else 20
-        companies_raw = _execute_with_retry(company_query.order('name_en').limit(company_limit)).data or []
-        companies = [c for c in companies_raw if is_appropriate(c.get('name_en'), c.get('sector'))][:12]
+        # companies_raw = _execute_with_retry(company_query.order('name_en').limit(company_limit)).data or []
+        # companies = [c for c in companies_raw if is_appropriate(c.get('name_en'), c.get('sector'))][:12]
         # The employer target list is for graduates and working users, not students.
         if profile.data.get('current_stage') in NO_COMPANIES_STAGES:
             companies = []
