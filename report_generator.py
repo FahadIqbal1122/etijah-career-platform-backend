@@ -328,7 +328,8 @@ WRITING_RULES = (
     "sentences. If you must use a technical term, explain it in a few plain words the first time. Avoid jargon and "
     "buzzwords (for example 'leverage', 'upskill', 'pivot', 'stakeholders', 'ecosystem', 'competencies', 'trajectory').\n"
     "- Never tell the person to study at, apply to, or take a programme from a specific university, college, school, "
-    "bootcamp or training company, and never recommend a specific MBA or master's programme. Describe the TYPE of "
+    "bootcamp or training company or named learning website (say 'a free online course' instead of naming the site), "
+    "and never recommend a specific MBA or master's programme. Describe the TYPE of "
     "option instead (for example 'a short beginner course in data analysis' or 'a bachelor's degree in nursing'). "
     "Real, existing professional certifications named by their own title are fine.\n\n"
 )
@@ -633,7 +634,7 @@ def generate_ai_content(user_data: dict, summary: dict, raw_scores: list, career
         + (f"Ideal career structure, in their own words: {typed_other(user_data.get('answers'), 'QO7')}\n" if typed_other(user_data.get('answers'), 'QO7') else "")
         + f"Sectors of interest: {', '.join(with_typed_other(user_data.get('sectors_of_interest'), user_data.get('answers'), 'QO6_other'))}\n"
         f"Geographic openness: {user_data.get('geographic_openness','N/A')}\n"
-        f"Why taking assessment: {user_data.get('why_here','N/A')}\n\n"
+        f"Why taking assessment: {user_data.get('why_here','N/A')}{country_extra(user_data)}\n\n"
         f"RIASEC top 3 (0-100):\n{riasec_lines}\n"
         f"All 6 RIASEC: {json.dumps(all_riasec)}\n\n"
         f"Big Five: {json.dumps(bf_data)}\n\n"
@@ -2126,7 +2127,7 @@ def generate_certifications(user_data: dict, summary: dict, careers: list, local
 def country_extra(user_data) -> str:
     """One extra prompt line when they typed 'Another country' for where to work (cleaned at submit)."""
     c = user_data.get('work_country_other')
-    return (f"\nWants to work in: {c} (outside the GCC; keep advice general where GCC market data does not apply)" if c else "")
+    return (f"\nWants to work in: {c} (outside the GCC). Do not send them to local places or employers as if they will work there; keep the advice general and say that entry rules and study routes differ by country, so they should check them for that country" if c else "")
 
 def _validate_certifications(result, top: list) -> dict:
     """Ties each certification to one of the top careers (the model refers to it by number, so translating a title cannot
