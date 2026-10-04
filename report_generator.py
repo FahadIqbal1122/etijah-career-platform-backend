@@ -206,7 +206,7 @@ UI_TEXT = {
         'course_for': 'For', 'course_about': 'What it is about', 'course_why': 'Why it is suggested',
         'sec_action_plan': 'Your plan',
         'howto_title': 'How to read this report',
-        'howto_intro': 'This is not a test with right or wrong answers. It shows what your answers say about you and what that could mean for your future.',
+        'howto_intro': 'This is not a test with right or wrong answers. It shows what your answers say about you and what that could mean for your future. Treat it as advice, not a rule: nothing here is set in stone, and no single career or field is the only right choice. One field of study can lead to many different careers.',
         'howto_careers': 'Careers that fit you: how well each one matches you, what to build, one thing to do now, and how AI may change it.',
         'howto_majors': 'Fields of study to explore: degrees and fields that lead to those careers, with a simple way to try each one before you choose.',
         'howto_plan': 'Your plan: one small step for this week, then a 90-day path.',
@@ -269,7 +269,7 @@ UI_TEXT = {
         'course_for': 'لمسار', 'course_about': 'عن ماذا تدور', 'course_why': 'لماذا نقترحها',
         'sec_action_plan': 'خطتك',
         'howto_title': 'كيف تقرأ هذا التقرير',
-        'howto_intro': 'هذا ليس اختباراً له إجابات صحيحة أو خاطئة. إنه يوضح ما تقوله إجاباتك عنك وما قد يعنيه ذلك لمستقبلك.',
+        'howto_intro': 'هذا ليس اختباراً له إجابات صحيحة أو خاطئة. إنه يوضح ما تقوله إجاباتك عنك وما قد يعنيه ذلك لمستقبلك. اعتبره نصيحة وليس قاعدة ثابتة: لا شيء هنا محسوم، وليس هناك مسار أو تخصص واحد صحيح. فالتخصص الواحد يمكن أن يقود إلى مسارات مهنية كثيرة ومختلفة.',
         'howto_careers': 'مسارات مهنية تناسبك: مدى توافق كل مسار معك، وما تحتاج إلى بنائه، وخطوة تفعلها الآن، وكيف قد يغيّره الذكاء الاصطناعي.',
         'howto_majors': 'تخصصات للاستكشاف: تخصصات جامعية تقود إلى هذه المسارات، مع طريقة بسيطة لتجربة كل منها قبل أن تختار.',
         'howto_plan': 'خطتك: خطوة صغيرة لهذا الأسبوع، ثم مسار لـ 90 يوماً.',
@@ -847,7 +847,7 @@ def generate_ai_content(user_data: dict, summary: dict, raw_scores: list, career
         + "=== OUTPUT ===\n\n"
         "Return ONLY a valid JSON object (no markdown, no code fences) with exactly these keys:\n\n"
         "{\n"
-        '  "executive_summary": "3-4 sentences: plain, personal overview referencing RIASEC combination, a key value, and primary strength. Start with something specific about THIS person (their stage, field, goal or what they said), never with an adjective about their profile.",\n\n'
+        '  "executive_summary": "3-4 sentences: plain, personal overview referencing RIASEC combination, a key value, and primary strength. Start with something specific about THIS person (their stage, field, goal or what they said), never with an adjective about their profile. If they have a field of study, include one short sentence saying that field can lead to several different careers, so the result reads as a starting point and not a single fixed path.",\n\n'
         '  "riasec_combination_title": "3-5 word creative title for this RIASEC combination e.g. The Visionary Problem-Solver",\n'
         '  "riasec_overview": "2 sentences about what this RIASEC combination means holistically.",\n'
         '  "riasec_primary_narrative": "3-4 sentences about primary RIASEC type and career implications.",\n'
