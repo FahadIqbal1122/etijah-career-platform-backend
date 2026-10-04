@@ -1245,6 +1245,24 @@ def _get_waitlist_page_stats() -> dict:
         "top_clicks": [{"label": label, "count": count} for label, count in click_counts.most_common(10)],
     }
 
+def _report_order(response_id: str, ranked: list, tier: str, generate: bool = True) -> list:
+    """Careers in the order the report lists them (the report is the single source of truth for what the user sees).
+    generate=False only reads the saved report content (used by the dashboard card); generate=True makes sure it exists.
+    Falls back to the raw ranking if the report content is not available."""
+    try:
+        from report_generator import get_or_generate_ai_content, order_by_report
+        if generate:
+            content = get_or_generate_ai_content(response_id, supabase, tier=tier, locale='en')
+        else:
+            row = _execute_with_retry(supabase.table('assessment_responses')
+                .select('ai_content_cache,ai_content_cache_free').eq('id', response_id).single()).data or {}
+            content = (row.get('ai_content_cache_free') if tier == 'free' else row.get('ai_content_cache')) or {}
+        content = {**content, 'career_recommendations': drop_weak_matches(content.get('career_recommendations') or [])}
+        return order_by_report(ranked, content)
+    except Exception as e:
+        print(f"[report order] falling back to ranked careers for {response_id}: {e}")
+        return ranked
+
 @app.get("/assessment/{response_id}/career-suggestions")
 def get_career_suggestions(response_id: str, user=Depends(get_optional_user)):
     rows = supabase.table('assessment_results') \
@@ -1263,7 +1281,9 @@ def get_career_suggestions(response_id: str, user=Depends(get_optional_user)):
     careers = supabase.table('careers').select('*').eq('is_approved', True).execute().data or []
     semantic_scores = _get_semantic_scores(response_id, summary, profile.data or {})
     top10   = score_careers(summary, profile.data or {}, careers, semantic_scores)
-    if get_effective_tier(profile.data.get('user_id')) == "free" and not _is_admin(user):
+    _tier = get_effective_tier(profile.data.get('user_id'))
+    top10 = _report_order(response_id, top10, _tier, generate=False)
+    if _tier == "free" and not _is_admin(user):
         top10 = top10[:3]
 
     user_riasec = summary.get('riasec', {}).get('top_types', [])
@@ -1362,7 +1382,7 @@ def get_ai_impact(response_id: str, force: bool = False, locale: str | None = No
     summary = build_framework_output(rows.data)
     careers = _execute_with_retry(supabase.table('careers').select('*').eq('is_approved', True)).data or []
     semantic_scores = _get_semantic_scores(response_id, summary, profile_row.data or {})
-    top_careers = score_careers(summary, profile_row.data or {}, careers, semantic_scores)[:careers_cap]
+    top_careers = _report_order(response_id, score_careers(summary, profile_row.data or {}, careers, semantic_scores), tier)[:careers_cap]
 
     from report_generator import get_or_generate_ai_impact
     try:
@@ -1427,7 +1447,7 @@ def get_student_track(response_id: str, force: bool = False, locale: str | None 
     summary = build_framework_output(rows.data)
     careers = _execute_with_retry(supabase.table('careers').select('*').eq('is_approved', True)).data or []
     semantic_scores = _get_semantic_scores(response_id, summary, profile_row.data or {})
-    top_careers = score_careers(summary, profile_row.data or {}, careers, semantic_scores)[:5]
+    top_careers = _report_order(response_id, score_careers(summary, profile_row.data or {}, careers, semantic_scores), get_effective_tier(profile_row.data.get('user_id')))[:5]
 
     from report_generator import get_or_generate_student_track
     try:
@@ -1475,7 +1495,7 @@ def get_certifications(response_id: str, force: bool = False, locale: str | None
     summary = build_framework_output(rows.data)
     careers = _execute_with_retry(supabase.table('careers').select('*').eq('is_approved', True)).data or []
     semantic_scores = _get_semantic_scores(response_id, summary, profile_row.data or {})
-    top_careers = score_careers(summary, profile_row.data or {}, careers, semantic_scores)[:5]
+    top_careers = _report_order(response_id, score_careers(summary, profile_row.data or {}, careers, semantic_scores), get_effective_tier(profile_row.data.get('user_id')))[:5]
 
     from report_generator import get_or_generate_certifications
     try:
@@ -1519,7 +1539,7 @@ def get_career_path(response_id: str, force: bool = False, locale: str | None = 
     summary = build_framework_output(rows.data)
     careers = _execute_with_retry(supabase.table('careers').select('*').eq('is_approved', True)).data or []
     semantic_scores = _get_semantic_scores(response_id, summary, profile_row.data or {})
-    top_careers = score_careers(summary, profile_row.data or {}, careers, semantic_scores)[:5]
+    top_careers = _report_order(response_id, score_careers(summary, profile_row.data or {}, careers, semantic_scores), get_effective_tier(profile_row.data.get('user_id')))[:5]
 
     from report_generator import get_or_generate_career_path
     try:
@@ -2381,7 +2401,7 @@ def get_course_recommendations(response_id: str, locale: str | None = None, user
     summary = build_framework_output(rows.data)
     careers = _execute_with_retry(supabase.table('careers').select('*').eq('is_approved', True)).data or []
     semantic_scores = _get_semantic_scores(response_id, summary, profile.data)
-    top5    = score_careers(summary, profile.data, careers, semantic_scores)[:5]
+    top5    = _report_order(response_id, score_careers(summary, profile.data, careers, semantic_scores), get_effective_tier(owner_user_id))[:5]
 
     # Each course is tied to one of the top careers, with what it is about and why it is suggested. An AI picks from
     # the real course list (report_generator.build_course_recommendations); nothing is added just to fill the list.
@@ -2674,13 +2694,13 @@ def get_market_trends(_=Depends(require_admin)):
         "total_companies": len(company_count),
     }
 
-def _search_matching_jobs(response_id: str) -> list[dict] | None:
+def _search_matching_jobs(response_id: str, ensure_report: bool = True) -> list[dict] | None:
     """Runs the JSearch/RapidAPI query for a response's top-3 matched careers.
     Shared by the on-demand /job-listings endpoint and the Launchpad daily
-    job-matching refresh job. Returns None (not []) if the response has no
+    job-matching refresh job (which passes ensure_report=False so it never generates a report). Returns None (not []) if the response has no
     scored assessment data to match against."""
     profile = supabase.table('assessment_responses') \
-        .select('country, education_field, career_direction, sectors_of_interest, experience_level, current_stage, answers') \
+        .select('country, education_field, career_direction, sectors_of_interest, experience_level, current_stage, user_id, answers') \
         .eq('id', response_id).single().execute()
     rows = supabase.table('assessment_results') \
         .select('*') \
@@ -2693,7 +2713,8 @@ def _search_matching_jobs(response_id: str) -> list[dict] | None:
     summary = build_framework_output(rows.data)
     careers = supabase.table('careers').select('*').eq('is_approved', True).execute().data or []
     semantic_scores = _get_semantic_scores(response_id, summary, profile.data)
-    top3    = score_careers(summary, profile.data, careers, semantic_scores)[:3]
+    # The jobs are searched for the careers the report lists first, not the raw ranking.
+    top3    = _report_order(response_id, score_careers(summary, profile.data, careers, semantic_scores), get_effective_tier(profile.data.get('user_id')), generate=ensure_report)[:3]
 
     raw_country = profile.data.get('country', '')
     country = COUNTRY_NAMES.get(raw_country, raw_country)
@@ -2887,7 +2908,7 @@ def refresh_job_matches(request: Request):
             continue
         response_id = latest.data[0]['id']
 
-        jobs = _search_matching_jobs(response_id) or []
+        jobs = _search_matching_jobs(response_id, ensure_report=False) or []
         existing_ids = {
             row['job_data'].get('job_id')
             for row in (supabase.table('job_matches').select('job_data').eq('user_id', user_id).execute().data or [])
@@ -2944,7 +2965,7 @@ def get_my_job_matches(user=Depends(get_current_user)):
     if not latest.data:
         return []
 
-    jobs = _search_matching_jobs(latest.data[0]['id']) or []
+    jobs = _search_matching_jobs(latest.data[0]['id'], ensure_report=False) or []
     if not jobs:
         supabase.table('job_matches').insert({
             'user_id': user.id,

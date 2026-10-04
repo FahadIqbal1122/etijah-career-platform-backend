@@ -2874,6 +2874,17 @@ def _generate_and_cache(supabase_client, response_id: str, col: str, generate):
 
 
 @_scoped_to_response
+def order_by_report(ranked: list, ai_content: dict | None) -> list:
+    """The careers in the order the report lists them. The report's own list (ai_content) is the one place users see
+    their careers, so everything else (dashboard card, job search, courses, certifications, AI impact) follows it
+    instead of the raw ranking. Careers the report did not pick keep their ranked order after it."""
+    titles = [r.get('title') for r in ((ai_content or {}).get('career_recommendations') or []) if isinstance(r, dict)]
+    by_title = {c['title']: c for c in ranked if isinstance(c, dict) and c.get('title')}
+    first = [by_title[t] for t in dict.fromkeys(titles) if t in by_title]
+    picked = {c['title'] for c in first}
+    return first + [c for c in ranked if not (isinstance(c, dict) and c.get('title') in picked)]
+
+
 def get_or_generate_ai_content(response_id: str, supabase_client, tier: str = "launchpad", locale: str = 'en') -> dict:
     """Returns the ai_content dict (career_recommendations + narrative fields) for the
     given locale, generating and caching it on first call. Mirrors the equivalent block
@@ -3016,11 +3027,15 @@ def create_report(response_id: str, supabase_client, tier: str = "launchpad", lo
     impact_col_ar = 'ai_impact_cache_ar_free' if is_free else 'ai_impact_cache_ar'
     content_col_ar = 'ai_content_cache_ar_free' if is_free else 'ai_content_cache_ar'
 
-    ai_impact = profile.data.get(impact_col) or _generate_and_cache(supabase_client, response_id,
-        impact_col, lambda: generate_ai_impact(profile.data, summary, top_careers[:impact_count], 'en', career_count=impact_count))
-
     ai_content = profile.data.get(content_col) or _generate_and_cache(supabase_client, response_id,
         content_col, lambda: generate_ai_content(profile.data, summary, raw_scores, top_careers, country_profile, coaching_matches, 'en', career_count=content_count, include_plan=not is_free))
+
+    # Everything below follows the report's own career order (see order_by_report), so AI impact, courses and
+    # certifications are about the careers the user actually sees.
+    top_careers = order_by_report(top_careers, ai_content)
+
+    ai_impact = profile.data.get(impact_col) or _generate_and_cache(supabase_client, response_id,
+        impact_col, lambda: generate_ai_impact(profile.data, summary, top_careers[:impact_count], 'en', career_count=impact_count))
 
     if locale == 'ar':
         try:
