@@ -2765,26 +2765,34 @@ def _search_matching_jobs(response_id: str, ensure_report: bool = True) -> list[
             else:
                 query_prefix = ""
                 job_requirements = None
-            resp = httpx.get(
-                "https://jsearch.p.rapidapi.com/search",
-                params={
-                    "query": f"{query_prefix}{career['title']} {country}",
-                    "num_pages": "1",
-                    "page": "1",
-                    **({"country": country_code.lower()} if country_code else {}),
-                    # Bias JSearch's own results toward entry-level/internship
-                    # postings for students/fresh grads rather than relying
-                    # only on the post-fetch title/description filter below.
-                    **({"job_requirements": job_requirements} if job_requirements else {}),
-                    **({"employment_types": "INTERN"} if internship_mode else {}),
-                },
-                headers={
-                    "X-RapidAPI-Key": rapidapi_key,
-                    "X-RapidAPI-Host": "jsearch.p.rapidapi.com",
-                },
-                timeout=8.0,
-            )
-            resp.raise_for_status()
+            def _jsearch(prefix: str, requirements):
+                r = httpx.get(
+                    "https://jsearch.p.rapidapi.com/search",
+                    params={
+                        "query": f"{prefix}{career['title']} {country}",
+                        "num_pages": "1",
+                        "page": "1",
+                        **({"country": country_code.lower()} if country_code else {}),
+                        # Bias JSearch's own results toward entry-level/internship
+                        # postings for students/fresh grads rather than relying
+                        # only on the post-fetch title/description filter below.
+                        **({"job_requirements": requirements} if requirements else {}),
+                        **({"employment_types": "INTERN"} if internship_mode else {}),
+                    },
+                    headers={
+                        "X-RapidAPI-Key": rapidapi_key,
+                        "X-RapidAPI-Host": "jsearch.p.rapidapi.com",
+                    },
+                    timeout=8.0,
+                )
+                r.raise_for_status()
+                return r
+            resp = _jsearch(query_prefix, job_requirements)
+            # In smaller markets (Bahrain) the entry-level wording plus the JSearch requirements filter can match
+            # nothing at all while the plain query finds plenty. The senior-title, freshness and requirements filters
+            # below still keep only suitable postings, so retry once without that narrowing.
+            if job_requirements and not (resp.json().get("data") or []):
+                resp = _jsearch("", None)
             # Take the first `per_search` listings that pass the filters (not the first few raw results, which
             # the freshness / requirement filters below may all reject).
             kept_from_search = 0
