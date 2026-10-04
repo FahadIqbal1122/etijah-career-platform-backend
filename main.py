@@ -283,6 +283,41 @@ def _get_share_token() -> str | None:
     _share_token_cache["checked_at"] = now
     return token
 
+BETA_CLOSED_KEY = "beta_closed"
+BETA_PREVIEW_SECRET_KEY = "beta_preview_secret"
+_beta_cache: dict[str, Any] = {"closed": False, "secret": None, "checked_at": None}
+_BETA_CACHE_TTL = timedelta(seconds=10)
+
+def _beta_settings() -> tuple[bool, str | None]:
+    """(closed, preview_secret) from app_settings, cached briefly. Fails open
+    (not closed) if the lookup errors so a DB hiccup never blocks real users."""
+    now = datetime.now(timezone.utc)
+    if _beta_cache["checked_at"] and now - _beta_cache["checked_at"] < _BETA_CACHE_TTL:
+        return _beta_cache["closed"], _beta_cache["secret"]
+    closed, secret = False, None
+    try:
+        rows = supabase.table('app_settings').select('key,value').in_('key', [BETA_CLOSED_KEY, BETA_PREVIEW_SECRET_KEY]).execute()
+        for r in rows.data or []:
+            if r['key'] == BETA_CLOSED_KEY:
+                closed = bool(r['value'])
+            elif r['key'] == BETA_PREVIEW_SECRET_KEY:
+                secret = r['value'] or None
+    except Exception as e:
+        print("Beta closed lookup failed, defaulting to open:", e)
+    _beta_cache.update({"closed": closed, "secret": secret, "checked_at": now})
+    return closed, secret
+
+def _beta_preview_allowed(provided: str | None) -> bool:
+    _, secret = _beta_settings()
+    return bool(provided and secret and hmac.compare_digest(provided, secret))
+
+def require_beta_open(request: Request):
+    """Dependency for the endpoints that start a new assessment. While the beta is
+    closed only requests carrying the tester preview secret get through."""
+    closed, _ = _beta_settings()
+    if closed and not _beta_preview_allowed(request.headers.get('x-beta-preview')):
+        raise HTTPException(status_code=403, detail="beta_closed")
+
 def get_effective_tier(user_id: str | None) -> str:
     """free | pathfinder | launchpad, computed from user_plans (not stored directly)."""
     if _is_test_mode_enabled():
@@ -573,7 +608,7 @@ def get_all_career_recommendations(_=Depends(require_admin)):
 
 
 @app.post("/assessment/check-existing")
-def check_existing(body: CheckExistingRequest, user=Depends(get_optional_user)):
+def check_existing(body: CheckExistingRequest, user=Depends(get_optional_user), _beta=Depends(require_beta_open)):
     result = supabase.rpc('check_existing_response', {
         'p_email': body.email,
         'p_phone': body.phone,
@@ -595,7 +630,7 @@ def check_existing(body: CheckExistingRequest, user=Depends(get_optional_user)):
 
 
 @app.post("/assessment/submit")
-def submit_assessment(body: SubmitRequest, background_tasks: BackgroundTasks, user=Depends(get_optional_user)):
+def submit_assessment(body: SubmitRequest, background_tasks: BackgroundTasks, user=Depends(get_optional_user), _beta=Depends(require_beta_open)):
     # Score it first, before writing anything — a payload with no recognizable
     # question answers can't be scored, so reject cleanly instead of leaving
     # an orphaned response row with no results.
@@ -2142,6 +2177,47 @@ def set_homepage_mode(body: HomepageModeRequest, _=Depends(require_admin)):
     _homepage_mode_cache["value"] = body.mode
     _homepage_mode_cache["checked_at"] = datetime.now(timezone.utc)
     return {"mode": body.mode}
+
+@app.get("/beta-status")
+def get_beta_status(request: Request):
+    """Unauthenticated — read by the /assessment page to decide between the form and
+    the "beta closed" page. `allowed` is true when the caller sent a valid preview secret."""
+    closed, _ = _beta_settings()
+    return {"closed": closed, "allowed": (not closed) or _beta_preview_allowed(request.headers.get('x-beta-preview'))}
+
+def _beta_admin_payload() -> dict:
+    closed, secret = _beta_settings()
+    if not secret:
+        secret = secrets.token_urlsafe(24)
+        _save_beta_setting(BETA_PREVIEW_SECRET_KEY, secret)
+    return {"closed": closed, "preview_secret": secret}
+
+def _save_beta_setting(key: str, value) -> None:
+    supabase.table('app_settings').upsert({
+        'key': key,
+        'value': value,
+        'updated_at': datetime.now(timezone.utc).isoformat(),
+    }, on_conflict='key').execute()
+    _beta_cache["checked_at"] = None
+
+class BetaClosedRequest(BaseModel):
+    closed: bool
+
+@app.get("/admin/beta-closed")
+def get_beta_closed_admin(_=Depends(require_admin)):
+    _beta_cache["checked_at"] = None
+    return _beta_admin_payload()
+
+@app.post("/admin/beta-closed")
+def set_beta_closed(body: BetaClosedRequest, _=Depends(require_admin)):
+    _beta_admin_payload()  # makes sure a preview secret exists before closing
+    _save_beta_setting(BETA_CLOSED_KEY, body.closed)
+    return _beta_admin_payload()
+
+@app.post("/admin/beta-closed/regenerate")
+def regenerate_beta_preview_secret(_=Depends(require_admin)):
+    _save_beta_setting(BETA_PREVIEW_SECRET_KEY, secrets.token_urlsafe(24))
+    return _beta_admin_payload()
 
 class AiProviderRequest(BaseModel):
     provider: str
