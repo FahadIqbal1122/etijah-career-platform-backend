@@ -1240,6 +1240,8 @@ def get_career_suggestions(response_id: str, user=Depends(get_optional_user)):
     careers = supabase.table('careers').select('*').eq('is_approved', True).execute().data or []
     semantic_scores = _get_semantic_scores(response_id, summary, profile.data or {})
     top10   = score_careers(summary, profile.data or {}, careers, semantic_scores)
+    if get_effective_tier(profile.data.get('user_id')) == "free" and not _is_admin(user):
+        top10 = top10[:3]
 
     user_riasec = summary.get('riasec', {}).get('top_types', [])
     return {
@@ -3087,6 +3089,8 @@ def create_coaching_session(
 
 @app.post("/coach")
 def coach(payload: CoachRequest, user=Depends(get_current_user)):
+    if get_effective_tier(user.id) == "free" and not _is_admin(user):
+        raise HTTPException(status_code=403, detail="The AI coach is part of the paid plans")
     query_embedding = _gemini_embed(payload.message)
 
     matches = supabase.rpc("match_coaching_chunks", {
@@ -3145,7 +3149,8 @@ def create_checkout(body: CheckoutRequest, request: Request, user=Depends(get_cu
     # (an assessment taken before signing up counts when it was made with the same email).
     owned = supabase.table('assessment_responses').select('id').eq('user_id', user.id).limit(1).execute()
     if not owned.data and user.email:
-        owned = supabase.table('assessment_responses').select('id').ilike('email', user.email).limit(1).execute()
+        safe_email = user.email.replace('\\', '\\\\').replace('%', '\\%').replace('_', '\\_')  # ILIKE wildcards
+        owned = supabase.table('assessment_responses').select('id').ilike('email', safe_email).limit(1).execute()
     if not owned.data:
         raise HTTPException(status_code=400, detail="assessment_required")
 
@@ -3260,7 +3265,7 @@ def _prewarm_full_report(user_id: str):
         finally:
             _prewarm_inflight.discard(rid)
         if row.get('email'):
-            url = f"{os.getenv('FRONTEND_URL', '').rstrip('/')}/{locale}/results/{rid}"
+            url = f"{(os.getenv('FRONTEND_URL') or 'https://myetijahi.com').rstrip('/')}/{locale}/results/{rid}"
             subject, html_body = _full_report_ready_email(row.get('full_name'), url, locale)
             send_email(to=row['email'], subject=subject, html_body=html_body, supabase=supabase)
     except Exception as e:
