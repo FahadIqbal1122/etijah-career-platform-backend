@@ -190,7 +190,7 @@ UI_TEXT = {
         'brand': 'Etijah Coaching', 'brand_header': 'Etijahi',
         'cover_eyebrow': 'Etijahi · Personal Report',
         'cover_headline1': 'Your Career', 'cover_headline2': 'Identity Report',
-        'cover_sub': 'Powered by Etijahi Assessment',
+        'cover_sub': 'Powered by Etijahi Career Assessment',
         'riasec_code_label': 'RIASEC Code',
         'generated': 'Generated', 'confidential': 'Confidential',
         'report_confidential_footer': 'Etijahi Report · Confidential',
@@ -253,7 +253,7 @@ UI_TEXT = {
         'brand': 'اتجاه للتدريب والاستشارات', 'brand_header': 'إتجاهي',
         'cover_eyebrow': 'إتجاهي · تقرير شخصي',
         'cover_headline1': 'تقرير هويتك', 'cover_headline2': 'المهنية',
-        'cover_sub': 'مبني على تقييم إتجاهي',
+        'cover_sub': 'مبني على تقييم إتجاهي المهني',
         'riasec_code_label': 'رمز RIASEC',
         'generated': 'تاريخ الإصدار', 'confidential': 'سرّي',
         'report_confidential_footer': 'تقرير إتجاهي · سرّي',
@@ -657,6 +657,23 @@ def _experience_text(user_data: dict) -> str:
     v = user_data.get('experience_level')
     return EXPERIENCE_LABELS.get(v, v) or 'N/A'
 
+def _internship_rule(user_data: dict) -> str:
+    """Always recommend an internship from year 3 of a degree through fresh graduates and job seekers."""
+    stage = user_data.get('current_stage')
+    if stage == 'university':
+        applies = user_data.get('study_year') in ('year_3', 'year_4', 'extended', 'final_year', 'postgraduate')
+    elif stage == 'recent_graduate':
+        applies = True
+    elif stage in ('between_roles', 'returning'):
+        applies = user_data.get('experience_level') in (None, '', 'no_experience', 'internships_only', 'up_to_1yr')
+    else:
+        applies = False
+    if not applies:
+        return ""
+    return ("INTERNSHIP: always include getting an internship or short training placement as one concrete action in "
+            "the plan and as one of the next_steps for the first career, written as advice. If landing a job is likely "
+            "to be hard for this person, present an internship as the way in.\n")
+
 def _first_step_context(user_data: dict) -> tuple[str, str]:
     """Stage- and goal-specific guidance text for the first step / 7-day plan prompts (shared by the main
     report and the chosen-direction plan)."""
@@ -802,6 +819,7 @@ def generate_ai_content(user_data: dict, summary: dict, raw_scores: list, career
         "The action_plan must START with a specific 'first_step' this person can do THIS WEEK (it is day 1), followed "
         "by a 'week_plan' of 4 short actions for days 2-7, then a 90-day roadmap in two parts.\n"
         + route_guidance
+        + _internship_rule(user_data)
         + goal_guidance
         + "Rules for first_step and every week_plan entry:\n"
         "- State what to do in concrete terms with a number or object (e.g. 'A good first step is to read three "
@@ -927,6 +945,7 @@ def generate_ai_content(user_data: dict, summary: dict, raw_scores: list, career
         "order: do not start a step with a bare verb like 'Take', 'Complete', 'Find' or 'Look'; use 'It would help to…', "
         "'Taking… is recommended', 'A good step is to…'. Do not repeat the same step across "
         "careers; a step that helps several careers should be worded for each one's own reason.\n"
+        + _internship_rule(user_data)
         if include_steps else ""
     )
     careers_prompt = (
