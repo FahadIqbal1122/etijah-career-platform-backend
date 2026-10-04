@@ -8,6 +8,8 @@ import json
 import re
 import html as _html
 import threading
+import contextvars
+import functools
 from contextlib import contextmanager
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor
@@ -49,6 +51,33 @@ CLAUDE_TIMEOUT_S = 60
 # within 30s, so only Claude's budget needs the larger allowance here.
 CLAUDE_CONTENT_TIMEOUT_S = 150
 CLAUDE_REPORT_MODEL = os.getenv("CLAUDE_REPORT_MODEL", "claude-sonnet-4-6")
+
+# The assessment response a generation/translation call is running for, so _generate_json
+# can put it in the call label (log lines + provider-fallback alert emails, which otherwise
+# say "Person: unknown"). A ContextVar rather than a parameter because the id would have to
+# be threaded through every generate_*/translate_* signature; worker threads don't inherit
+# it automatically — see _submit_in_context.
+_response_id_var: contextvars.ContextVar = contextvars.ContextVar("ai_response_id", default=None)
+
+
+def _scoped_to_response(fn):
+    """Decorator for entrypoints whose first argument is `response_id`: every AI call made
+    inside is labelled with it."""
+    @functools.wraps(fn)
+    def wrapper(*args, **kwargs):
+        rid = kwargs.get('response_id', args[0] if args else None)
+        token = _response_id_var.set(str(rid) if rid else None)
+        try:
+            return fn(*args, **kwargs)
+        finally:
+            _response_id_var.reset(token)
+    return wrapper
+
+
+def _submit_in_context(pool, fn, *args, **kwargs):
+    """pool.submit() that carries the caller's context (the response id) into the worker
+    thread. Each submit needs its own copy — one Context can't be entered by two threads."""
+    return pool.submit(contextvars.copy_context().run, fn, *args, **kwargs)
 
 def _escape_deep(value):
     """Recursively HTML-escape every string in a dict/list, so user-supplied text
@@ -481,9 +510,16 @@ def _generate_json(prompt: str, retries: int = 1, timeout_s: float | None = None
     `label` identifies the call (e.g. "ai_impact", "content:narrative") in that alert
     and in the retry/fallback log lines below — before this, a timeout only showed up
     as an admin email with no trace in `docker logs` of which call it even was."""
-    if not label.startswith("translate"):  # translation must keep the wording it is given
+    is_translation = label.startswith("translate")
+    if not is_translation:  # translation must keep the wording it is given
         prompt = WRITING_RULES + prompt
-    primary = get_ai_provider()
+    response_id = _response_id_var.get()
+    if response_id:
+        label = f"{label or 'unlabeled'}:{response_id}"
+    # Claude's Arabic translation reliably blows the 150s budget (3 SDK tries × 150s, twice
+    # = ~15 min before falling back), so translation goes to Gemini first regardless of the
+    # app_settings toggle; Claude is only the safety net if Gemini fails.
+    primary = "gemini" if is_translation else get_ai_provider()
     fallback = "gemini" if primary == "claude" else "claude"
 
     def _attempt(provider: str, catch_broadly: bool):
@@ -890,8 +926,8 @@ def generate_ai_content(user_data: dict, summary: dict, raw_scores: list, career
     )
 
     with ThreadPoolExecutor(max_workers=2) as pool:
-        narrative_future = pool.submit(_generate_json, narrative_prompt, 1, CLAUDE_CONTENT_TIMEOUT_S, "content:narrative")
-        careers_future = pool.submit(_generate_json, careers_prompt, 1, CLAUDE_CONTENT_TIMEOUT_S, "content:careers")
+        narrative_future = _submit_in_context(pool, _generate_json, narrative_prompt, 1, CLAUDE_CONTENT_TIMEOUT_S, "content:narrative")
+        careers_future = _submit_in_context(pool, _generate_json, careers_prompt, 1, CLAUDE_CONTENT_TIMEOUT_S, "content:careers")
         narrative_result = narrative_future.result()
         careers_result = careers_future.result()
 
@@ -1907,6 +1943,7 @@ def generate_ai_impact(user_data: dict, summary: dict, careers: list, locale: st
   return _generate_json(prompt, timeout_s=120 if include_focus else None, label="ai_impact")
 
 
+@_scoped_to_response
 def get_or_generate_ai_impact(response_id: str, summary: dict, profile_data: dict, top_careers: list,
                                careers_cap: int, supabase_client, cache_col: str, cache_col_ar: str,
                                locale: str = 'en', force: bool = False) -> dict:
@@ -2070,6 +2107,7 @@ def generate_student_track(user_data: dict, summary: dict, careers: list, locale
     return _generate_json(prompt, label="student_track")
 
 
+@_scoped_to_response
 def get_or_generate_student_track(response_id: str, summary: dict, profile_data: dict, top_careers: list,
                                    supabase_client, locale: str = 'en', force: bool = False) -> dict:
     """Locale-aware sibling of generate_student_track(), same shape as
@@ -2184,6 +2222,7 @@ def _validate_certifications(result, top: list) -> dict:
     return {'certifications': kept}
 
 
+@_scoped_to_response
 def get_or_generate_certifications(response_id: str, summary: dict, profile_data: dict, top_careers: list,
                                     supabase_client, locale: str = 'en', force: bool = False) -> dict:
     """Same shape as get_or_generate_student_track()."""
@@ -2292,6 +2331,7 @@ def _validate_course_picks(result, courses: list, top: list) -> dict:
                       'about': _one_line(p.get('about')), 'why': why})
     return {'picks': picks}
 
+@_scoped_to_response
 def build_course_recommendations(response_id: str, summary: dict, profile_data: dict, top_careers: list,
                                  supabase_client, locale: str = 'en', force: bool = False) -> list:
     """The courses to show (page and PDF): course rows from the catalogue plus for_career, about and why.
@@ -2410,6 +2450,7 @@ def _career_path_mentions_matched_career(result: dict, careers: list, career_cou
     return False
 
 
+@_scoped_to_response
 def get_or_generate_career_path(response_id: str, summary: dict, profile_data: dict, top_careers: list,
                                  supabase_client, locale: str = 'en', force: bool = False) -> dict:
     """Same shape as get_or_generate_student_track()."""
@@ -2505,8 +2546,8 @@ def _translate_ai_impact(data: dict, target_locale: str = 'ar') -> dict:
     if not careers:
         return _translate_piece_with_retry(data, target_locale)
     with ThreadPoolExecutor(max_workers=len(careers) + 1) as pool:
-        top_future = pool.submit(_translate_piece_with_retry, top, target_locale) if top else None
-        career_futures = [pool.submit(_translate_careers_with_retry, [c], target_locale) for c in careers]
+        top_future = _submit_in_context(pool, _translate_piece_with_retry, top, target_locale) if top else None
+        career_futures = [_submit_in_context(pool, _translate_careers_with_retry, [c], target_locale) for c in careers]
         merged = dict(top_future.result()) if top_future else {}
         translated: list = []
         for f in career_futures:
@@ -2532,8 +2573,8 @@ def translate_ai_content(data: dict, target_locale: str = 'ar') -> dict:
     narrative_pieces = [{k: narrative[k] for k in chunk} for chunk in chunks]
 
     with ThreadPoolExecutor(max_workers=len(narrative_pieces) + 1) as pool:
-        piece_futures = [pool.submit(_translate_piece_with_retry, piece, target_locale) for piece in narrative_pieces]
-        careers_future = pool.submit(_translate_careers_with_retry, careers, target_locale)
+        piece_futures = [_submit_in_context(pool, _translate_piece_with_retry, piece, target_locale) for piece in narrative_pieces]
+        careers_future = _submit_in_context(pool, _translate_careers_with_retry, careers, target_locale)
         piece_results = [f.result() for f in piece_futures]
         translated_careers = careers_future.result()
 
@@ -2675,6 +2716,7 @@ def _generate_and_cache(supabase_client, response_id: str, col: str, generate):
         return refreshed.data.get(col) or value
 
 
+@_scoped_to_response
 def get_or_generate_ai_content(response_id: str, supabase_client, tier: str = "launchpad", locale: str = 'en') -> dict:
     """Returns the ai_content dict (career_recommendations + narrative fields) for the
     given locale, generating and caching it on first call. Mirrors the equivalent block
@@ -2749,6 +2791,7 @@ def get_or_generate_ai_content(response_id: str, supabase_client, tier: str = "l
         lambda: translate_ai_content(ai_content_en, 'ar'))
 
 
+@_scoped_to_response
 def create_report(response_id: str, supabase_client, tier: str = "launchpad", locale_override: str | None = None) -> bytes:
 
     profile = _execute_with_retry(supabase_client.table('assessment_responses')
@@ -2827,10 +2870,10 @@ def create_report(response_id: str, supabase_client, tier: str = "launchpad", lo
             # Impact and content translation are independent — run them concurrently
             # (same reasoning as generate_ai_content's split) instead of back-to-back.
             with ThreadPoolExecutor(max_workers=2) as pool:
-                impact_future = pool.submit(
+                impact_future = _submit_in_context(pool,
                     lambda: profile.data.get(impact_col_ar) or _generate_and_cache(supabase_client, response_id,
                         impact_col_ar, lambda: _translate_ai_impact(ai_impact, 'ar')))
-                content_future = pool.submit(
+                content_future = _submit_in_context(pool,
                     lambda: profile.data.get(content_col_ar) or _generate_and_cache(supabase_client, response_id,
                         content_col_ar, lambda: translate_ai_content(ai_content, 'ar')))
                 ai_impact_ar = impact_future.result()
