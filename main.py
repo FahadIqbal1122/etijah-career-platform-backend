@@ -18,7 +18,7 @@ from report_generator import create_report, _execute_with_retry, WRITING_RULES
 from db_client import disable_http2
 from google.api_core.exceptions import GoogleAPICallError
 from requests.exceptions import RequestException
-from smtp_service import send_report_email, send_feedback_email, send_results_ready_email, send_beta_feedback_email, invalidate_smtp_cache, send_failure_alert, render_template, send_email
+from smtp_service import send_report_email, send_feedback_email, send_results_ready_email, send_beta_feedback_email, invalidate_smtp_cache, send_failure_alert, render_template, send_email, ADMIN_ALERT_EMAIL
 import httpx, hmac, hashlib, json, secrets, time
 from coaching_methodology import METHODOLOGY_DOC
 from coaching_pipeline import chunk_transcript, embed_and_store_chunks, client, embed_country_profile, sync_country_profile_embedding, sync_career_embedding, _gemini_embed
@@ -103,21 +103,23 @@ DASHBOARD_SHARE_TOKEN = os.getenv("DASHBOARD_SHARE_TOKEN")
 
 PLAN_CATALOG = {
     "pathfinder":        {"name": "Pathfinder",        "amount": 79,  "currency": "SAR", "interval": "lifetime", "extension_days": None, "available": True},
-    # One-time payment, 365 days of Launchpad access (no renewal). Code kept as launchpad_monthly so the
+    # One-time payment: Pathfinder plus a 1:1 coaching session (enabled 4 Oct 2026); 365 days of Launchpad status (no renewal). Code kept as launchpad_monthly so the
     # landing page, api.ts PlanCode type and dashboard ?buy= handling keep working.
-    "launchpad_monthly": {"name": "Launchpad",          "amount": 440, "currency": "SAR", "interval": "one_time", "extension_days": 365,  "available": False},
+    "launchpad_monthly": {"name": "Launchpad",          "amount": 440, "currency": "SAR", "interval": "one_time", "extension_days": 365,  "available": True},
     # "launchpad_yearly":  {"name": "Launchpad Yearly",   "amount": 799, "currency": "SAR", "interval": "year",     "extension_days": 365,  "available": False},
 }
 
 # Payment testing: set PATHFINDER_TEST_AMOUNT (for example 0.1) and PATHFINDER_TEST_CURRENCY (for example BHD) in the
-# server environment to charge that for Pathfinder instead of the real price, and remove both when done. Nothing in the
-# code changes, so the real price can never ship by accident. Everyone checking out while these are set pays the test price.
+# server environment to charge that for Pathfinder AND Launchpad instead of the real prices, and remove both when done.
+# Nothing in the code changes, so the real prices can never ship by accident. Everyone checking out while these are
+# set pays the test price.
 _test_amount = os.getenv("PATHFINDER_TEST_AMOUNT")
 if _test_amount:
     try:
-        PLAN_CATALOG["pathfinder"] = {**PLAN_CATALOG["pathfinder"], "amount": float(_test_amount),
-                                      "currency": (os.getenv("PATHFINDER_TEST_CURRENCY") or "BHD").upper()}
-        print(f"WARNING: Pathfinder TEST price active: {PLAN_CATALOG['pathfinder']['amount']} {PLAN_CATALOG['pathfinder']['currency']}")
+        for _code in ("pathfinder", "launchpad_monthly"):
+            PLAN_CATALOG[_code] = {**PLAN_CATALOG[_code], "amount": float(_test_amount),
+                                   "currency": (os.getenv("PATHFINDER_TEST_CURRENCY") or "BHD").upper()}
+        print(f"WARNING: TEST price active for Pathfinder and Launchpad: {_test_amount} {(os.getenv('PATHFINDER_TEST_CURRENCY') or 'BHD').upper()}")
     except ValueError:
         print(f"Ignoring PATHFINDER_TEST_AMOUNT={_test_amount!r}: not a number")
 
@@ -3293,6 +3295,25 @@ def _full_report_ready_email(name: str | None, url: str, locale: str) -> tuple[s
                 f'<p>The Etijahi team</p></div>')
     return subject, body
 
+def _notify_coaching_purchase(user_id: str, amount, currency: str):
+    """Tells the team a Launchpad buyer is waiting for their 1:1 coaching session, so nobody falls through the cracks.
+    Best-effort: a failure here never affects the payment."""
+    try:
+        name = email = phone = ''
+        try:
+            u = supabase.auth.admin.get_user_by_id(user_id).user
+            email = getattr(u, 'email', '') or ''
+            phone = getattr(u, 'phone', '') or ''
+            name = (getattr(u, 'user_metadata', None) or {}).get('full_name', '') or ''
+        except Exception:
+            pass
+        html = (f'<p>A customer bought <b>Launchpad</b> and is owed a 1:1 coaching session.</p>'
+                f'<p>Name: {name or "—"}<br>Email: {email or "—"}<br>Phone: {phone or "—"}<br>'
+                f'Paid: {amount} {currency}<br>User id: {user_id}</p><p>Please contact them to book the session.</p>')
+        send_email(to=ADMIN_ALERT_EMAIL, subject="New Launchpad purchase: book the coaching session", html_body=html, supabase=supabase)
+    except Exception as e:
+        print("coaching purchase notification failed:", e)
+
 _prewarm_inflight: set[str] = set()
 
 def _prewarm_full_report(user_id: str):
@@ -3339,6 +3360,14 @@ def _activate_plan(user_id: str, plan_code: str):
             'pathfinder_unlocked_at': datetime.now(timezone.utc).isoformat(),
         }, on_conflict='user_id').execute()
         return
+
+    # Launchpad is Pathfinder plus a coaching session, so the full report stays unlocked for life even after the
+    # Launchpad window below ends.
+    supabase.table('user_plans').upsert({
+        'user_id': user_id,
+        'pathfinder_unlocked': True,
+        'pathfinder_unlocked_at': datetime.now(timezone.utc).isoformat(),
+    }, on_conflict='user_id').execute()
 
     now = datetime.now(timezone.utc)
     existing = supabase.table('user_plans').select('subscription_current_period_end').eq('user_id', user_id).execute()
@@ -3501,5 +3530,7 @@ async def receive_hub_transaction(request: Request, background_tasks: Background
         _activate_plan(body.external_user_id, body.plan_code)
         # Start building the full report now so it is mostly ready when the buyer comes back.
         background_tasks.add_task(_prewarm_full_report, body.external_user_id)
+        if str(body.plan_code).startswith('launchpad'):
+            background_tasks.add_task(_notify_coaching_purchase, body.external_user_id, body.amount, body.currency)
 
     return {"received": True}
