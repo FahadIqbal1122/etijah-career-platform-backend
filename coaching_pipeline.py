@@ -1,5 +1,6 @@
 import os
 import json
+import time
 import requests
 from anthropic import Anthropic
 from supabase import create_client, Client
@@ -8,28 +9,34 @@ from db_client import disable_http2
 client = Anthropic()
 supabase = disable_http2(create_client(os.getenv("SUPABASE_URL"), os.getenv("SUPABASE_KEY")))
 
-def _gemini_embed(text: str, retries: int = 1) -> list[float]:
+def _gemini_embed(text: str, retries: int = 2) -> list[float]:
     api_key = os.getenv("GEMINI_API_KEY")
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-001:embedContent?key={api_key}"
+    # The key goes in a header, not the URL: requests puts the URL in its error messages, and those end up in logs,
+    # alert emails and the bug_reports table (a 429 once stored the live key there).
+    url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-001:embedContent"
     # One of several sequential Gemini calls a report generation chains together
     # (see report_generator._generate_json) — a lone transient timeout here used
-    # to fail the whole report with no retry, so give it the same one-retry
-    # tolerance as the others before letting the exception bubble up. Scoped to
-    # Timeout/ConnectionError plus 5xx (server-side, transient) — not a bare 4xx
-    # like a bad key or malformed request, which won't be fixed by retrying and
+    # to fail the whole report with no retry, so give it a little retry
+    # tolerance before letting the exception bubble up. Scoped to
+    # Timeout/ConnectionError, 5xx (server-side, transient) and 429 (rate limit: gone a moment later, and the first
+    # retry waits) — not other 4xx like a bad key or malformed request, which won't be fixed by retrying and
     # would just waste ~30s before failing anyway.
     last_err: Exception | None = None
-    for _ in range(retries + 1):
+    for attempt in range(retries + 1):
         try:
-            resp = requests.post(url, json={"content": {"parts": [{"text": text}]}, "outputDimensionality": 768}, timeout=30)
+            resp = requests.post(url, json={"content": {"parts": [{"text": text}]}, "outputDimensionality": 768},
+                                 headers={"x-goog-api-key": api_key or ""}, timeout=30)
             resp.raise_for_status()
             return resp.json()["embedding"]["values"]
         except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as e:
             last_err = e
         except requests.exceptions.HTTPError as e:
-            if e.response is None or e.response.status_code < 500:
+            status = e.response.status_code if e.response is not None else 0
+            if status and status < 500 and status != 429:
                 raise
             last_err = e
+        if attempt < retries:
+            time.sleep(2 * (attempt + 1))
     raise last_err
 
 def chunk_transcript(raw_transcript: str) -> list[dict]:

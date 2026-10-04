@@ -176,6 +176,22 @@ def send_beta_feedback_email(to_email, to_name, beta_feedback_url, locale="en", 
 
 ADMIN_ALERT_EMAIL = "business@etijahcoaching.com"
 
+# Error text from HTTP libraries includes the request URL, and Google's carries the API key (?key=AIza...). Alerts are
+# emailed and stored in bug_reports (visible in the admin panel), so secrets are masked before either.
+_SECRET_PATTERNS = [
+    (re.compile(r"([?&]key=)[^&\s'\"]+", re.I), r"\1[hidden]"),
+    (re.compile(r"AIza[0-9A-Za-z_\-]{20,}"), "[hidden]"),
+    (re.compile(r"sk-ant-[0-9A-Za-z_\-]{10,}"), "[hidden]"),
+]
+
+def _redact_secrets(text):
+    if not text:
+        return text
+    text = str(text)
+    for pattern, repl in _SECRET_PATTERNS:
+        text = pattern.sub(repl, text)
+    return text
+
 
 def send_failure_alert(feature, error, response_id=None, user_email=None, user_name=None, extra=None, supabase=None):
     """Notifies ADMIN_ALERT_EMAIL when an AI-backed feature (AI Impact, the
@@ -214,14 +230,14 @@ def send_failure_alert(feature, error, response_id=None, user_email=None, user_n
                     "source": "system",
                     "feature": feature,
                     "error_type": type(error).__name__,
-                    "error_message": str(error)[:2000],
-                    "stack_trace": trace[:8000] if trace and trace.strip() != "NoneType: None" else None,
+                    "error_message": _redact_secrets(str(error))[:2000],
+                    "stack_trace": _redact_secrets(trace)[:8000] if trace and trace.strip() != "NoneType: None" else None,
                     "response_id": response_id,
                     "full_name": name,
                     "email": email,
                     "locale": locale,
                     "country": country,
-                    "description": extra,
+                    "description": _redact_secrets(extra),
                 }).execute()
             except Exception as e:
                 print("Failed to persist bug_reports row:", e)
@@ -239,8 +255,8 @@ def send_failure_alert(feature, error, response_id=None, user_email=None, user_n
         if country:
             lines.append(f"Country: {country}")
         if extra:
-            lines.append(f"Details: {extra}")
-        lines.append(f"Error: {type(error).__name__}: {str(error)[:500]}")
+            lines.append(f"Details: {_redact_secrets(extra)}")
+        lines.append(f"Error: {type(error).__name__}: {_redact_secrets(str(error))[:500]}")
 
         body = "<pre style=\"font-family: monospace; font-size: 13px; white-space: pre-wrap;\">" + \
             _html.escape("\n".join(lines)) + "</pre>"

@@ -184,14 +184,26 @@ def compute_scores(answers: dict) -> list[dict]:
     return results
 
 
+# How much of a dimension's population average is taken off its score when choosing a person's top 3. Nearly
+# everyone scores high on a few dimensions (national contribution averages ~90, learning and investigative ~85), so
+# ranking on the raw score gave most people the same top 3 and left the 3rd and 4th place tied for about a third of
+# them. 0.25 breaks those ties and lets what is distinctive about the person show, while the raw score still counts
+# for most; at 0.75 and above rare-but-low dimensions (realistic) start to outrank what the person is clearly high
+# in. The averages are in score_norms.py (regenerate with scripts/compute_score_norms.py).
+NORM_WEIGHT = 0.25
+
 def build_framework_output(scores: list[dict]) -> dict:
+    from score_norms import POPULATION_MEANS
     grouped = {}
     for s in scores:
         fw = s['framework']
         grouped.setdefault(fw, []).append(s)
 
     def top_n(dims, n):
-        sorted_dims = sorted(dims, key=lambda x: x['normalized_score'], reverse=True)
+        def key(d):
+            mean = POPULATION_MEANS.get((d['framework'], d['dimension']), 0.0)
+            return (d['normalized_score'] - NORM_WEIGHT * mean, d['normalized_score'])
+        sorted_dims = sorted(dims, key=key, reverse=True)
         return [d['dimension'] for d in sorted_dims[:n]]
 
     def label(score):
@@ -255,10 +267,32 @@ _FIELD_STOPWORDS = {
     'system', 'technology', 'general', 'specialist', 'officer', 'analyst', 'senior', 'assistant', 'administration',
     'applied', 'development', 'program', 'programme', 'design', 'designer', 'research', 'researcher', 'consultant',
     'director', 'advanced', 'international', 'services', 'service', 'professional',
+    'sector', 'field', 'industry', 'domain',   # generic words a translated label may carry
 }
 
 def _word_stems(text: str, stopwords: set | None = None) -> set:
     return {w[:5] for w in _re.findall(r"[a-z]{5,}", (text or '').lower()) if not stopwords or w not in stopwords}
+
+# Typed words that name a field the careers table spells differently (stem -> stems of the career titles to match).
+_FOCUS_ALIASES = {'penet': {'cyber'}, 'pente': {'cyber'}, 'hacki': {'cyber'}, 'infos': {'cyber'}}
+
+def _focus_stems(user_data: dict) -> set:
+    """Word stems of the optional 'field you have in mind' (QOFIELD), for boosting matching careers."""
+    from content_policy import clean_direction_label
+    label = user_data.get('focus_direction')
+    if not label and isinstance(user_data.get('answers'), dict):
+        label = clean_direction_label(user_data['answers'].get('QOFIELD'))
+    if not label:
+        return set()
+    stems = _word_stems(label, _FIELD_STOPWORDS)
+    # English version of an Arabic label, stored at submit (answers.QOFIELD_en)
+    answers = user_data.get('answers')
+    english = answers.get('QOFIELD_en') if isinstance(answers, dict) else None
+    if isinstance(english, str):
+        stems |= _word_stems(english, _FIELD_STOPWORDS)
+    for stem in list(stems):
+        stems |= _FOCUS_ALIASES.get(stem, set())
+    return stems
 
 def get_career_semantic_scores(supabase_client, summary: dict, user_data: dict) -> dict:
     """Embedding-similarity scores {career_id: similarity} for all careers with an embedding.
@@ -270,8 +304,9 @@ def get_career_semantic_scores(supabase_client, summary: dict, user_data: dict) 
     """
     try:
         from coaching_pipeline import _gemini_embed
-        from content_policy import with_typed_other, stage_text, typed_terms
+        from content_policy import with_typed_other, stage_text, typed_terms, clean_direction_label
         answers = user_data.get('answers')
+        focus_label = user_data.get('focus_direction') or clean_direction_label((answers or {}).get('QOFIELD') if isinstance(answers, dict) else None)
         typed = typed_terms(user_data)
         query_text = (
             f"RIASEC: {', '.join(summary.get('riasec', {}).get('top_types', []))}. "
@@ -283,6 +318,9 @@ def get_career_semantic_scores(supabase_client, summary: dict, user_data: dict) 
             + (f"Specific area of study: {', '.join(user_data.get('education_specialisms') or [])}. " if user_data.get('education_specialisms') else "")
             + (f"Wants help with: {typed['goal']}. " if typed['goal'] else "")
             + (f"Preferred career structure: {typed['structure']}. " if typed['structure'] else "")
+            + (f"Field or career they have in mind: {focus_label}"
+               + (f" ({answers['QOFIELD_en']})" if focus_label and isinstance(answers, dict) and answers.get('QOFIELD_en') else "") + ". "
+               if focus_label else "")
             + f"Current stage: {stage_text(user_data) if user_data.get('current_stage') else ''}."
         )
         embedding = _gemini_embed(query_text)
@@ -294,17 +332,49 @@ def get_career_semantic_scores(supabase_client, summary: dict, user_data: dict) 
     except Exception:
         return {}
 
+# Some careers match the typical test taker so well that they land in a third of all lists (Policy Analyst, Intelligence
+# Analyst...), which makes results look alike. Each career loses POPULARITY_WEIGHT x (the share of past assessments that
+# had it in their top 8), so among similar matches the less common career wins. The shares are in career_popularity.py
+# (regenerate with scripts/compute_career_popularity.py). Set the weight to 0 to switch this off.
+POPULARITY_WEIGHT = 10.0
+
 def score_careers(summary: dict, user_data: dict, careers: list, semantic_scores: dict | None = None) -> list:
     """Returns top 10 careers using deterministic tag-overlap scoring blended
     with embedding-similarity scoring (see get_career_semantic_scores)."""
 
-    from content_policy import is_appropriate, filter_careers_for_stage
+    from content_policy import (is_appropriate, filter_careers_for_stage, is_long_horizon_career, is_junior_inappropriate,
+                                lacks_required_degree, APPOINTED_TITLES, LOW_EXPERIENCE_LEVELS)
     careers = [
         c for c in careers
         if is_appropriate(c.get('title'), c.get('sector'), c.get('description'))
     ]
+    focus_stems = _focus_stems(user_data)
+
+    def _named_by_user(c) -> bool:
+        # A career the person named themselves (QOFIELD) is never filtered out.
+        return bool(focus_stems and focus_stems & _word_stems(c.get('title') or ''))
+
+    # Not realistic for this person: appointed posts (Ambassador), and licensed careers that need a different degree
+    # than the one they studied (a pharmacist is not shown Surgeon). Guarded so a tiny list is never emptied.
+    specialisms = extract_specialisms(user_data.get('answers'), user_data.get('education_field'))
+    feasible = [
+        c for c in careers
+        if _named_by_user(c) or (
+            (c.get('title') or '').strip().lower() not in APPOINTED_TITLES
+            and not lacks_required_degree(c.get('title'), user_data.get('education_field'), specialisms)
+        )
+    ]
+    careers = feasible if len(feasible) >= 10 else careers
+
     # Students and new graduates are shown what they can reach in 5 to 10 years, not top-of-ladder roles.
     careers = filter_careers_for_stage(careers, user_data.get('current_stage'))
+
+    # Seniority follows experience: with little or no work experience (whatever the age or stage) no top-of-ladder
+    # posts and no management titles. The person's own typed field still wins.
+    if user_data.get('experience_level') in LOW_EXPERIENCE_LEVELS:
+        junior = [c for c in careers
+                  if _named_by_user(c) or not (is_long_horizon_career(c.get('title')) or is_junior_inappropriate(c.get('title')))]
+        careers = junior if len(junior) >= 10 else careers
 
     semantic_scores = semantic_scores or {}
 
@@ -360,6 +430,11 @@ def score_careers(summary: dict, user_data: dict, careers: list, semantic_scores
     }
     user_sector_names = [sector_map.get(s, s) for s in (user_sectors or [])]
 
+    try:
+        from career_popularity import CAREER_SHARE
+    except ImportError:
+        CAREER_SHARE = {}
+
     def _score(career):
         score = 0
         for i, t in enumerate(user_riasec):
@@ -395,6 +470,19 @@ def score_careers(summary: dict, user_data: dict, careers: list, semantic_scores
             score += 2
         if typed_field_stems and typed_field_stems & _word_stems(f"{career.get('title') or ''} {career.get('sector') or ''}", _FIELD_STOPWORDS):
             score += field_match_boost
+        # The optional "field you have in mind" (QOFIELD): an explicit statement of intent, so a career named after it
+        # outweighs a field-of-study match plus a tag match (+6 left a law graduate who typed "investment" without Investment
+        # Banker in their top 10; +12 fixed that and changes the lists of people who typed nothing by 0.04 careers on average);
+        # a sector-only match gets a smaller push.
+        if focus_stems:
+            if focus_stems & _word_stems(career.get('title') or ''):
+                score += 12
+            elif focus_stems & _word_stems(career.get('sector') or ''):
+                score += 3
+        # Only for careers outside the person's own field of study: a career that is common because many testers studied its
+        # field (Software Engineer for computer science students) is a good match, not a repeat to avoid.
+        if not (user_education and any(e in (career.get('education_fields') or []) for e in user_education)):
+            score -= POPULARITY_WEIGHT * CAREER_SHARE.get(career.get('title'), 0.0)
         # Similarity is 0-1; weighted to be comparable to the tag signals above
         # without letting it fully override an exact tag match on its own.
         score += semantic_scores.get(career.get('id'), 0) * 5

@@ -649,6 +649,17 @@ def submit_assessment(body: SubmitRequest, background_tasks: BackgroundTasks, us
             body.answers[key] = cleaned
         else:
             body.answers.pop(key, None)
+    # English twins of the typed texts that are in Arabic (QOFIELD_en, QO5_other_en, QO6_other_en): career matching compares
+    # English words, so without them an Arabic "الطاقة" can never match "Energy Engineer". Anything the client sent under
+    # these names is discarded first; the translation is best-effort and never blocks the submit.
+    from report_generator import translate_typed_labels, TYPED_LABEL_KEYS
+    for key in TYPED_LABEL_KEYS:
+        body.answers.pop(f"{key}_en", None)
+    try:
+        for key, english in translate_typed_labels({k: body.answers.get(k) for k in TYPED_LABEL_KEYS}).items():
+            body.answers[f"{key}_en"] = english
+    except Exception as e:
+        print("Typed-label translation failed (continuing without):", e)
     # why_here is printed in the report prompt; it only ever holds an option value, so anything else becomes 'other'.
     if body.why_here not in WHY_HERE_VALUES:
         body.why_here = 'other'
@@ -1230,7 +1241,7 @@ def get_career_suggestions(response_id: str, user=Depends(get_optional_user)):
         raise HTTPException(status_code=404, detail="No results found for this response")
 
     profile = supabase.table('assessment_responses') \
-        .select('education_field, career_direction, sectors_of_interest, user_id, current_stage, answers') \
+        .select('education_field, career_direction, sectors_of_interest, experience_level, user_id, current_stage, answers') \
         .eq('id', response_id).single().execute()
     if not profile.data:
         raise HTTPException(status_code=404, detail="No results found for this response")
@@ -1303,7 +1314,7 @@ def get_full_report_status(response_id: str, locale: str | None = None, user=Dep
 @app.get("/assessment/{response_id}/ai-impact")
 def get_ai_impact(response_id: str, force: bool = False, locale: str | None = None, user=Depends(get_optional_user)):
     profile_row = _execute_with_retry(supabase.table('assessment_responses')
-        .select('full_name,current_stage,country,education_field,career_direction,sectors_of_interest,'
+        .select('full_name,current_stage,country,experience_level,education_field,career_direction,sectors_of_interest,'
                 'ai_impact_cache,ai_impact_cache_free,ai_impact_cache_ar,ai_impact_cache_ar_free,user_id,answers')
         .eq('id', response_id).single())
     if not profile_row.data:
@@ -1372,7 +1383,7 @@ def get_student_track(response_id: str, force: bool = False, locale: str | None 
     else (mirrors _search_matching_jobs's is_still_enrolled gate) rather than
     404ing, so the frontend can just check for an empty response."""
     profile_row = _execute_with_retry(supabase.table('assessment_responses')
-        .select('current_stage,country,education_field,career_direction,sectors_of_interest,'
+        .select('current_stage,country,experience_level,education_field,career_direction,sectors_of_interest,'
                 'student_track_cache,student_track_cache_ar,user_id,answers')
         .eq('id', response_id).single())
     if not profile_row.data:
@@ -1421,7 +1432,7 @@ def get_certifications(response_id: str, force: bool = False, locale: str | None
     roles/employers are already covered by job-listings/companies, unchanged.
     Returns {} for anyone else, same pattern as /student-track."""
     profile_row = _execute_with_retry(supabase.table('assessment_responses')
-        .select('current_stage,country,education_field,career_direction,sectors_of_interest,'
+        .select('current_stage,country,experience_level,education_field,career_direction,sectors_of_interest,'
                 'certifications_cache,certifications_cache_ar,user_id,answers')
         .eq('id', response_id).single())
     if not profile_row.data:
@@ -1469,7 +1480,7 @@ def get_career_path(response_id: str, force: bool = False, locale: str | None = 
     working professionals. Returns {} for anyone else, same pattern as
     /student-track."""
     profile_row = _execute_with_retry(supabase.table('assessment_responses')
-        .select('current_stage,country,experience_level,career_direction,sectors_of_interest,'
+        .select('current_stage,country,experience_level,education_field,career_direction,sectors_of_interest,'
                 'career_path_cache,career_path_cache_ar,user_id,answers')
         .eq('id', response_id).single())
     if not profile_row.data:
@@ -2347,7 +2358,7 @@ def delete_course(course_id: str, _=Depends(require_admin)):
 def get_course_recommendations(response_id: str, locale: str | None = None, user=Depends(get_optional_user)):
     rows = _execute_with_retry(supabase.table('assessment_results').select('*').eq('response_id', response_id))
     profile = _execute_with_retry(supabase.table('assessment_responses')
-        .select('country, education_field, career_direction, sectors_of_interest, user_id, current_stage, answers')
+        .select('country, education_field, career_direction, sectors_of_interest, experience_level, user_id, current_stage, answers')
         .eq('id', response_id).single())
     if not rows.data or not profile.data:
         raise HTTPException(status_code=404, detail="No results found for this response")
@@ -3010,7 +3021,7 @@ def delete_application(application_id: str, user=Depends(get_current_user)):
 @app.get("/assessment/{response_id}/companies")
 def get_companies_suggestions(response_id: str, user=Depends(get_optional_user)):
     profile = _execute_with_retry(supabase.table('assessment_responses')
-        .select('country, education_field, career_direction, sectors_of_interest, user_id, current_stage, answers')
+        .select('country, education_field, career_direction, sectors_of_interest, experience_level, user_id, current_stage, answers')
         .eq('id', response_id).single())
     rows = _execute_with_retry(supabase.table('assessment_results')
         .select('*')

@@ -147,13 +147,18 @@ def typed_other(answers, qid: str) -> str | None:
         return None
     return clean_typed_text(answers.get(f'{qid}_other'))
 
+def _with_english(terms: list, answers, key: str) -> list:
+    """Typed terms plus the English version stored at submit (see report_generator.translate_typed_labels), if any."""
+    en = clean_typed_text(answers.get(key), 60) if isinstance(answers, dict) and terms else None
+    return terms + [en] if en and en not in terms else terms
+
 def typed_terms(user_data: dict) -> dict:
     """Everything the person typed under an "Other" option, cleaned, for career matching: fields / sectors (lists,
     empty unless they chose "other" there) and goal / structure / stage (str or None)."""
     a = user_data.get('answers')
     return {
-        'fields': [t for t in with_typed_other(['other'] if 'other' in (user_data.get('education_field') or []) else [], a, 'QO5_other')],
-        'sectors': [t for t in with_typed_other(['other'] if 'other' in (user_data.get('sectors_of_interest') or []) else [], a, 'QO6_other')],
+        'fields': _with_english([t for t in with_typed_other(['other'] if 'other' in (user_data.get('education_field') or []) else [], a, 'QO5_other')], a, 'QO5_other_en'),
+        'sectors': _with_english([t for t in with_typed_other(['other'] if 'other' in (user_data.get('sectors_of_interest') or []) else [], a, 'QO6_other')], a, 'QO6_other_en'),
         'goal': typed_goal(a),
         'structure': typed_other(a, 'QO7'),
         'stage': typed_other(a, 'QO4') if user_data.get('current_stage') == 'other' else None,
@@ -227,7 +232,28 @@ def is_region_eligible(job_title: str | None, job_description: str | None, job_c
         return False
     if target_country_code and job_country and job_country.upper() != target_country_code.upper():
         return False
+    if target_country_code and not job_country and _names_only_other_gcc_country(job_title, job_description, target_country_code):
+        return False
     return True
+
+_GCC_COUNTRY_WORDS = {
+    "SA": ("saudi", "riyadh", "jeddah", "dammam", "khobar"),
+    "BH": ("bahrain", "manama"),
+    "AE": ("uae", "emirates", "dubai", "abu dhabi", "sharjah"),
+    "KW": ("kuwait",),
+    "QA": ("qatar", "doha"),
+    "OM": ("oman", "muscat"),
+}
+
+def _names_only_other_gcc_country(job_title: str | None, job_description: str | None, target_code: str) -> bool:
+    """For a posting with no country field: True when its text points at a different GCC country and never mentions the
+    target one (a Saudi posting returned for a Bahrain search). Postings that mention both are kept."""
+    text = f"{job_title or ''} {(job_description or '')[:1500]}".lower()
+    own = _GCC_COUNTRY_WORDS.get(target_code.upper(), ())
+    if any(re.search(rf"\b{re.escape(w)}\b", text) for w in own):
+        return False
+    return any(re.search(rf"\b{re.escape(w)}\b", text)
+               for code, words in _GCC_COUNTRY_WORDS.items() if code != target_code.upper() for w in words)
 
 
 # Job source APIs return company-authored titles with no standard seniority
@@ -297,6 +323,44 @@ def filter_careers_for_stage(careers: list, current_stage: str | None) -> list:
         return careers
     kept = [c for c in careers if not is_long_horizon_career(c.get('title'))]
     return kept if len(kept) >= 10 else careers
+
+# experience_level values that mean little or no paid work so far. These people get the same "reachable in 5 to 10
+# years" treatment as students (no top-of-ladder posts) and no management titles, whatever their age or stage.
+LOW_EXPERIENCE_LEVELS = {"no_experience", "up_to_1yr", "internships_only", "student", "fresh_grad"}
+_MANAGER_TITLE = re.compile(r"\bmanager\b", re.I)
+JUNIOR_EXCLUDED_TITLES = {"cloud architect"}   # "architect" is a degree profession elsewhere (Architect, Naval Architect...)
+
+def is_junior_inappropriate(title: str | None) -> bool:
+    """Management and senior-technical titles, which nobody with little or no experience is hired into."""
+    t = (title or "").strip().lower()
+    return bool(t) and (bool(_MANAGER_TITLE.search(t)) or t in JUNIOR_EXCLUDED_TITLES)
+
+# Posts you are appointed to, not hired for: not something a career list can send a person towards.
+APPOINTED_TITLES = {"ambassador"}
+
+# Careers that need a specific licensed degree: (education_field, specialism area or None for any area of the field).
+# Pharmacist and Surgeon share the same education_fields in the careers table, so the chosen area (QO5D) decides.
+LICENSED_CAREERS = {
+    "surgeon": ("medicine", "general_medicine"), "doctor": ("medicine", "general_medicine"),
+    "psychiatrist": ("medicine", "general_medicine"), "radiologist": ("medicine", "general_medicine"),
+    "dentist": ("medicine", "dentistry"), "pharmacist": ("medicine", "pharmacy"),
+    "judge": ("law", None),
+}
+
+def lacks_required_degree(title: str | None, education_fields: list | None, specialisms: list | None) -> bool:
+    """True when the person has studied something that rules out a licensed career (a pharmacist is not shown Surgeon,
+    an engineer is not shown Dentist). If we cannot tell (nothing studied yet, 'other', no area chosen) it is kept."""
+    req = LICENSED_CAREERS.get((title or "").strip().lower())
+    if not req:
+        return False
+    field, area = req
+    fields = {f for f in (education_fields or []) if f and f not in ("not_applicable", "other")}
+    if not fields:
+        return False
+    if field not in fields:
+        return True
+    mine = [s for s in (specialisms or []) if s.startswith(field + ":")]
+    return bool(area and mine and f"{field}: {area.replace('_', ' ')}" not in mine)
 CERTIFICATION_STAGES = {"university", "recent_graduate"}
 NO_LISTINGS_STAGES = {"high_school"}            # neither jobs nor internships
 NO_COMPANIES_STAGES = STILL_ENROLLED_STAGES     # employer target list is for graduates and up
@@ -484,7 +548,7 @@ def add_student_track_links(track: dict | None) -> dict | None:
 # Careers that match below this are not worth a card: a weak match on the page only makes the report longer and the
 # list less believable. At least MIN_CAREERS_SHOWN are always kept (best first, in the order given) so a person with
 # unusual answers never ends up with an empty list.
-MIN_MATCH_SHOWN = 50
+MIN_MATCH_SHOWN = 60
 MIN_CAREERS_SHOWN = 3
 
 def drop_weak_matches(recs: list) -> list:
