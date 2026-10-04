@@ -3126,6 +3126,13 @@ def create_checkout(body: CheckoutRequest, request: Request, user=Depends(get_cu
         raise HTTPException(status_code=400, detail=f"Unknown plan_code: {body.plan_code}")
     if not plan.get("available", True):
         raise HTTPException(status_code=400, detail=f"{plan['name']} isn't available yet")
+    # The paid report is built from an assessment, so nobody goes to the gateway before taking one
+    # (an assessment taken before signing up counts when it was made with the same email).
+    owned = supabase.table('assessment_responses').select('id').eq('user_id', user.id).limit(1).execute()
+    if not owned.data and user.email:
+        owned = supabase.table('assessment_responses').select('id').ilike('email', user.email).limit(1).execute()
+    if not owned.data:
+        raise HTTPException(status_code=400, detail="assessment_required")
 
     full_name = (user.user_metadata or {}).get("full_name", "") or ""
     first_name, _, last_name = full_name.strip().partition(" ")
