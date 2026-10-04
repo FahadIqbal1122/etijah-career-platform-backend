@@ -3265,7 +3265,24 @@ def get_my_plan(user=Depends(get_current_user)):
         "subscription_plan_code": plan.get('subscription_plan_code'),
         "subscription_status": "active" if tier == "launchpad" else ("expired" if plan.get('subscription_current_period_end') else None),
         "subscription_current_period_end": plan.get('subscription_current_period_end'),
+        "booking_url": _coaching_booking_url(user) if tier == "launchpad" else None,
     }
+
+def _coaching_booking_url(user) -> str | None:
+    """Scheduling link for the Launchpad coaching session (COACHING_BOOKING_URL, e.g. a Calendly event link), with the
+    buyer's name and email prefilled and their user id in utm_content so the booking can be matched to them.
+    None when no link is configured (the dashboard then shows the contact details instead)."""
+    base = (os.getenv("COACHING_BOOKING_URL") or "").strip()
+    if not base:
+        return None
+    from urllib.parse import urlencode
+    name = (user.user_metadata or {}).get("full_name", "") or ""
+    params = {"utm_source": "etijahi", "utm_content": f"launchpad_{user.id}"}
+    if name:
+        params["name"] = name
+    if user.email:
+        params["email"] = user.email
+    return base + ("&" if "?" in base else "?") + urlencode(params)
 
 def _invalidate_free_tier_report_cache(user_id: str):
     """Called whenever a user's tier upgrades off 'free'. Their assessment_responses rows

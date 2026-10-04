@@ -49,7 +49,11 @@ FORCED_CHOICE_SCORES = {
     'QFC_SE': {'A': 5, 'B': 1}, # A=Social, B=Low Social (Enterprising)
 }
 
-REVERSE_SCORED = {'Q21', 'Q22'}
+# Questions whose agreement means LESS of the trait. None at the moment: Q21 ("I generally stay calm...") and Q22 ("I recover
+# quickly...") are worded positively, so agreeing means MORE emotional stability. They were listed here until 4 Oct 2026, which
+# gave calm people a stability score near 0 (only 4% of testers scored "high"). Scores saved before that date are corrected
+# by scripts/recalculate_stability.py.
+REVERSE_SCORED: set = set()
 
 # Maps each question to its framework and dimension
 QUESTION_MAP = {
@@ -77,8 +81,8 @@ QUESTION_MAP = {
     'Q18': ('big_five', 'extraversion'),
     'Q19': ('big_five', 'agreeableness'),
     'Q20': ('big_five', 'agreeableness'),
-    'Q21': ('big_five', 'stability'),     # reverse scored
-    'Q22': ('big_five', 'stability'),     # reverse scored
+    'Q21': ('big_five', 'stability'),     # worded positively (agree = more stable)
+    'Q22': ('big_five', 'stability'),     # worded positively (agree = more stable)
     # Values
     'Q23': ('values', 'security'),
     'Q24': ('values', 'security'),

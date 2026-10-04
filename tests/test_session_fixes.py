@@ -127,6 +127,20 @@ class ScoreContrast(unittest.TestCase):
         self.assertEqual(se.build_framework_output(rows)["riasec"]["top_types"][0], "investigative")
 
 
+class Stability(unittest.TestCase):
+    def stability(self, q21, q22):
+        res = se.compute_scores({"Q21": q21, "Q22": q22})
+        return next(r["normalized_score"] for r in res if r["dimension"] == "stability")
+
+    def test_calm_answers_mean_high_stability(self):
+        self.assertEqual(self.stability(6, 6), 100.0)      # "I stay calm" strongly agreed -> fully stable
+        self.assertEqual(self.stability(1, 1), 0.0)        # strongly disagreed -> not stable
+        self.assertEqual(self.stability(5, 5), 80.0)
+
+    def test_nothing_is_reverse_scored(self):
+        self.assertEqual(se.REVERSE_SCORED, set())
+
+
 class Country(unittest.TestCase):
     def setUp(self):
         global rg
