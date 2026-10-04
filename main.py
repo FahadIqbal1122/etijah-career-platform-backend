@@ -109,6 +109,18 @@ PLAN_CATALOG = {
     # "launchpad_yearly":  {"name": "Launchpad Yearly",   "amount": 799, "currency": "SAR", "interval": "year",     "extension_days": 365,  "available": False},
 }
 
+# Payment testing: set PATHFINDER_TEST_AMOUNT (for example 0.1) and PATHFINDER_TEST_CURRENCY (for example BHD) in the
+# server environment to charge that for Pathfinder instead of the real price, and remove both when done. Nothing in the
+# code changes, so the real price can never ship by accident. Everyone checking out while these are set pays the test price.
+_test_amount = os.getenv("PATHFINDER_TEST_AMOUNT")
+if _test_amount:
+    try:
+        PLAN_CATALOG["pathfinder"] = {**PLAN_CATALOG["pathfinder"], "amount": float(_test_amount),
+                                      "currency": (os.getenv("PATHFINDER_TEST_CURRENCY") or "BHD").upper()}
+        print(f"WARNING: Pathfinder TEST price active: {PLAN_CATALOG['pathfinder']['amount']} {PLAN_CATALOG['pathfinder']['currency']}")
+    except ValueError:
+        print(f"Ignoring PATHFINDER_TEST_AMOUNT={_test_amount!r}: not a number")
+
 _bearer = HTTPBearer()
 _bearer_optional = HTTPBearer(auto_error=False)
 
