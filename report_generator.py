@@ -850,7 +850,7 @@ def generate_ai_content(user_data: dict, summary: dict, raw_scores: list, career
         '  "executive_summary": "3-4 sentences: plain, personal overview referencing RIASEC combination, a key value, and primary strength. Start with something specific about THIS person (their stage, field, goal or what they said), never with an adjective about their profile. If they have a field of study, include one short sentence saying that field can lead to several different careers, so the result reads as a starting point and not a single fixed path.",\n\n'
         '  "riasec_combination_title": "3-5 word creative title for this RIASEC combination e.g. The Visionary Problem-Solver",\n'
         '  "riasec_overview": "2 sentences about what this RIASEC combination means holistically.",\n'
-        '  "riasec_primary_narrative": "3-4 sentences about primary RIASEC type and career implications.",\n'
+        '  "riasec_primary_narrative": "3-4 sentences about primary RIASEC type and career implications. For all three type narratives, describe each score as a tendency, not a verdict: use could, often or may, and avoid stating what a score means or does not mean as fact.",\n'
         '  "riasec_secondary_narrative": "2-3 sentences about secondary RIASEC type.",\n'
         '  "riasec_tertiary_narrative": "2 sentences about tertiary RIASEC type.",\n\n'
         '  "big_five_overview": "2-3 sentences about the overall personality pattern across all 5 traits.",\n'
