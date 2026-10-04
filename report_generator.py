@@ -1024,7 +1024,7 @@ def build_html_report(user_data: dict, summary: dict, raw_scores: list, ai: dict
     certifications = _escape_deep(certifications) if certifications else certifications
     career_path    = _escape_deep(career_path) if career_path else career_path
     direction      = _escape_deep(direction) if direction else direction
-    career_rec_cap = 5 if tier == 'free' else 8
+    career_rec_cap = 3 if tier == 'free' else 8  # free report: 3 suggested careers
     ai_impact_cap  = 2 if tier == 'free' else 8
     T = UI_TEXT.get(locale, UI_TEXT['en'])
     riasec_meta_src    = RIASEC_META_AR    if locale == 'ar' else RIASEC_META
@@ -1458,7 +1458,8 @@ def build_html_report(user_data: dict, summary: dict, raw_scores: list, ai: dict
     # With a direction (paid) the first step, days 2-7 and the roadmap come from the plan built around it; otherwise from
     # the main report. Older cached reports carry a 5-entry week (day 1 repeated) and Month 1 / 2-3 / 4-6 phases: still shown.
     dir_plan = _as_dict((direction or {}).get('plan')) if (direction and tier != 'free') else {}
-    first_step = _as_dict(dir_plan.get('first_step') or ap.get('first_step'))
+    # Free tier gets no plan at all (not even the first step): the whole section is part of the paid report.
+    first_step = _as_dict(dir_plan.get('first_step') or ap.get('first_step')) if tier != 'free' else {}
     # Free tier keeps the single first step; days 2-7, the roadmap and the skills block are part of the paid plan.
     week_plan = [w for w in _as_list(dir_plan.get('week_plan') or ap.get('week_plan')) if isinstance(w, dict)] if tier != 'free' else []
     if len(week_plan) >= 5:
@@ -2738,7 +2739,7 @@ def get_or_generate_ai_content(response_id: str, supabase_client, tier: str = "l
     enrich_profile(profile.data)
 
     is_free = tier == 'free'
-    content_count = 5 if is_free else 8
+    content_count = 3 if is_free else 8
     content_col = 'ai_content_cache_free' if is_free else 'ai_content_cache'
     content_col_ar = 'ai_content_cache_ar_free' if is_free else 'ai_content_cache_ar'
 
@@ -2853,7 +2854,7 @@ def create_report(response_id: str, supabase_client, tier: str = "launchpad", lo
     # request here regenerates at full size instead of reusing the smaller cache.
     is_free = tier == 'free'
     impact_count = 2 if is_free else 8  # same as content_count so every career card has its AI row
-    content_count = 5 if is_free else 8
+    content_count = 3 if is_free else 8
     impact_col = 'ai_impact_cache_free' if is_free else 'ai_impact_cache'
     content_col = 'ai_content_cache_free' if is_free else 'ai_content_cache'
     impact_col_ar = 'ai_impact_cache_ar_free' if is_free else 'ai_impact_cache_ar'
@@ -2895,7 +2896,7 @@ def create_report(response_id: str, supabase_client, tier: str = "launchpad", lo
     # companies/courses for still-enrolled students on the live site, so mirror that
     # here rather than generating it (and paying for it) for everyone.
     student_track, certifications, career_path = None, None, None
-    if profile.data.get('current_stage') in STILL_ENROLLED_STAGES:
+    if profile.data.get('current_stage') in STILL_ENROLLED_STAGES and tier != 'free':  # "ways to explore" is part of the paid report
         student_track = get_or_generate_student_track(response_id, summary, profile.data, top_careers,
             supabase_client, locale=locale)
     # Certifications: university students (time to build credentials) and recent graduates.

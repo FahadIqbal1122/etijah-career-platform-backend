@@ -1273,13 +1273,11 @@ def get_career_recommendations(response_id: str, locale: str | None = None, user
     # generate_ai_content). Now rendered on the live results page's Action Plan
     # card, in addition to admin review and the downloaded PDF.
     action_plan = dict(ai_content.get("action_plan") or {})
-    # Free tier gets the single first step; days 2-7 and the 90-day roadmap are part of the paid plan.
-    if tier == "free" and not _is_admin(user):
-        for k in ("week_plan", "weeks_2_4", "month_1", "months_2_3", "months_4_6"):
-            action_plan.pop(k, None)
     recs = drop_weak_matches(ai_content.get("career_recommendations") or [])
     if tier == "free" and not _is_admin(user):
-        recs = [{k: v for k, v in r.items() if k != "next_steps"} if isinstance(r, dict) else r for r in recs]
+        # Free tier: no plan at all (not even the first step) and 3 suggested careers; both are part of the paid report.
+        action_plan = {}
+        recs = [{k: v for k, v in r.items() if k != "next_steps"} if isinstance(r, dict) else r for r in recs[:3]]
     return {
         "career_recommendations": recs,
         "action_plan": action_plan,
@@ -1375,6 +1373,10 @@ def get_student_track(response_id: str, force: bool = False, locale: str | None 
 
     locale = locale or 'en'
     tier = "launchpad" if _is_admin(user) else get_effective_tier(owner_user_id)
+    if tier == "free":
+        # "Ways to explore" is part of the paid report: free viewers get a marker (the page blurs a placeholder) and
+        # no AI call is spent on them.
+        return {"locked": True}
     cache_col_active = 'student_track_cache_ar' if locale == 'ar' else 'student_track_cache'
     cached = profile_row.data.get(cache_col_active)
     if cached and not force:
