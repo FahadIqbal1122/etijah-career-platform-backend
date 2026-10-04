@@ -1285,6 +1285,19 @@ def get_career_recommendations(response_id: str, locale: str | None = None, user
         "career_direction": owner_row.data.get('career_direction'),
     }
 
+@app.get("/assessment/{response_id}/full-report-status")
+def get_full_report_status(response_id: str, locale: str | None = None, user=Depends(get_optional_user)):
+    """Whether the paid report's main parts are saved (used by the dashboard's "building your full report" notice)."""
+    row = supabase.table('assessment_responses').select(
+        'user_id,ai_content_cache,ai_content_cache_ar,ai_impact_cache,ai_impact_cache_ar').eq('id', response_id).single().execute()
+    if not row.data:
+        raise HTTPException(status_code=404, detail="No results found for this response")
+    _assert_can_view(row.data.get('user_id'), user)
+    ar = locale == 'ar'
+    content = row.data.get('ai_content_cache_ar' if ar else 'ai_content_cache')
+    impact = row.data.get('ai_impact_cache_ar' if ar else 'ai_impact_cache')
+    return {"ready": bool(content and impact), "building": response_id in _prewarm_inflight}
+
 @app.get("/assessment/{response_id}/ai-impact")
 def get_ai_impact(response_id: str, force: bool = False, locale: str | None = None, user=Depends(get_optional_user)):
     profile_row = _execute_with_retry(supabase.table('assessment_responses')
@@ -3207,6 +3220,52 @@ def _invalidate_free_tier_report_cache(user_id: str):
         'ai_content_cache_ar_free': None,
     }).eq('user_id', user_id).execute()
 
+def _full_report_ready_email(name: str | None, url: str, locale: str) -> tuple[str, str]:
+    first = (name or '').strip().split(' ')[0]
+    if locale == 'ar':
+        subject = "تقريرك الكامل من إتجاهي جاهز"
+        body = (f'<div dir="rtl" style="font-family:Arial,sans-serif;font-size:15px;color:#1f2937;line-height:1.7">'
+                f'<p>مرحباً {first}،</p><p>شكراً لك. تقريرك الكامل جاهز الآن، ويشمل الخطة والدورات والشهادات وتحليل تأثير الذكاء الاصطناعي.</p>'
+                f'<p><a href="{url}" style="display:inline-block;background:#0770ba;color:#fff;padding:11px 20px;border-radius:10px;text-decoration:none">افتح تقريرك الكامل</a></p>'
+                f'<p>فريق إتجاهي</p></div>')
+    else:
+        subject = "Your full Etijahi report is ready"
+        body = (f'<div style="font-family:Arial,sans-serif;font-size:15px;color:#1f2937;line-height:1.7">'
+                f'<p>Hi {first},</p><p>Thank you. Your full report is ready, including your plan, courses, certifications and the AI-impact analysis.</p>'
+                f'<p><a href="{url}" style="display:inline-block;background:#0770ba;color:#fff;padding:11px 20px;border-radius:10px;text-decoration:none">Open your full report</a></p>'
+                f'<p>The Etijahi team</p></div>')
+    return subject, body
+
+_prewarm_inflight: set[str] = set()
+
+def _prewarm_full_report(user_id: str):
+    """Runs after a successful payment (background task): builds the buyer's full report right away, in the
+    report's language, so it is mostly ready by the time they open it, then emails them the link. Everything it
+    saves is the same cache the results page and PDF use, so nothing is generated twice (see single_flight).
+    Best-effort: a failure alerts the admin and the report is simply built the first time it is opened."""
+    rid = None
+    try:
+        rows = supabase.table('assessment_responses').select('id,locale,email,full_name') \
+            .eq('user_id', user_id).order('created_at', desc=True).limit(1).execute()
+        if not rows.data:
+            return
+        row = rows.data[0]
+        rid = row['id']
+        locale = row.get('locale') if row.get('locale') in ('en', 'ar') else 'en'
+        if rid in _prewarm_inflight:
+            return
+        _prewarm_inflight.add(rid)
+        try:
+            create_report(rid, supabase, tier="launchpad", locale_override=locale)
+        finally:
+            _prewarm_inflight.discard(rid)
+        if row.get('email'):
+            url = f"{os.getenv('FRONTEND_URL', '').rstrip('/')}/{locale}/results/{rid}"
+            subject, html_body = _full_report_ready_email(row.get('full_name'), url, locale)
+            send_email(to=row['email'], subject=subject, html_body=html_body, supabase=supabase)
+    except Exception as e:
+        send_failure_alert("Full report build after purchase", e, response_id=rid, supabase=supabase)
+
 def _activate_plan(user_id: str, plan_code: str):
     """Applies a paid plan_code to user_plans. Pathfinder is a permanent, one-time
     unlock; launchpad_* extends a rolling subscription window independently of it."""
@@ -3340,7 +3399,7 @@ def _send_meta_purchase_event(user_id: str, order_ref: str, amount: float, curre
 
 
 @app.post("/hub/transactions")
-async def receive_hub_transaction(request: Request):
+async def receive_hub_transaction(request: Request, background_tasks: BackgroundTasks):
     if not HUB_API_KEY:
         raise HTTPException(status_code=500, detail="HUB_API_KEY is not configured")
     raw_body = await request.body()
@@ -3383,5 +3442,7 @@ async def receive_hub_transaction(request: Request):
         # write below can't stop the Purchase event from being sent.
         _send_meta_purchase_event(body.external_user_id, body.order_ref, body.amount, body.currency, body.tap_charge_id)
         _activate_plan(body.external_user_id, body.plan_code)
+        # Start building the full report now so it is mostly ready when the buyer comes back.
+        background_tasks.add_task(_prewarm_full_report, body.external_user_id)
 
     return {"received": True}

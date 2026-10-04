@@ -637,8 +637,10 @@ def _first_step_context(user_data: dict) -> tuple[str, str]:
     return route_guidance, goal_guidance
 
 
-def generate_ai_content(user_data: dict, summary: dict, raw_scores: list, careers: list, country_profile: dict | None = None, coaching_chunks: list[dict] | None = None, locale: str = 'en', career_count: int = 8) -> dict:
-    """Split into two independent Gemini calls (personality/values narratives + action plan,
+def generate_ai_content(user_data: dict, summary: dict, raw_scores: list, careers: list, country_profile: dict | None = None, coaching_chunks: list[dict] | None = None, locale: str = 'en', career_count: int = 8, include_plan: bool = True) -> dict:
+    """include_plan=False (free tier) leaves the action plan out of the prompt, so it is not generated or paid for.
+
+    Split into two independent Gemini calls (personality/values narratives + action plan,
     and career recommendations) run concurrently, instead of one call covering ~20 narrative
     fields plus up to 8 career objects in a single JSON response. The combined schema was large
     enough that gemini-2.5-flash almost always either blew the per-call timeout or truncated
@@ -748,7 +750,8 @@ def generate_ai_content(user_data: dict, summary: dict, raw_scores: list, career
         "Reference actual scores and combinations. Do not write boilerplate.\n\n"
         + shared_header
         + coaching_block
-        + "=== MATCHED CAREERS (this person will see these elsewhere in the same report) ===\n"
+        + (
+        "=== MATCHED CAREERS (this person will see these elsewhere in the same report) ===\n"
         f"{careers_text}\n\n"
         "IMPORTANT: The action_plan below must build toward THESE specific matched careers — this "
         "person will read a Suggested Careers section listing exactly these titles, so the action plan "
@@ -757,6 +760,8 @@ def generate_ai_content(user_data: dict, summary: dict, raw_scores: list, career
         "concrete employers/certifications/roles that plausibly lead to them. Do not invent unrelated "
         "sectors, job titles, or industries that aren't represented in this list.\n\n"
         + first_step_guidance
+        if include_plan else ""
+        )
         + (
             "REALISM: this person is at the start of their path (school, university or recently graduated). In "
             "fit_summary, gap and next_action describe what they can realistically reach in the next 5 to 10 years: "
@@ -800,7 +805,8 @@ def generate_ai_content(user_data: dict, summary: dict, raw_scores: list, career
             '  "entrepreneurship_narrative": "2-3 sentences on entrepreneurial profile and whether/how to explore it.",\n\n'
             if should_show_entrepreneurship(user_data.get('career_structure')) else ""
         )
-        + ""        '  "action_plan": {\n'
+        + (
+        '  "action_plan": {\n'
         '    "first_step": {\n'
         '      "action": "1-2 sentences: the one concrete thing to do this week",\n'
         '      "why": "1 sentence: why this helps, tied to their matched careers or goal",\n'
@@ -817,11 +823,16 @@ def generate_ai_content(user_data: dict, summary: dict, raw_scores: list, career
         '    "weeks_2_4":  ["Specific action 1, written as advice (toward the matched careers above)", "Specific action 2", "Specific action 3"],\n'
         '    "months_2_3": ["Specific action 1, written as advice (toward the matched careers above)", "Specific action 2", "Specific action 3"]\n'
         '  },\n\n'
-        '  "closing_message": "2-3 warm encouraging sentences tying back to this persons unique profile."\n'
+        if include_plan else ""
+        )
+        + '  "closing_message": "2-3 warm encouraging sentences tying back to this persons unique profile."\n'
         "}\n\n"
-        "weeks_2_4 and months_2_3 are the 90-day roadmap: they continue AFTER the first week and must not repeat it.\n"
-        "Be specific and plain-spoken throughout. Remember: action_plan must stay grounded in "
-        "the matched careers list above, not a different sector or set of job titles."
+        + (
+            "weeks_2_4 and months_2_3 are the 90-day roadmap: they continue AFTER the first week and must not repeat it.\n"
+            "Be specific and plain-spoken throughout. Remember: action_plan must stay grounded in "
+            "the matched careers list above, not a different sector or set of job titles."
+            if include_plan else "Be specific and plain-spoken throughout."
+        )
     )
 
     # Students and new graduates (paid): the first three careers also get three ordered next steps, each with a
@@ -2783,7 +2794,7 @@ def get_or_generate_ai_content(response_id: str, supabase_client, tier: str = "l
     top_careers = score_careers(summary, profile.data, all_careers, semantic_scores)
 
     ai_content_en = cached_en or _generate_and_cache(supabase_client, response_id, content_col,
-        lambda: generate_ai_content(profile.data, summary, raw_scores, top_careers, country_profile, coaching_matches, 'en', career_count=content_count))
+        lambda: generate_ai_content(profile.data, summary, raw_scores, top_careers, country_profile, coaching_matches, 'en', career_count=content_count, include_plan=not is_free))
 
     if locale != 'ar':
         return ai_content_en
@@ -2864,7 +2875,7 @@ def create_report(response_id: str, supabase_client, tier: str = "launchpad", lo
         impact_col, lambda: generate_ai_impact(profile.data, summary, top_careers[:impact_count], 'en', career_count=impact_count))
 
     ai_content = profile.data.get(content_col) or _generate_and_cache(supabase_client, response_id,
-        content_col, lambda: generate_ai_content(profile.data, summary, raw_scores, top_careers, country_profile, coaching_matches, 'en', career_count=content_count))
+        content_col, lambda: generate_ai_content(profile.data, summary, raw_scores, top_careers, country_profile, coaching_matches, 'en', career_count=content_count, include_plan=not is_free))
 
     if locale == 'ar':
         try:
