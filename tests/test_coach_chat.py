@@ -30,6 +30,14 @@ class PromptTests(unittest.TestCase):
         self.assertIn("finish the assessment first", p)
         self.assertNotIn("Profile summary", p)
 
+    def test_prompt_gives_the_real_duration_and_forbids_guessing_numbers(self):
+        p = cc.build_system_prompt("assessment", "en", progress=(5, 60))
+        self.assertIn("12-15 minutes", p)
+        self.assertIn("question 5 of 60", p)
+        self.assertIn("State ONLY the facts written in this prompt", p)
+        # the invented figure from the first live test must not appear anywhere in the prompt
+        self.assertNotIn("30-45", p)
+
     def test_results_prompt_only_contains_whitelisted_profile_fields(self):
         p = cc.build_system_prompt("results", "en", "free", SUMMARY)
         self.assertIn("investigative", p)
