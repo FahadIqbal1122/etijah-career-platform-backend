@@ -732,28 +732,39 @@ def submit_assessment(body: SubmitRequest, background_tasks: BackgroundTasks, us
         locale = body.locale if body.locale in ('en', 'ar') else 'en'
         frontend_base = os.getenv('FRONTEND_URL', '').rstrip('/')
 
+        # ONE email per assessment: the results link plus the feedback form link (the stage-2 form, for everyone,
+        # whether or not beta mode is on). The separate feedback emails below are disabled on purpose.
         results_template = supabase.table('email_templates').select('*').eq('key', 'results_ready').limit(1).execute()
         results_tmpl = results_template.data[0] if results_template.data else None
         if results_tmpl and results_tmpl.get('is_active'):
             results_url = f"{frontend_base}/{locale}/results/{response_id}"
-            background_tasks.add_task(send_results_ready_email, body.email, body.full_name, results_url, locale, results_tmpl, supabase)
+            feedback_url = f"{frontend_base}/{locale}/beta-feedback/{response_id}"
+            background_tasks.add_task(send_results_ready_email, body.email, body.full_name, results_url, locale, results_tmpl, supabase, feedback_url)
 
-        # Beta cohort gets the dedicated stage-2 feedback link instead of the
-        # generic feedback form — same email slot, different template/target.
-        if _is_test_mode_enabled():
-            beta_feedback_template = supabase.table('email_templates').select('*').eq('key', 'beta_feedback_stage2').limit(1).execute()
-            beta_feedback_tmpl = beta_feedback_template.data[0] if beta_feedback_template.data else None
-            if beta_feedback_tmpl and beta_feedback_tmpl.get('is_active'):
-                beta_feedback_url = f"{frontend_base}/{locale}/beta-feedback/{response_id}"
-                beta_results_url = f"{frontend_base}/{locale}/results/{response_id}"
-                beta_first_name = (body.full_name or '').strip().split(' ')[0]
-                background_tasks.add_task(send_beta_feedback_email, body.email, beta_first_name, beta_feedback_url, locale, beta_feedback_tmpl, supabase, beta_results_url)
-        else:
-            feedback_template = supabase.table('email_templates').select('*').eq('key', 'feedback_request').limit(1).execute()
-            feedback_tmpl = feedback_template.data[0] if feedback_template.data else None
-            if feedback_tmpl and feedback_tmpl.get('is_active'):
-                feedback_url = f"{frontend_base}/{locale}/feedback"
-                background_tasks.add_task(send_feedback_email, body.email, body.full_name, feedback_url, locale, feedback_tmpl, supabase)
+        # --- previous behaviour (two emails), kept for reference ---
+        # results_template = supabase.table('email_templates').select('*').eq('key', 'results_ready').limit(1).execute()
+        # results_tmpl = results_template.data[0] if results_template.data else None
+        # if results_tmpl and results_tmpl.get('is_active'):
+        #     results_url = f"{frontend_base}/{locale}/results/{response_id}"
+        #     background_tasks.add_task(send_results_ready_email, body.email, body.full_name, results_url, locale, results_tmpl, supabase)
+
+        # # Beta cohort gets the dedicated stage-2 feedback link instead of the
+        # # generic feedback form — same email slot, different template/target.
+        # if _is_test_mode_enabled():
+        #     beta_feedback_template = supabase.table('email_templates').select('*').eq('key', 'beta_feedback_stage2').limit(1).execute()
+        #     beta_feedback_tmpl = beta_feedback_template.data[0] if beta_feedback_template.data else None
+        #     if beta_feedback_tmpl and beta_feedback_tmpl.get('is_active'):
+        #         beta_feedback_url = f"{frontend_base}/{locale}/beta-feedback/{response_id}"
+        #         beta_results_url = f"{frontend_base}/{locale}/results/{response_id}"
+        #         beta_first_name = (body.full_name or '').strip().split(' ')[0]
+        #         background_tasks.add_task(send_beta_feedback_email, body.email, beta_first_name, beta_feedback_url, locale, beta_feedback_tmpl, supabase, beta_results_url)
+        # else:
+        #     feedback_template = supabase.table('email_templates').select('*').eq('key', 'feedback_request').limit(1).execute()
+        #     feedback_tmpl = feedback_template.data[0] if feedback_template.data else None
+        #     if feedback_tmpl and feedback_tmpl.get('is_active'):
+        #         feedback_url = f"{frontend_base}/{locale}/feedback"
+        #         background_tasks.add_task(send_feedback_email, body.email, body.full_name, feedback_url, locale, feedback_tmpl, supabase)
+
 
     # Return summary
     return {"response_id": response_id, "summary": summary}

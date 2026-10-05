@@ -157,10 +157,31 @@ def send_feedback_email(to_email, to_name, feedback_url, locale="en", template_r
     send_email(to=to_email, subject=subject, html_body=html_body, supabase=supabase)
 
 
-def send_results_ready_email(to_email, to_name, results_url, locale="en", template_row=None, supabase=None):
+def send_results_ready_email(to_email, to_name, results_url, locale="en", template_row=None, supabase=None, feedback_url=None):
+    """The one email sent after an assessment: the results link plus the feedback form link.
+    The stored template may or may not have a {{feedback_url}} placeholder; when it doesn't,
+    a short bilingual feedback block is appended so the link is always included."""
     if not template_row:
         return  # template not seeded/found — nothing to send
-    subject, html_body = render_template(template_row, {"full_name": to_name, "results_url": results_url}, locale)
+    variables = {"full_name": to_name, "results_url": results_url}
+    has_placeholder = False
+    if feedback_url:
+        variables["feedback_url"] = feedback_url
+        variables["beta_feedback_url"] = feedback_url
+        has_placeholder = any(("{{feedback_url}}" in (template_row.get(k) or "") or "{{beta_feedback_url}}" in (template_row.get(k) or ""))
+                              for k in ("body_html_en", "body_html_ar"))
+    subject, html_body = render_template(template_row, variables, locale)
+    if feedback_url and not has_placeholder:
+        # The URL is built server-side (frontend base + response UUID), not user input, so it is safe to embed.
+        if locale == "ar":
+            block = (f'<div dir="rtl" style="font-family: Arial, sans-serif; font-size: 15px; color: #1f2937; line-height: 1.6; margin-top: 24px;">'
+                     f'<p>رأيك يهمنا: شاركنا ملاحظاتك في نموذج قصير يستغرق نحو 3 دقائق.</p>'
+                     f'<p><a href="{_html.escape(feedback_url)}" style="background:#0770BA;color:#fff;padding:10px 20px;border-radius:8px;text-decoration:none;font-weight:600;">شاركنا رأيك</a></p></div>')
+        else:
+            block = (f'<div style="font-family: Arial, sans-serif; font-size: 15px; color: #1f2937; line-height: 1.6; margin-top: 24px;">'
+                     f'<p>We would love your feedback. It takes about 3 minutes and shapes what we build next.</p>'
+                     f'<p><a href="{_html.escape(feedback_url)}" style="background:#0770BA;color:#fff;padding:10px 20px;border-radius:8px;text-decoration:none;font-weight:600;">Share your feedback</a></p></div>')
+        html_body += block
     send_email(to=to_email, subject=subject, html_body=html_body, supabase=supabase)
 
 
