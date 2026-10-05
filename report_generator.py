@@ -236,7 +236,7 @@ UI_TEXT = {
         'pace_lo': 'Steady', 'pace_hi': 'Fast-paced', 'env_lo': 'Large Org', 'env_hi': 'Startup',
         'sector_lo': 'Public', 'sector_hi': 'Private', 'mobility_lo': 'Local', 'mobility_hi': 'International',
         'prior_experience': 'Prior Experience', 'risk_tolerance': 'Risk Tolerance', 'portfolio_interest': 'Portfolio Interest',
-        'match': 'MATCH', 'development_tip': 'Development tip:',
+        'match': 'FIT', 'band_strong': 'Strong', 'band_good': 'Good', 'band_explore': 'Possible', 'development_tip': 'Development tip:',
         'risk_suffix': 'RISK', 'risk_label': 'AI impact risk',
         'group_build': 'Build on what you have', 'group_paths': 'Paths you may not have considered', 'rec_gap_build': 'Gap to close', 'rec_gap_paths': 'What it takes to get there', 'rec_next': 'What you can do now', 'fit_tag_strong_fit': 'Strong fit', 'fit_tag_worth_exploring': 'Worth exploring',
         'direction_tag_builds_on_background': 'Builds on your background', 'direction_tag_new_direction': 'New direction',
@@ -299,7 +299,7 @@ UI_TEXT = {
         'pace_lo': 'ثابتة', 'pace_hi': 'سريعة الإيقاع', 'env_lo': 'مؤسسة كبيرة', 'env_hi': 'شركة ناشئة',
         'sector_lo': 'حكومي', 'sector_hi': 'خاص', 'mobility_lo': 'محلي', 'mobility_hi': 'دولي',
         'prior_experience': 'خبرة سابقة', 'risk_tolerance': 'تقبّل المخاطرة', 'portfolio_interest': 'الاهتمام بمشاريع متعددة',
-        'match': 'نسبة التوافق', 'development_tip': 'نصيحة للتطوير:',
+        'match': 'درجة التوافق', 'band_strong': 'قوي', 'band_good': 'جيد', 'band_explore': 'ممكن', 'development_tip': 'نصيحة للتطوير:',
         'risk_suffix': 'المخاطر', 'risk_label': 'خطر تأثير الذكاء الاصطناعي',
         'group_build': 'ابنِ على ما لديك', 'group_paths': 'مسارات ربما لم تفكر بها', 'rec_gap_build': 'الفجوة التي تسدّها', 'rec_gap_paths': 'ما يلزم للوصول إليه', 'rec_next': 'ما يمكنك فعله الآن', 'fit_tag_strong_fit': 'تطابق قوي', 'fit_tag_worth_exploring': 'يستحق الاستكشاف',
         'direction_tag_builds_on_background': 'يبني على خلفيتك', 'direction_tag_new_direction': 'اتجاه جديد',
@@ -797,6 +797,7 @@ def generate_ai_content(user_data: dict, summary: dict, raw_scores: list, career
         f"  - Prior experience: {entrepreneurship.get('prior_experience',0):.0f}/100\n"
         f"  - Risk tolerance: {entrepreneurship.get('risk_tolerance',0):.0f}/100\n"
         f"  - Portfolio interest: {entrepreneurship.get('portfolio_interest',0):.0f}/100\n\n"
+        + _score_accuracy_rules(summary, scores)
     )
 
     coaching_block = (
@@ -1326,7 +1327,7 @@ def build_html_report(user_data: dict, summary: dict, raw_scores: list, ai: dict
             f'<span class="tag tag-gray">{rec.get("sector","")}</span>{tag_pills}'
             f'</div>'
             f'<div style="text-align:center;flex-shrink:0;">'
-            f'<div style="font-size:20pt;font-weight:900;color:#0770ba;line-height:1;">{ms}%</div>'
+            f'<div style="font-size:13pt;font-weight:900;color:#0770ba;line-height:1.1;">{T["band_strong"] if ms >= 80 else T["band_good"] if ms >= 65 else T["band_explore"]}</div>'
             f'<div class="muted" style="font-size:8.5pt;letter-spacing:1px;">{T["match"]}</div>'
             f'</div>'
             f'</div>'
@@ -2289,12 +2290,50 @@ def generate_certifications(user_data: dict, summary: dict, careers: list, local
         "Provide 4 to 6 certifications, at most 2 per career, each tied to ONE career from the list (use its number). "
         "Only well-known certifications or programmes that really exist and are still offered. If you are not sure of the "
         "exact official name, describe it by type (for example 'an introductory cloud computing certification') rather "
-        "than inventing a name. Prefer ones a person with no work experience can take now: do NOT suggest credentials "
+        "than inventing a name. Name a certification only if you are confident it is current and still accepting candidates; "
+        "if a programme may have been retired or replaced, describe it by type instead. Prefer ones a person with no work experience can take now: do NOT suggest credentials "
         "that require years of professional experience (for example PMP, CPA, CFA charter, CISSP). Not every career "
         "needs one, so skip a career rather than force a weak match. Use plain, simple language a 16-year-old can "
         "follow, and never promise a job or an outcome."
     )
     return _validate_certifications(_generate_json(prompt, label="certifications"), top)
+
+
+def _score_accuracy_rules(summary: dict, scores: dict) -> str:
+    """Facts the narrative must not contradict: every value and strength score (so a number quoted in the text always
+    matches the result), any tie for first place, and how to read the forced-choice work-style questions."""
+    dims = (summary.get('dimension_scores') or {})
+    lines = []
+    for fw, label in (('values', 'Values'), ('strengths', 'Strengths')):
+        d = dims.get(fw) or {}
+        if d:
+            lines.append(f"All {label} scores: " + ", ".join(f"{k.replace('_', ' ').title()} {v:.0f}" for k, v in sorted(d.items(), key=lambda kv: -kv[1])))
+    ties = []
+    for label, names in (
+        ('interest types', ['realistic', 'investigative', 'artistic', 'social', 'enterprising', 'conventional']),
+        ('values', list((dims.get('values') or {}).keys())),
+        ('strengths', list((dims.get('strengths') or {}).keys())),
+    ):
+        vals = {n: round(scores.get(n, 0)) for n in names if n in scores}
+        if len(vals) > 1:
+            top = max(vals.values())
+            leaders = [n.replace('_', ' ').title() for n, v in vals.items() if v == top]
+            if len(leaders) > 1:
+                ties.append(f"{' and '.join(leaders)} are tied for first among {label} at {top}")
+    out = "=== ACCURACY RULES ===\n"
+    if lines:
+        out += "\n".join(lines) + "\n"
+    out += (
+        "- Any score you mention must be exactly the number listed above. Never state a number that is not listed.\n"
+        "- A score is a self-reported answer, not a measured ability: say 'your answers suggest' or 'you showed interest in', "
+        "never that they are good at something. Keep interest, preference and ability separate.\n"
+        "- The four Work Style items are each one either/or question, so 0 or 100 only means they leaned to one side of that "
+        "question. Describe it as a leaning, never as a strong trait or a personality conclusion.\n"
+        "- Entrepreneurship at 0 means nothing was reported there, not a weakness.\n"
+    )
+    if ties:
+        out += "- TIES: " + "; ".join(ties) + ". Say plainly that they are tied and treat them as one combined profile. Do not call one 'the highest'.\n"
+    return out + "\n"
 
 
 def _country_lines(user_data) -> str:
@@ -2349,6 +2388,10 @@ def country_extra(user_data) -> str:
             f"searches, labour-market rules, places) must be about {name}. Do NOT mention, suggest or compare with any other "
             f"country (not Saudi Arabia, not the UAE, not 'the wider GCC'), even as an example.")
 
+# Credentials that have been withdrawn; the model's knowledge of them can be out of date. Add to this as they are found.
+_RETIRED_CREDENTIALS = re.compile(r"associate android developer", re.I)
+
+
 def _validate_certifications(result, top: list) -> dict:
     """Ties each certification to one of the top careers (the model refers to it by number, so translating a title cannot
     break the match), caps them at 2 per career and 6 in all, and drops empty ones. If nothing usable comes back the
@@ -2362,6 +2405,8 @@ def _validate_certifications(result, top: list) -> dict:
             continue
         career = title_by_num.get(str(it.get('career') or '').strip().rstrip('.'))
         title, why = _one_line(it.get('title'), 140), _one_line(it.get('why'))
+        if title and _RETIRED_CREDENTIALS.search(title):
+            continue
         if not (career and title and why) or per_career.get(career, 0) >= 2 or len(kept) >= 6:
             continue
         per_career[career] = per_career.get(career, 0) + 1
