@@ -194,7 +194,7 @@ UI_TEXT = {
         'riasec_code_label': 'RIASEC Code',
         'generated': 'Generated', 'confidential': 'Confidential',
         'report_confidential_footer': 'Etijahi Report · Confidential',
-        'page': 'Page',
+        'page': 'Page', 'sec_glance': 'Your results at a glance', 'glance_direction': 'Your direction', 'glance_top3': 'Your three strongest options', 'glance_first': 'Your first step this week', 'glance_more': 'The rest of this report explains each part and gives you a plan.',
         'sec01': 'Your Career Profile', 'sec02': 'Your interests', 'sec03': 'How you think and act',
         'sec04': 'What matters to you', 'sec05': 'What you are good at', 'sec06': 'How you like to work',
         'sec07': 'Entrepreneurial Profile', 'sec08': 'Careers that fit you',
@@ -210,7 +210,7 @@ UI_TEXT = {
         'howto_careers': 'Careers that fit you: how well each one matches you, what to build, one thing to do now, and how AI may change it.',
         'howto_majors': 'Fields of study to explore: degrees and fields that lead to those careers, with a simple way to try each one before you choose.',
         'howto_plan': 'Your plan: one small step for this week, then a 90-day path.',
-        'howto_profile': 'Your profile, at the end: your interests, values, strengths and work style. This is why the careers were chosen.',
+        'howto_profile': 'Your profile: your interests, values, strengths and work style. This is why the careers were chosen.',
         'intro_careers': 'We compared your personality, values and strengths with each career. The percentage shows how close the fit is. Each card also shows how AI may change that career. These are not the only options. Do not judge a career by its title; read what the work involves.',
         'intro_student_track': 'Ways to explore before you choose. Each idea leads to the careers above, and you can try it before you commit.',
         'intro_plan': 'One small step for this week, then a simple 90-day path, built around your top career match',
@@ -257,7 +257,7 @@ UI_TEXT = {
         'riasec_code_label': 'رمز RIASEC',
         'generated': 'تاريخ الإصدار', 'confidential': 'سرّي',
         'report_confidential_footer': 'تقرير إتجاهي · سرّي',
-        'page': 'صفحة',
+        'page': 'صفحة', 'sec_glance': 'نتائجك في نظرة', 'glance_direction': 'اتجاهك', 'glance_top3': 'أقوى ثلاثة خيارات لك', 'glance_first': 'خطوتك الأولى هذا الأسبوع', 'glance_more': 'بقية التقرير تشرح كل جزء وتعطيك خطة.',
         'sec01': 'ملفك المهني', 'sec02': 'اهتماماتك', 'sec03': 'كيف تفكر وتتصرف',
         'sec04': 'ما يهمك', 'sec05': 'ما تجيده', 'sec06': 'كيف تحب أن تعمل',
         'sec07': 'الملف الريادي', 'sec08': 'مسارات مهنية تناسبك',
@@ -273,7 +273,7 @@ UI_TEXT = {
         'howto_careers': 'مسارات مهنية تناسبك: مدى توافق كل مسار معك، وما تحتاج إلى بنائه، وخطوة تفعلها الآن، وكيف قد يغيّره الذكاء الاصطناعي.',
         'howto_majors': 'تخصصات للاستكشاف: تخصصات جامعية تقود إلى هذه المسارات، مع طريقة بسيطة لتجربة كل منها قبل أن تختار.',
         'howto_plan': 'خطتك: خطوة صغيرة لهذا الأسبوع، ثم مسار لـ 90 يوماً.',
-        'howto_profile': 'ملفك في النهاية: اهتماماتك وقيمك ونقاط قوتك وأسلوب عملك. ولهذا اختيرت هذه المسارات.',
+        'howto_profile': 'ملفك: اهتماماتك وقيمك ونقاط قوتك وأسلوب عملك. ولهذا اختيرت هذه المسارات.',
         'intro_careers': 'قارنّا شخصيتك وقيمك ونقاط قوتك مع كل مسار مهني. تُظهر النسبة مدى قرب التوافق، وتوضح كل بطاقة كيف قد يغيّر الذكاء الاصطناعي هذا المسار. هذه ليست الخيارات الوحيدة المتاحة. لا تحكم على المسار من اسمه، بل اقرأ ما يتضمنه العمل فعلاً.',
         'intro_student_track': 'طرق تستكشف بها قبل أن تختار. كل فكرة تقود إلى المسارات المهنية أعلاه، ويمكنك تجربتها قبل الالتزام.',
         'intro_plan': 'خطوة صغيرة لهذا الأسبوع، ثم مسار بسيط لـ 90 يوماً، مبني على أفضل مسار مهني يناسبك',
@@ -1662,8 +1662,15 @@ def build_html_report(user_data: dict, summary: dict, raw_scores: list, ai: dict
   .cover-conf  { color:rgba(255,255,255,.25); font-size:8.5pt; letter-spacing:1px; text-transform:uppercase; }
 
   /* Content pages */
-  .page { padding:12mm 16mm 20mm; page-break-after:always; min-height:270mm; position:relative; }
-  .page:last-child { page-break-after:avoid; }
+  /* Content pages flow on from each other (no forced break after every section, so no near-empty pages). The header,
+     footer, section name and page number come from the @page margin boxes added below, so they repeat on every page. */
+  .page { page:content; position:relative; }
+  .page.brk { break-before:page; }
+  .page-hdr, .page-ftr { display:none; }
+  .running-hdr { position:running(hdr); display:flex; align-items:center; }
+  .sec-heading { break-after:avoid; }
+  .all-bars-box { break-inside:avoid; }
+  .sec-title { string-set:secname content(); }
   .page-hdr { display:flex; justify-content:space-between; align-items:center; padding-bottom:7px; border-bottom:2px solid #075288; margin-bottom:18px; }
   .page-hdr-brand-wrap { display:flex; align-items:center; gap:5px; }
   .page-hdr-brand { font-size:8.5pt; font-weight:700; color:#00c9a7; letter-spacing:2px; text-transform:uppercase; }
@@ -1776,6 +1783,16 @@ def build_html_report(user_data: dict, summary: dict, raw_scores: list, ai: dict
   .back-brand    { font-size:10pt; font-weight:700; color:#00c9a7; letter-spacing:3px; text-transform:uppercase; margin-bottom:7px; }
   .back-tagline  { font-size:9pt; color:rgba(255,255,255,.35); letter-spacing:2px; }
   """
+    _side_l, _side_r = ('right', 'left') if T['dir'] == 'rtl' else ('left', 'right')
+    _q = lambda v: str(v).replace('\\', ' ').replace('"', "'")
+    css += (
+        "@page content { size:A4; margin:20mm 16mm 18mm; "
+        f"@top-{_side_l} {{ content:element(hdr); width:50%; border-bottom:2px solid #075288; padding-bottom:5px; vertical-align:bottom; }} "
+        f"@top-{_side_r} {{ content:string(secname, first); width:50%; border-bottom:2px solid #075288; padding-bottom:5px; "
+        "vertical-align:bottom; font-size:8.5pt; color:#075288; font-weight:700; } "
+        f"@bottom-{_side_l} {{ content:\"{_q(_html.unescape(name))} · {_q(T['report_confidential_footer'])} · {_q(date_str)}\"; font-size:8.5pt; color:#888; }} "
+        f"@bottom-{_side_r} {{ content:\"{_q(T['page'])} \" counter(page); font-size:8.5pt; color:#888; }} }}"
+    )
 
     if locale == 'ar':
         css += """
@@ -1819,13 +1836,7 @@ def build_html_report(user_data: dict, summary: dict, raw_scores: list, ai: dict
     summary_body = (
         howto_box + (f'<div class="summary-hero"><div class="summary-hero-label">{T["exec_summary"]}</div>'
          f'<div class="summary-hero-text">{ai.get("executive_summary","")}</div></div>' if str(ai.get('executive_summary') or '').strip() else '')
-        + f'''<div class="stat-grid">
-      <div class="stat-cell"><div class="stat-lbl">{T['riasec_code_stat']}</div><div class="stat-val">{riasec_code}</div></div>
-      <div class="stat-cell"><div class="stat-lbl">{T['primary_type_stat']}</div><div class="stat-val">{primary_meta.get('label','')}</div></div>
-      <div class="stat-cell"><div class="stat-lbl">{T['top_value_stat']}</div><div class="stat-val">{top_value_label}</div></div>
-      <div class="stat-cell"><div class="stat-lbl">{T['top_strength_stat']}</div><div class="stat-val">{top_strength_label}</div></div>
-    </div>
-    <div class="all-bars-box">
+        + f'''<div class="all-bars-box">
       <div class="all-bars-label">{T['full_riasec_overview']}</div>
       {all_riasec_bars}
     </div>'''
@@ -1855,8 +1866,43 @@ def build_html_report(user_data: dict, summary: dict, raw_scores: list, ai: dict
     # "Internships" only when every listing is an internship (final-year students and graduates get a mix).
     jobs_section_title = T['sec_jobs_internships'] if (user_data.get('current_stage') in STILL_ENROLLED_STAGES and all(j.get('is_internship') for j in jobs)) else T['sec_jobs']
 
+    # One-page summary at the start: the person's direction, the strongest three options, and the first step.
+    def _first_sentence(t, limit=260):
+        t = re.sub(r"\s+", " ", str(t or "")).strip()
+        m = re.match(r"(.+?[.!?؟])(\s|$)", t)
+        t = m.group(1) if m else t
+        return t if len(t) <= limit else t[:limit].rsplit(" ", 1)[0] + "…"
+    _band = lambda ms: T["band_strong"] if ms >= 80 else T["band_good"] if ms >= 65 else T["band_explore"]
+    glance_dir = ''
+    if direction and direction.get('label'):
+        glance_dir = (f'<div class="card" style="border-{border_side}:4px solid #0770ba;"><div class="muted" style="font-size:8.5pt;letter-spacing:1px;">'
+                      f'{T["glance_direction"]}</div><h4 class="card-title">{direction.get("label","")}</h4>'
+                      + (f'<p class="body-text">{_first_sentence(dir_plan.get("fit_note"), 300)}</p>' if dir_plan.get('fit_note') else '') + '</div>')
+    glance_top = "".join(
+        f'<div class="card" style="margin-bottom:8px;"><div class="card-row"><div><h4 class="card-title">{r.get("title","")}</h4>'
+        f'<p class="body-text" style="margin-top:4px;">{_first_sentence(r.get("fit_summary"))}</p></div>'
+        f'<div style="text-align:center;flex-shrink:0;"><div style="font-size:12pt;font-weight:900;color:#0770ba;">{_band(r.get("match_score", 0))}</div>'
+        f'<div class="muted" style="font-size:8pt;letter-spacing:1px;">{T["match"]}</div></div></div></div>'
+        for r in recs[:3]
+    )
+    glance_first = (f'<div class="card" style="border-{border_side}:4px solid #00c9a7;"><div class="muted" style="font-size:8.5pt;letter-spacing:1px;">'
+                    f'{T["glance_first"]}</div><p class="body-text" style="margin-top:4px;"><strong>{first_step.get("action","")}</strong></p>'
+                    + (f'<p class="body-text">{first_step.get("when","")}</p>' if first_step.get('when') else '') + '</div>') if first_step.get('action') else ''
+    glance_body = (
+        (f'<div class="stat-grid">'
+         f'<div class="stat-cell"><div class="stat-lbl">{T["riasec_code_stat"]}</div><div class="stat-val">{riasec_code}</div></div>'
+         f'<div class="stat-cell"><div class="stat-lbl">{T["primary_type_stat"]}</div><div class="stat-val">{primary_meta.get("label","")}</div></div>'
+         f'<div class="stat-cell"><div class="stat-lbl">{T["top_value_stat"]}</div><div class="stat-val">{top_value_label}</div></div>'
+         f'<div class="stat-cell"><div class="stat-lbl">{T["top_strength_stat"]}</div><div class="stat-val">{top_strength_label}</div></div></div>')
+        + glance_dir
+        + (f'<h4 class="card-title" style="margin:14px 0 8px;">{T["glance_top3"]}</h4>{glance_top}' if glance_top else '')
+        + glance_first
+        + f'<p class="muted" style="margin-top:10px;">{T["glance_more"]}</p>'
+    ) if recs else ''
+
     # key -> pages; a page is a list of (title, body) sections that share it
     pages_by_key = {
+        'glance':    [[(T['sec_glance'], glance_body)]],
         'summary':   [[(T['sec01'], summary_body)]],
         'majors':    [[(T['sec_student_track'], student_track_cards)]],
         'careers':   [[(T['sec08'], career_cards)]],
@@ -1882,10 +1928,13 @@ def build_html_report(user_data: dict, summary: dict, raw_scores: list, ai: dict
         T['sec_companies']: T['intro_companies'], T['sec02']: T['intro_riasec'], T['sec03']: T['intro_bigfive'],
         T['sec04']: T['intro_values'], T['sec05']: T['intro_strengths'], T['sec06']: T['intro_workstyle'],
     }
-    pages_html = ""
-    sec_num, page_no = 1, 1
-    for key in section_order(user_data.get('current_stage')):
-        for page in pages_by_key.get(key, []):
+    # Sections that start on a new page; the others follow on, so a short section no longer leaves a mostly empty page.
+    _BREAK_BEFORE = {'glance', 'summary', 'careers', 'plan', 'ai'}
+    # Running header (logo + brand), placed in every page's top margin by the @page rule in the CSS.
+    pages_html = f'<div class="running-hdr">{PAGE_HDR_LOGO_SVG}<span class="page-hdr-brand">{T["brand_header"]}</span></div>'
+    sec_num = 1
+    for key in ['glance'] + section_order(user_data.get('current_stage')):
+        for pi, page in enumerate(pages_by_key.get(key, [])):
             subs = [(t, b) for t, b in page if str(b or '').strip()]
             if not subs:
                 continue
@@ -1900,19 +1949,10 @@ def build_html_report(user_data: dict, summary: dict, raw_scores: list, ai: dict
                 )
                 sec_num += 1
             pages_html += f'''
-  <div class="page">
-    <div class="page-hdr">
-      <span class="page-hdr-brand-wrap">{PAGE_HDR_LOGO_SVG}<span class="page-hdr-brand">{T['brand_header']}</span></span>
-      <span class="page-hdr-name">{name}</span>
-    </div>
+  <div class="page{' brk' if key in _BREAK_BEFORE and pi == 0 else ''}">
     {content}
-    <div class="page-ftr">
-      <span>{T['report_confidential_footer']} · {date_str}</span>
-      <span>{T['page']} {page_no}</span>
-    </div>
   </div>
 '''
-            page_no += 1
 
     return f"""<!DOCTYPE html>
   <html lang="{T['lang']}" dir="{T['dir']}">
