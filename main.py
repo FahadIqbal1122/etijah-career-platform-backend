@@ -23,6 +23,7 @@ import httpx, hmac, hashlib, json, secrets, time
 from coaching_methodology import METHODOLOGY_DOC
 from coaching_pipeline import chunk_transcript, embed_and_store_chunks, client, embed_country_profile, sync_country_profile_embedding, sync_career_embedding, _gemini_embed
 from content_policy import drop_weak_matches, add_student_track_links, section_order, job_posted_date, is_job_fresh, job_requirements as parse_job_requirements, meets_requirements, MAX_EXPERIENCE_MONTHS_EARLY_CAREER, MAX_EXPERIENCE_MONTHS_INTERNSHIP, EDUCATION_RANK, clean_typed_text, clean_direction_label, direction_key, resolve_route, MAJORS_STAGES, CERTIFICATION_STAGES, NO_LISTINGS_STAGES, NO_COMPANIES_STAGES, is_appropriate, is_region_eligible, is_seniority_appropriate, STILL_ENROLLED_STAGES, ENTERING_MARKET_STAGES, PROFESSIONAL_STAGES, CULTURAL_GUARDRAIL
+import coach_chat as coach_chat_mod
 from ai_provider import get_ai_provider, invalidate_ai_provider_cache, AI_PROVIDER_KEY, VALID_PROVIDERS
 
 load_dotenv()
@@ -573,6 +574,7 @@ class CheckoutRequest(BaseModel):
     # server-side Purchase event to improve match quality.
     fbp: str | None = Field(default=None, max_length=200)
     fbc: str | None = Field(default=None, max_length=300)
+    locale: str | None = Field(default=None, max_length=5)  # 'en' | 'ar': the page language the buyer paid from
 
 class HubTransactionBody(BaseModel):
     external_user_id: str
@@ -3191,6 +3193,59 @@ def coach(payload: CoachRequest, user=Depends(get_current_user)):
     return {"reply": response.content[0].text}
 
 
+class CoachChatRequest(BaseModel):
+    mode: Literal["assessment", "results"]
+    message: str = Field(min_length=1, max_length=500)
+    history: list[dict] = Field(default_factory=list, max_length=12)
+    locale: Literal["en", "ar"] = "en"
+    # results mode: which report is being viewed. assessment mode: a random per-browser session id (rate limiting only).
+    response_id: str | None = Field(default=None, max_length=64)
+    session_id: str | None = Field(default=None, max_length=64)
+    question_index: int | None = Field(default=None, ge=1, le=500)
+    question_total: int | None = Field(default=None, ge=1, le=500)
+
+@app.post("/coach/chat")
+def coach_chat(payload: CoachChatRequest, request: Request, user=Depends(get_optional_user)):
+    """Two-way coach bubble (Gemini). See coach_chat.py: assessment mode gets no user data, results mode gets
+    only the profile summary every tier already sees. Not the paid /coach (Claude + coaching library)."""
+    # Behind Traefik the LAST X-Forwarded-For entry is the one the proxy appended; earlier ones are client-supplied.
+    fwd = request.headers.get("x-forwarded-for", "")
+    ip = (fwd.split(",")[-1].strip() if fwd else "") or (request.client.host if request.client else "unknown")
+    if not coach_chat_mod.check_rate_limit(f"ip:{ip}", coach_chat_mod.LIMIT_PER_IP):
+        raise HTTPException(status_code=429, detail="Too many messages, please try again later.")
+
+    tier, summary = "free", None
+    if payload.mode == "results":
+        if not payload.response_id:
+            raise HTTPException(status_code=400, detail="response_id is required in results mode")
+        if not coach_chat_mod.check_rate_limit(f"resp:{payload.response_id}", coach_chat_mod.LIMIT_RESULTS_RESPONSE):
+            raise HTTPException(status_code=429, detail="Too many messages, please try again later.")
+        profile = _execute_with_retry(supabase.table('assessment_responses')
+            .select('user_id').eq('id', payload.response_id).single())
+        if not profile.data:
+            raise HTTPException(status_code=404, detail="No results found for this response")
+        rows = _execute_with_retry(supabase.table('assessment_results')
+            .select('framework, dimension, normalized_score').eq('response_id', payload.response_id))
+        if not rows.data:
+            raise HTTPException(status_code=404, detail="No results found for this response")
+        summary = build_framework_output(rows.data)
+        tier = "launchpad" if _is_admin(user) else get_effective_tier(profile.data.get('user_id'))
+    else:
+        if not payload.session_id:
+            raise HTTPException(status_code=400, detail="session_id is required in assessment mode")
+        if not coach_chat_mod.check_rate_limit(f"sess:{payload.session_id}", coach_chat_mod.LIMIT_ASSESSMENT_SESSION):
+            # Not an error the user needs to see as one: the coach just stops chatting for now.
+            return {"reply": None, "limited": True}
+
+    try:
+        reply = coach_chat_mod.generate_reply(payload.mode, payload.message, payload.history, payload.locale, tier, summary,
+                                              (payload.question_index, payload.question_total) if payload.question_index and payload.question_total else None)
+    except Exception as e:
+        print("Coach chat failed:", repr(e))
+        raise HTTPException(status_code=503, detail="The coach is unavailable right now.")
+    return {"reply": reply, "limited": False}
+
+
 @app.post("/billing/checkout")
 def create_checkout(body: CheckoutRequest, request: Request, user=Depends(get_current_user)):
     _save_checkout_context(user.id, request, body.fbp, body.fbc)
@@ -3220,7 +3275,8 @@ def create_checkout(body: CheckoutRequest, request: Request, user=Depends(get_cu
         "plan_name": plan["name"],
         "amount": plan["amount"],
         "currency": plan["currency"],
-        "return_url": BILLING_RETURN_URL,
+        # Back to the page language the buyer was using (the frontend sends /<locale>/account/billing on to the dashboard)
+        "return_url": BILLING_RETURN_URL.replace("/account/billing", f"/{body.locale if body.locale in ('en', 'ar') else 'en'}/account/billing"),
     }
 
     try: 
