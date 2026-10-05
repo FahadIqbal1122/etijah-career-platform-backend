@@ -3214,6 +3214,10 @@ class CoachChatRequest(BaseModel):
     session_id: str | None = Field(default=None, max_length=64)
     question_index: int | None = Field(default=None, ge=1, le=500)
     question_total: int | None = Field(default=None, ge=1, le=500)
+    # The question currently on screen (assessment mode), so Sarah can explain it. Public assessment wording only.
+    question_text: str | None = Field(default=None, max_length=600)
+    question_type: str | None = Field(default=None, max_length=30)
+    question_options: list[str] | None = Field(default=None, max_length=10)
 
 @app.post("/coach/chat")
 def coach_chat(payload: CoachChatRequest, request: Request, user=Depends(get_optional_user)):
@@ -3250,7 +3254,9 @@ def coach_chat(payload: CoachChatRequest, request: Request, user=Depends(get_opt
 
     try:
         reply = coach_chat_mod.generate_reply(payload.mode, payload.message, payload.history, payload.locale, tier, summary,
-                                              (payload.question_index, payload.question_total) if payload.question_index and payload.question_total else None)
+                                              (payload.question_index, payload.question_total) if payload.question_index and payload.question_total else None,
+                                              {"text": payload.question_text, "type": payload.question_type, "options": payload.question_options}
+                                              if payload.mode == "assessment" and payload.question_text else None)
     except Exception as e:
         print("Coach chat failed:", repr(e))
         raise HTTPException(status_code=503, detail="The coach is unavailable right now.")
