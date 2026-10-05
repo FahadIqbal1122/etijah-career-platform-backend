@@ -3297,7 +3297,8 @@ def _invalidate_free_tier_report_cache(user_id: str):
     }).eq('user_id', user_id).execute()
 
 def _full_report_ready_email(name: str | None, url: str, locale: str) -> tuple[str, str]:
-    first = (name or '').strip().split(' ')[0]
+    import html as _h
+    first = _h.escape((name or '').strip().split(' ')[0])
     if locale == 'ar':
         subject = "تقريرك الكامل من إتجاهي جاهز"
         body = (f'<div dir="rtl" style="font-family:Arial,sans-serif;font-size:15px;color:#1f2937;line-height:1.7">'
@@ -3324,6 +3325,8 @@ def _notify_coaching_purchase(user_id: str, amount, currency: str):
             name = (getattr(u, 'user_metadata', None) or {}).get('full_name', '') or ''
         except Exception:
             pass
+        import html as _h
+        name, email, phone = _h.escape(name), _h.escape(email), _h.escape(phone)
         html = (f'<p>A customer bought <b>Launchpad</b> and is owed a 1:1 coaching session.</p>'
                 f'<p>Name: {name or "—"}<br>Email: {email or "—"}<br>Phone: {phone or "—"}<br>'
                 f'Paid: {amount} {currency}<br>User id: {user_id}</p><p>Please contact them to book the session.</p>')

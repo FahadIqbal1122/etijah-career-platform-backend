@@ -1299,6 +1299,14 @@ def build_html_report(user_data: dict, summary: dict, raw_scores: list, ai: dict
     risk_by_title = {_tkey(c.get('title')): c.get('ai_risk_level')
                      for c in _as_list((ai_impact or {}).get('careers')) if isinstance(c, dict)}
 
+    def _fit_band(score) -> str:
+        # match_score comes from the AI and can be missing or a string, so never compare it unchecked
+        try:
+            n = float(score)
+        except (TypeError, ValueError):
+            n = 0.0
+        return T["band_strong"] if n >= 80 else T["band_good"] if n >= 65 else T["band_explore"]
+
     def _career_card(rec: dict) -> str:
         ms = rec.get('match_score', 0)
         tag_pills = ""
@@ -1327,7 +1335,7 @@ def build_html_report(user_data: dict, summary: dict, raw_scores: list, ai: dict
             f'<span class="tag tag-gray">{rec.get("sector","")}</span>{tag_pills}'
             f'</div>'
             f'<div style="text-align:center;flex-shrink:0;">'
-            f'<div style="font-size:13pt;font-weight:900;color:#0770ba;line-height:1.1;">{T["band_strong"] if ms >= 80 else T["band_good"] if ms >= 65 else T["band_explore"]}</div>'
+            f'<div style="font-size:13pt;font-weight:900;color:#0770ba;line-height:1.1;">{_fit_band(ms)}</div>'
             f'<div class="muted" style="font-size:8.5pt;letter-spacing:1px;">{T["match"]}</div>'
             f'</div>'
             f'</div>'
@@ -1872,7 +1880,6 @@ def build_html_report(user_data: dict, summary: dict, raw_scores: list, ai: dict
         m = re.match(r"(.+?[.!?؟])(\s|$)", t)
         t = m.group(1) if m else t
         return t if len(t) <= limit else t[:limit].rsplit(" ", 1)[0] + "…"
-    _band = lambda ms: T["band_strong"] if ms >= 80 else T["band_good"] if ms >= 65 else T["band_explore"]
     glance_dir = ''
     if direction and direction.get('label'):
         glance_dir = (f'<div class="card" style="border-{border_side}:4px solid #0770ba;"><div class="muted" style="font-size:8.5pt;letter-spacing:1px;">'
@@ -1881,7 +1888,7 @@ def build_html_report(user_data: dict, summary: dict, raw_scores: list, ai: dict
     glance_top = "".join(
         f'<div class="card" style="margin-bottom:8px;"><div class="card-row"><div><h4 class="card-title">{r.get("title","")}</h4>'
         f'<p class="body-text" style="margin-top:4px;">{_first_sentence(r.get("fit_summary"))}</p></div>'
-        f'<div style="text-align:center;flex-shrink:0;"><div style="font-size:12pt;font-weight:900;color:#0770ba;">{_band(r.get("match_score", 0))}</div>'
+        f'<div style="text-align:center;flex-shrink:0;"><div style="font-size:12pt;font-weight:900;color:#0770ba;">{_fit_band(r.get("match_score"))}</div>'
         f'<div class="muted" style="font-size:8pt;letter-spacing:1px;">{T["match"]}</div></div></div></div>'
         for r in recs[:3]
     )
@@ -2349,12 +2356,14 @@ def _score_accuracy_rules(summary: dict, scores: dict) -> str:
         if d:
             lines.append(f"All {label} scores: " + ", ".join(f"{k.replace('_', ' ').title()} {v:.0f}" for k, v in sorted(d.items(), key=lambda kv: -kv[1])))
     ties = []
-    for label, names in (
-        ('interest types', ['realistic', 'investigative', 'artistic', 'social', 'enterprising', 'conventional']),
-        ('values', list((dims.get('values') or {}).keys())),
-        ('strengths', list((dims.get('strengths') or {}).keys())),
+    riasec_names = ['realistic', 'investigative', 'artistic', 'social', 'enterprising', 'conventional']
+    # per-framework scores (a dimension name could appear in more than one framework, so the flat `scores` is only a fallback)
+    for label, vals in (
+        ('interest types', dims.get('riasec') or {n: scores[n] for n in riasec_names if n in scores}),
+        ('values', dims.get('values') or {}),
+        ('strengths', dims.get('strengths') or {}),
     ):
-        vals = {n: round(scores.get(n, 0)) for n in names if n in scores}
+        vals = {n: round(v) for n, v in vals.items()}
         if len(vals) > 1:
             top = max(vals.values())
             leaders = [n.replace('_', ' ').title() for n, v in vals.items() if v == top]
