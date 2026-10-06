@@ -1387,6 +1387,22 @@ def get_full_report_status(response_id: str, locale: str | None = None, user=Dep
     impact = row.data.get('ai_impact_cache_ar' if ar else 'ai_impact_cache')
     return {"ready": bool(content and impact), "building": response_id in _prewarm_inflight}
 
+def _trim_ai_impact_free(out: dict) -> dict:
+    """Free plan shows only the first point of each AI-impact list and the first sentence of the 'what this means for you'
+    paragraph (the page blurs a placeholder for the rest), so the full text is not sent to free viewers at all."""
+    import re as _re
+    careers = []
+    for c in out.get("careers") or []:
+        c = dict(c)
+        for k in ("at_risk_tasks", "protected_skills"):
+            if isinstance(c.get(k), list):
+                c[k] = c[k][:1]
+        txt = c.get("what_this_means_for_you")
+        if isinstance(txt, str) and txt:
+            c["what_this_means_for_you"] = _re.split(r'(?<=[.!?؟])\s+', txt.strip(), maxsplit=1)[0]
+        careers.append(c)
+    return {**out, "careers": careers}
+
 @app.get("/assessment/{response_id}/ai-impact")
 def get_ai_impact(response_id: str, force: bool = False, locale: str | None = None, user=Depends(get_optional_user)):
     profile_row = _execute_with_retry(supabase.table('assessment_responses')
@@ -1417,6 +1433,7 @@ def get_ai_impact(response_id: str, force: bool = False, locale: str | None = No
         out = {**cached, "careers": (cached.get("careers") or [])[:careers_cap]}
         if is_free:
             out.pop("focus", None)  # skills-to-build / practice exercise are part of the paid plan
+            out = _trim_ai_impact_free(out)
         return out
 
     rows = _execute_with_retry(supabase.table('assessment_results')
@@ -1444,6 +1461,7 @@ def get_ai_impact(response_id: str, force: bool = False, locale: str | None = No
     out = {**result, "careers": (result.get("careers") or [])[:careers_cap]}
     if is_free:
         out.pop("focus", None)
+        out = _trim_ai_impact_free(out)
     return out
 
 def _trim_student_track(track: dict, tier: str) -> dict:

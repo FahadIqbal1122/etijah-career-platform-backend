@@ -65,6 +65,11 @@ class LandingPromptTests(unittest.TestCase):
         self.assertNotIn("Profile summary", p)
         self.assertNotIn("Current question", p)
 
+    def test_landing_prompt_can_help_choose_a_plan(self):
+        p = cc.build_system_prompt("landing", "en")
+        self.assertIn("Helping someone choose a plan", p)
+        self.assertIn("Never pressure", p)
+
     def test_landing_prompt_refuses_account_lookups_and_career_advice(self):
         p = cc.build_system_prompt("landing", "en")
         self.assertIn("cannot look up accounts", p)

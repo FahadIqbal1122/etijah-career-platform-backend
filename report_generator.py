@@ -243,7 +243,7 @@ UI_TEXT = {
         'protected_skills_label': 'Human skills that stay valuable',
         'upskilling_label': 'How to prepare',
         'what_this_means_label': 'What this means for you',
-        'ai_global_evidence': 'Global evidence', 'ai_local_outlook': 'In your market', 'ai_focus_title': 'Your skills to build and practice exercise', 'ai_skills': 'Skills to build', 'ai_exercise': 'Practice exercise', 'ai_work_sample': 'You will have', 'job_posted': 'Posted', 'job_requires': 'Requires', 'edu_high_school': 'High school', 'edu_associates': 'Diploma', 'edu_bachelors': "Bachelor's degree", 'edu_postgraduate': 'Postgraduate degree', 'exp_none': 'no experience', 'exp_months': "{n} months' experience", 'exp_years': "{n}+ years' experience", 'dir_title': 'Your chosen direction', 'dir_yours': 'Your choice', 'dir_suggested': 'Suggested match', 'dir_gap': 'Gap to close', 'dir_steps': 'Steps to reach it', 'majors_leads_to': 'Leads to', 'link_find_it': 'Search for it', 'link_open_site': 'Open the site', 'link_find_programs': 'Find degree programs', 'majors_try_it': 'Try it', 'action_first_step': 'Your first step this week', 'action_week_plan': 'Days 2–7', 'action_weeks24': 'Weeks 2–4 — Build momentum', 'action_built_top': 'Built around your top match', 'action_why': 'Why', 'action_output': 'You will produce', 'action_when': 'When', 'action_worksheet': 'Worksheet', 'action_follow_on': 'Then', 'action_roadmap': 'Your next 90 days',
+        'wsl_steady': 'Steady', 'wsl_fast': 'Fast-paced', 'wsl_large': 'Large org', 'wsl_startup': 'Startup', 'wsl_public': 'Public', 'wsl_private': 'Private', 'wsl_local': 'Local', 'wsl_reloc': 'Open to relocate', 'wsl_ltf': 'Long-term focus', 'wsl_res': 'Resilience', 'wsl_short': 'Short-term', 'wsl_long': 'Long-term', 'wsl_needs': 'Needs support', 'wsl_bounce': 'Bounces back', 'q_type': 'Career Type', 'q_value': 'Top Value', 'q_strength': 'Top Strength', 'ws_title': 'How you like to work', 'ws_sub': 'Your pace, setting and how you handle pressure', 'ct_title': 'Your interests', 'ct_sub': 'The kinds of work you enjoy most (your RIASEC profile)', 'cv_title': 'What matters to you', 'cv_sub': 'What you want from work and life', 'pe_title': 'How you think and act', 'pe_sub': 'Your personality, using the Big Five traits', 'ai_panel_title': 'How AI may change this career', 'ai_tasks_changing': 'Tasks that are changing', 'sec_profile_overview': 'Your profile', 'ai_global_evidence': 'Global evidence', 'ai_local_outlook': 'In your market', 'ai_focus_title': 'Your skills to build and practice exercise', 'ai_skills': 'Skills to build', 'ai_exercise': 'Practice exercise', 'ai_work_sample': 'You will have', 'job_posted': 'Posted', 'job_requires': 'Requires', 'edu_high_school': 'High school', 'edu_associates': 'Diploma', 'edu_bachelors': "Bachelor's degree", 'edu_postgraduate': 'Postgraduate degree', 'exp_none': 'no experience', 'exp_months': "{n} months' experience", 'exp_years': "{n}+ years' experience", 'dir_title': 'Your chosen direction', 'dir_yours': 'Your choice', 'dir_suggested': 'Suggested match', 'dir_gap': 'Gap to close', 'dir_steps': 'Steps to reach it', 'majors_leads_to': 'Leads to', 'link_find_it': 'Search for it', 'link_open_site': 'Open the site', 'link_find_programs': 'Find degree programs', 'majors_try_it': 'Try it', 'action_first_step': 'Your first step this week', 'action_week_plan': 'Days 2–7', 'action_weeks24': 'Weeks 2–4 — Build momentum', 'action_built_top': 'Built around your top match', 'action_why': 'Why', 'action_output': 'You will produce', 'action_when': 'When', 'action_worksheet': 'Worksheet', 'action_follow_on': 'Then', 'action_roadmap': 'Your next 90 days',
         'action_month1': 'Month 1 — Launch', 'action_months23': 'Months 2–3 — Build', 'action_months46': 'Months 4–6 — Grow',
         'back_headline': 'Your Journey Starts Here',
         'back_tagline_suffix': 'Etijahi Assessment',
@@ -306,7 +306,7 @@ UI_TEXT = {
         'protected_skills_label': 'مهارات إنسانية تبقى ذات قيمة',
         'upskilling_label': 'كيف تستعد',
         'what_this_means_label': 'ما الذي يعنيه هذا لك',
-        'ai_global_evidence': 'الدلائل عالمياً', 'ai_local_outlook': 'في سوقك', 'ai_focus_title': 'المهارات التي تبنيها وتمرين تطبيقي', 'ai_skills': 'مهارات تبنيها', 'ai_exercise': 'تمرين تطبيقي', 'ai_work_sample': 'ستحصل على', 'job_posted': 'نُشرت', 'job_requires': 'المطلوب', 'edu_high_school': 'الثانوية', 'edu_associates': 'دبلوم', 'edu_bachelors': 'بكالوريوس', 'edu_postgraduate': 'دراسات عليا', 'exp_none': 'بلا خبرة', 'exp_months': 'خبرة {n} أشهر', 'exp_years': 'خبرة {n}+ سنوات', 'dir_title': 'الاتجاه الذي اخترته', 'dir_yours': 'اختيارك', 'dir_suggested': 'مسار مقترح', 'dir_gap': 'الفجوة التي تسدّها', 'dir_steps': 'خطوات للوصول إليه', 'majors_leads_to': 'يقود إلى', 'link_find_it': 'ابحث عنه', 'link_open_site': 'افتح الموقع', 'link_find_programs': 'ابحث عن البرامج الدراسية', 'majors_try_it': 'جرّبه', 'action_first_step': 'خطوتك الأولى هذا الأسبوع', 'action_week_plan': 'الأيام 2–7', 'action_weeks24': 'الأسابيع 2–4 — بناء الزخم', 'action_built_top': 'مبنية حول أفضل مسار مطابق لك', 'action_why': 'لماذا', 'action_output': 'ما ستنتجه', 'action_when': 'متى', 'action_worksheet': 'ورقة العمل', 'action_follow_on': 'بعد ذلك', 'action_roadmap': 'أيامك التسعون القادمة',
+        'wsl_steady': 'ثابتة', 'wsl_fast': 'سريعة الإيقاع', 'wsl_large': 'مؤسسة كبيرة', 'wsl_startup': 'شركة ناشئة', 'wsl_public': 'حكومي', 'wsl_private': 'خاص', 'wsl_local': 'محلي', 'wsl_reloc': 'مستعد للانتقال', 'wsl_ltf': 'التركيز طويل المدى', 'wsl_res': 'المرونة', 'wsl_short': 'قصير المدى', 'wsl_long': 'طويل المدى', 'wsl_needs': 'يحتاج دعماً', 'wsl_bounce': 'يتعافى بسرعة', 'q_type': 'النمط المهني', 'q_value': 'أهم قيمة', 'q_strength': 'أبرز نقطة قوة', 'ws_title': 'كيف تحب أن تعمل', 'ws_sub': 'وتيرتك وبيئتك وكيف تتعامل مع الضغط', 'ct_title': 'اهتماماتك', 'ct_sub': 'أنواع العمل التي تستمتع بها أكثر (ملف RIASEC)', 'cv_title': 'ما يهمك', 'cv_sub': 'ما تريده من العمل والحياة', 'pe_title': 'كيف تفكر وتتصرف', 'pe_sub': 'شخصيتك وفق سمات العوامل الخمسة الكبرى', 'ai_panel_title': 'كيف قد يغيّر الذكاء الاصطناعي هذه المهنة', 'ai_tasks_changing': 'مهام تتغيّر', 'sec_profile_overview': 'ملفك الشخصي', 'ai_global_evidence': 'الدلائل عالمياً', 'ai_local_outlook': 'في سوقك', 'ai_focus_title': 'المهارات التي تبنيها وتمرين تطبيقي', 'ai_skills': 'مهارات تبنيها', 'ai_exercise': 'تمرين تطبيقي', 'ai_work_sample': 'ستحصل على', 'job_posted': 'نُشرت', 'job_requires': 'المطلوب', 'edu_high_school': 'الثانوية', 'edu_associates': 'دبلوم', 'edu_bachelors': 'بكالوريوس', 'edu_postgraduate': 'دراسات عليا', 'exp_none': 'بلا خبرة', 'exp_months': 'خبرة {n} أشهر', 'exp_years': 'خبرة {n}+ سنوات', 'dir_title': 'الاتجاه الذي اخترته', 'dir_yours': 'اختيارك', 'dir_suggested': 'مسار مقترح', 'dir_gap': 'الفجوة التي تسدّها', 'dir_steps': 'خطوات للوصول إليه', 'majors_leads_to': 'يقود إلى', 'link_find_it': 'ابحث عنه', 'link_open_site': 'افتح الموقع', 'link_find_programs': 'ابحث عن البرامج الدراسية', 'majors_try_it': 'جرّبه', 'action_first_step': 'خطوتك الأولى هذا الأسبوع', 'action_week_plan': 'الأيام 2–7', 'action_weeks24': 'الأسابيع 2–4 — بناء الزخم', 'action_built_top': 'مبنية حول أفضل مسار مطابق لك', 'action_why': 'لماذا', 'action_output': 'ما ستنتجه', 'action_when': 'متى', 'action_worksheet': 'ورقة العمل', 'action_follow_on': 'بعد ذلك', 'action_roadmap': 'أيامك التسعون القادمة',
         'action_month1': 'الشهر الأول — الانطلاقة', 'action_months23': 'الشهر 2–3 — البناء', 'action_months46': 'الشهر 4–6 — النمو',
         'back_headline': 'رحلتك تبدأ من هنا',
         'back_tagline_suffix': 'تقييم إتجاهي',
@@ -1061,13 +1061,53 @@ COVER_LOGO_SVG = _logomark_svg("coverLogoGrad", 46, "#FFFFFF", "#FFFFFF", extra_
 BACK_LOGO_SVG = _logomark_svg("backLogoGrad", 34, "#FFFFFF", "#FFFFFF", extra_style="display:block;margin:0 auto;")
 PAGE_HDR_LOGO_SVG = _logomark_svg("pageHdrLogoGrad", 12, "#0052CC", "#0091C2", extra_style="vertical-align:middle;flex-shrink:0;")
 
-def _bar(score: float, color: str = "#00c9a7") -> str:
+def _bar_side(score: float, label: str, color: str = "#00c9a7") -> str:
+    """Bar for an either/or work-style answer: the pill names the side they leaned to (like the results page), not a
+    percentage, which would read as a score for a question that only has two answers."""
     pct = min(100, max(0, float(score)))
     return (
         f'<div class="bar-track">'
         f'<div class="bar-fill" style="width:{pct:.0f}%;background:{color};"></div>'
         f'</div>'
-        f'<span class="bar-num">{pct:.0f}</span>'
+        f'<span class="bar-num bar-side">{label}</span>'
+    )
+
+def _bar(score: float, color: str = "#0770ba") -> str:
+    pct = min(100, max(0, float(score)))
+    return (
+        f'<div class="bar-track">'
+        f'<div class="bar-fill" style="width:{pct:.0f}%;background:{color};"></div>'
+        f'</div>'
+        f'<span class="bar-num">{pct:.0f}%</span>'
+    )
+
+# Small line icons for the profile cards (heroicons outline, the same set the results page uses).
+_PROFILE_ICONS = {
+    'briefcase': 'M20.25 14.15v4.25c0 1.094-.787 2.036-1.872 2.18-2.087.277-4.216.42-6.378.42s-4.291-.143-6.378-.42c-1.085-.144-1.872-1.086-1.872-2.18v-4.25m16.5 0a2.18 2.18 0 00.75-1.661V8.706c0-1.081-.768-2.015-1.837-2.175a48.114 48.114 0 00-3.413-.387m4.5 8.006c-.194.165-.42.295-.673.38A23.978 23.978 0 0112 15.75c-2.648 0-5.195-.429-7.577-1.22a2.016 2.016 0 01-.673-.38m0 0A2.18 2.18 0 013 12.489V8.706c0-1.081.768-2.015 1.837-2.175a48.111 48.111 0 013.413-.387m7.5 0V5.25A2.25 2.25 0 0013.5 3h-3a2.25 2.25 0 00-2.25 2.25v.894m7.5 0a48.667 48.667 0 00-7.5 0',
+    'heart': 'M21 8.25c0-2.485-2.099-4.5-4.688-4.5-1.935 0-3.597 1.126-4.312 2.733-.715-1.607-2.377-2.733-4.313-2.733C5.1 3.75 3 5.765 3 8.25c0 7.22 9 12 9 12s9-4.78 9-12z',
+    'star': 'M11.48 3.499a.562.562 0 011.04 0l2.125 5.111a.563.563 0 00.475.345l5.518.442c.499.04.701.663.321.988l-4.204 3.602a.563.563 0 00-.182.557l1.285 5.385a.562.562 0 01-.84.61l-4.725-2.885a.563.563 0 00-.586 0L6.982 20.54a.562.562 0 01-.84-.61l1.285-5.386a.562.562 0 00-.182-.557l-4.204-3.602a.563.563 0 01.321-.988l5.518-.442a.563.563 0 00.475-.345L11.48 3.5z',
+    'sparkles': 'M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09zM18.259 8.715L18 9.75l-.259-1.035a3.375 3.375 0 00-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 002.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 002.456 2.456L21.75 6l-1.035.259a3.375 3.375 0 00-2.456 2.456z',
+    'bolt': 'M3.75 13.5l10.5-11.25L12 10.5h8.25L9.75 21.75 12 13.5H3.75z',
+}
+
+def _icon_tile(name: str) -> str:
+    return (
+        '<span class="icon-tile"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="#0770ba" stroke-width="1.8" '
+        f'stroke-linecap="round" stroke-linejoin="round"><path d="{_PROFILE_ICONS[name]}"/></svg></span>'
+    )
+
+def _mrow(label: str, pct: float, pill: str, color: str = "#0770ba") -> str:
+    """One line of a profile card: label, a pill on the right, the bar underneath (like the results page)."""
+    pct = min(100, max(0, float(pct)))
+    return (
+        f'<div class="mrow"><div class="mrow-top"><span>{label}</span><span class="bar-num">{pill}</span></div>'
+        f'<div class="bar-track"><div class="bar-fill" style="width:{pct:.0f}%;background:{color};"></div></div></div>'
+    )
+
+def _pcard(icon: str, title: str, sub: str, rows: str, cls: str = '') -> str:
+    return (
+        f'<div class="pcard {cls}"><div class="pcard-head">{_icon_tile(icon)}<div><div class="pcard-title">{title}</div>'
+        f'<div class="pcard-sub">{sub}</div></div></div>{rows}</div>'
     )
 
 RISK_LABELS_AR = {'low': 'منخفضة', 'medium': 'متوسطة', 'high': 'عالية'}
@@ -1273,10 +1313,12 @@ def build_html_report(user_data: dict, summary: dict, raw_scores: list, ai: dict
         ('sector',      T['sector'],      T['sector_lo'],  T['sector_hi']),
         ('mobility',    T['mobility'],    T['mobility_lo'],T['mobility_hi']),
     ]:
+        # ws_bars (previous): label with (lo→hi) and a percentage pill, bar in purple
+        _ws = work_style.get(key, 50)
         ws_bars += (
             f'<div class="bar-row">'
-            f'<span class="bar-label">{lbl} <small>({lo}→{hi})</small></span>'
-            f'{_bar(work_style.get(key, 50), "#9d4edd")}'
+            f'<span class="bar-label">{lbl}</span>'
+            f'{_bar_side(_ws, hi if _ws >= 50 else lo)}'
             f'</div>'
         )
 
@@ -1290,7 +1332,7 @@ def build_html_report(user_data: dict, summary: dict, raw_scores: list, ai: dict
         entre_bars += (
             f'<div class="bar-row">'
             f'<span class="bar-label">{lbl}</span>'
-            f'{_bar(entrepreneurship.get(key, 0), "#e63946")}'
+            f'{_bar(entrepreneurship.get(key, 0), "#0770ba")}'
             f'</div>'
         )
 
@@ -1307,6 +1349,27 @@ def build_html_report(user_data: dict, summary: dict, raw_scores: list, ai: dict
         except (TypeError, ValueError):
             n = 0.0
         return T["band_strong"] if n >= 80 else T["band_good"] if n >= 65 else T["band_explore"]
+
+    # "How AI may change this career" sits inside each career card, as on the results page (it used to be its own section).
+    impact_by_title = {_tkey(c.get('title')): c for c in _as_list((ai_impact or {}).get('careers')) if isinstance(c, dict)}
+
+    def _ai_panel(c: dict) -> str:
+        if not c:
+            return ''
+        chips = ''.join(f'<span class="tag tag-green">{x}</span>' for x in _as_list(c.get('protected_skills')))
+        tasks = ''.join(f'<li>{x}</li>' for x in _as_list(c.get('at_risk_tasks')))
+        ups = ''.join(f'<li>{x}</li>' for x in _as_list(c.get('upskilling')))
+        return (
+            '<div class="ai-panel">'
+            f'<div class="card-row"><h5 class="ai-panel-title">{T["ai_panel_title"]}</h5>{_risk_badge(c.get("ai_risk_level",""), locale)}</div>'
+            + (_note('rose', T['ai_tasks_changing'], f'<ul class="ai-list">{tasks}</ul>') if tasks else '')
+            + (f'<p class="body-text" style="margin-top:6px;"><strong>{T["ai_global_evidence"]}:</strong> {c.get("global_evidence","")}</p>' if c.get('global_evidence') else '')
+            + (f'<p class="body-text" style="margin-top:5px;"><strong>{T["ai_local_outlook"]}:</strong> {c.get("gcc_outlook","")}</p>' if c.get('gcc_outlook') else '')
+            + (f'<div class="ai-chips-label">{T["protected_skills_label"]}</div><div>{chips}</div>' if chips else '')
+            + (_note('green', T['upskilling_label'], f'<ul class="ai-list">{ups}</ul>') if ups else '')
+            + _note('blue', T['what_this_means_label'], c.get('what_this_means_for_you', ''))
+            + '</div>'
+        )
 
     def _career_card(rec: dict) -> str:
         ms = rec.get('match_score', 0)
@@ -1329,7 +1392,7 @@ def build_html_report(user_data: dict, summary: dict, raw_scores: list, ai: dict
                 + ''.join(f'<li><strong>{x.get("step")}</strong>' + (f' — {x.get("why")}' if x.get('why') else '') + '</li>' for x in steps)
                 + '</ol>')
         return (
-            f'<div class="card" style="margin-bottom:10px;">'
+            f'<div class="card career-card" style="margin-bottom:10px;">'
             f'<div class="card-row">'
             f'<div>'
             f'<h4 class="card-title">{rec.get("title","")}</h4>'
@@ -1343,6 +1406,7 @@ def build_html_report(user_data: dict, summary: dict, raw_scores: list, ai: dict
             f'<p class="body-text" style="margin-top:8px;">{rec.get("fit_summary","")}</p>'
             f'<p class="muted" style="margin-top:4px;font-style:italic;">{rec.get("growth_note","")}</p>'
             f'{gap_html}{next_html}'
+            f'{_ai_panel(impact_by_title.get(_tkey(rec.get("title"))))}'
             f'</div>'
         )
 
@@ -1367,6 +1431,9 @@ def build_html_report(user_data: dict, summary: dict, raw_scores: list, ai: dict
                 career_cards += f'<h4 class="phase-title" style="margin:6px 0 10px;">{heading}</h4>' + "".join(_career_card(r) for r in group_recs)
     else:
         career_cards = "".join(_career_card(r) for r in recs)
+
+    # The first career is filled blue, as on the results page.
+    career_cards = career_cards.replace('class="card career-card"', 'class="card career-card career-top"', 1)
 
     # ── Job listing cards ──────────────────────────────────────────────────────
     job_cards = ""
@@ -1644,7 +1711,19 @@ def build_html_report(user_data: dict, summary: dict, raw_scores: list, ai: dict
         top_strength_label = top_strengths[0].replace('_',' ').title() if top_strengths else '—'
 
     # ── CSS ───────────────────────────────────────────────────────────────────
-    css = """
+    # Same type as the website: Tajawal (Arabic and Latin) and IBM Plex Mono for the small caps labels. The files are
+    # bundled in ./fonts; if one is missing the Noto fonts installed on the server are used instead.
+    _fd = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'fonts')
+    def _ff(family, file, weight):
+        path = os.path.join(_fd, file)
+        return (f"@font-face {{ font-family:'{family}'; font-weight:{weight}; src:url('file://{path}'); }}\n"
+                if os.path.exists(path) else "")
+    font_css = (_ff('Tajawal', 'Tajawal-Regular.ttf', 400) + _ff('Tajawal', 'Tajawal-Medium.ttf', 500)
+                + _ff('Tajawal', 'Tajawal-Bold.ttf', 700) + _ff('Tajawal', 'Tajawal-ExtraBold.ttf', 800)
+                + _ff('Tajawal', 'Tajawal-Black.ttf', 900)
+                + _ff('Plex Mono', 'IBMPlexMono-Regular.ttf', 400) + _ff('Plex Mono', 'IBMPlexMono-Medium.ttf', 500)
+                + _ff('Plex Mono', 'IBMPlexMono-SemiBold.ttf', 700))
+    css = font_css + """
   * { margin:0; padding:0; box-sizing:border-box; }
   body { font-family: 'Noto Naskh Arabic', 'Noto Sans Arabic', Arial, 'Helvetica Neue', sans-serif; color:#1a1a2e; line-height:1.6; font-size:10pt; }
   @page { size:A4; margin:0; }
@@ -1791,16 +1870,137 @@ def build_html_report(user_data: dict, summary: dict, raw_scores: list, ai: dict
   .back-logo     { margin-bottom:14px; }
   .back-brand    { font-size:10pt; font-weight:700; color:#00c9a7; letter-spacing:3px; text-transform:uppercase; margin-bottom:7px; }
   .back-tagline  { font-size:9pt; color:rgba(255,255,255,.35); letter-spacing:2px; }
+  /* ── Etijahi web styling ──────────────────────────────────────────────────────────────────────────────────
+     Makes the report look like the results page: Tajawal and IBM Plex Mono, the light blue page, white rounded
+     cards with a thin blue line, blue bars with a percentage pill, section title bars, and the top career filled
+     blue. These rules come last on purpose, so they override the older look above. */
+  body { font-family:'Tajawal','Noto Naskh Arabic','Noto Sans Arabic',Arial,sans-serif; color:#414142; line-height:1.65; font-size:10pt; }
+  .cover-eyebrow, .mini-badge, .stat-lbl, .sec-num, .all-bars-label, .note-label, .page-hdr-brand, .cover-brand, .cover-code-label, .back-brand, .back-tagline, .summary-hero-label, .tag-label
+      { font-family:'Plex Mono','Tajawal',monospace; }
+
+  /* cover and back cover: the website's hero gradient */
+  .cover, .back-cover { background:radial-gradient(120% 70% at 50% -10%, #188BDC 0%, #0770ba 45%, #075288 100%); }
+  .cover-accent, .back-top { background:linear-gradient(90deg,#00c9a7,#2BE3C6,#00c9a7); }
+  .cover-eyebrow { background:rgba(255,255,255,.12); border:1px solid rgba(255,255,255,.28); color:#fff; }
+  .cover-headline { font-weight:800; letter-spacing:-.5px; }
+  .cover-sub { color:rgba(255,255,255,.7); }
+  .cover-type { background:rgba(255,255,255,.14); border:1px solid rgba(255,255,255,.3); color:#fff; }
+  .cover-footer { background:rgba(0,0,0,.16); }
+
+  /* section title: a white bar, like the collapsible bars on the results page */
+  .sec-heading { display:block; background:#fff; border:1px solid rgba(7,112,186,.16); border-radius:14px; padding:11px 16px 10px; margin-bottom:14px; }
+  .sec-accent { display:none; }
+  .sec-num { display:inline-block; color:#00a88c; font-size:7.5pt; letter-spacing:2px; margin-right:8px; }
+  .sec-title { display:inline; font-size:14pt; font-weight:800; color:#414142; }
+  .sec-intro { font-size:9.5pt; color:rgba(65,65,66,.7); margin:-4px 2px 12px; }
+
+  /* running header and page */
+  .page-hdr-brand { color:#0770ba; }
+
+  /* cards */
+  .card, .col-box, .narr-box, .all-bars-box, .howto-box { background:#fff; border:1px solid rgba(7,112,186,.14); border-radius:16px; }
+  .card { padding:14px 16px; margin-bottom:11px; }
+  .card-title { color:#414142; font-weight:800; }
+  .muted { color:rgba(65,65,66,.62); }
+  .body-text { color:#414142; }
+  .howto-box .howto-title { color:#414142; font-size:11.5pt; font-weight:800; }
+  .intro-box { background:#fff; border:1px solid rgba(7,112,186,.14); border-left:3px solid #00c9a7; border-radius:12px; font-style:normal; color:#414142; }
+  .callout-box { background:#EBF3FF; border:1px solid rgba(7,112,186,.14); border-left:3px solid #0770ba; border-radius:12px; color:#414142; }
+  .riasec-overview { background:#EBF3FF; border:1px solid rgba(7,112,186,.16); border-radius:14px; }
+  .riasec-combo-title { color:#414142; }
+  /* (radial gradient does not paint reliably in a short box in the PDF engine, so a solid blue with a linear gradient on top) */
+  .summary-hero { background-color:#0770ba; background-image:linear-gradient(160deg,#0f84d4 0%,#0770ba 55%,#075288 100%); border-radius:18px; }
+  .summary-hero-label { color:#7ff0dc; }
+
+  /* stat boxes: mono teal label, bold value */
+  .stat-cell { background:#fff; border:1px solid rgba(7,112,186,.14); border-radius:14px; padding:12px 10px; }
+  .stat-lbl { color:#00a88c; font-size:7.5pt; letter-spacing:2px; }
+  .stat-val { color:#414142; font-size:11pt; font-weight:800; }
+
+  /* score bars: blue fill and a percentage pill */
+  .bar-label { color:#414142; font-weight:500; }
+  .bar-track { height:7px; background:#E6EEF8; border-radius:999px; }
+  .bar-fill { border-radius:999px; }
+  .bar-num { width:auto; min-width:34px; padding:1px 8px; text-align:center; border-radius:999px; background:#EBF3FF; border:1px solid #9CC7E8; color:#0B5C99; font-size:8pt; font-weight:700; }
+  .score-circle { width:auto !important; height:auto !important; padding:2px 11px; border-radius:999px !important; background:#EBF3FF !important; border:1px solid #9CC7E8; color:#0B5C99 !important; font-size:9.5pt !important; font-weight:700; }
+  .score-circle::after { content:"%"; }
+  .bar-side { background:#ECEEF2; border-color:#C6CAD4; color:#545968; min-width:0; padding:1px 10px; }
+  .card-row + .bar-row .bar-num { display:none; }
+  .mini-badge { background:#EBF3FF; color:#0B5C99; font-size:7.5pt; letter-spacing:1.5px; }
+  .pill { background:#ECEEF2; color:#545968; border:1px solid #C6CAD4; }
+
+  /* strengths and values */
+  .strength-card { border-left:4px solid #00c9a7 !important; }
+  .dev-tip { background:#E2F6F0; border:1px solid #8FD8C3; color:#0A705A; border-radius:10px; }
+  .value-card { background:#fff; border:1px solid rgba(7,112,186,.14); border-top:3px solid #00c9a7; border-radius:16px; }
+  .value-rank { color:rgba(0,201,167,.3); }
+  .col-title { color:#414142; border-bottom:1px solid rgba(7,112,186,.14); }
+
+  /* plan */
+  .action-phase { border-left:2px solid rgba(7,112,186,.16); }
+  .action-item { background:#fff; border:1px solid rgba(7,112,186,.12); border-left:3px solid #00c9a7; border-radius:0 12px 12px 0; }
+
+  /* tags and notes: rounder, same colour meanings */
+  .tag { font-weight:700; }
+  .note { border-radius:0 12px 12px 0; }
+
+  /* careers: cards may split across pages (one tall card no longer leaves a nearly empty page), top one filled blue */
+  .career-card { break-inside:auto; page-break-inside:auto; }
+  .career-card .tag { break-inside:avoid; }
+  .career-card .note, .career-card .ai-panel { break-inside:auto; page-break-inside:auto; }
+  .sec-heading, .sec-intro { break-after:avoid; page-break-after:avoid; }
+  .career-top { background:#0770ba; border-color:#0770ba; }
+  .career-top .card-title, .career-top .body-text { color:#fff; }
+  .career-top .muted, .career-top .muted * { color:rgba(255,255,255,.82); }
+  .career-top .card-row > div:last-child > div:first-child { color:#fff !important; }
+  .career-top .tag { background:rgba(255,255,255,.16); border-color:rgba(255,255,255,.4); color:#fff; }
+  .career-top .note { background:rgba(255,255,255,.14); border-color:rgba(255,255,255,.45); }
+  .career-top .note-label { color:#fff; }
+  .career-top .note, .career-top .note * { color:#fff; }
+
+  /* profile in numbers: compact cards in two columns with an icon tile, like the results page */
+  .pgrid { display:flex; gap:12px; margin-bottom:12px; }
+  .pcard { flex:1; background:#fff; border:1px solid rgba(7,112,186,.14); border-radius:18px; padding:14px 16px; break-inside:avoid; page-break-inside:avoid; }
+  .pcard-wide { width:100%; flex:none; margin-bottom:12px; }
+  .pcard-head { display:flex; align-items:center; gap:10px; margin-bottom:12px; }
+  .icon-tile { display:inline-flex; align-items:center; justify-content:center; width:30px; height:30px; background:#EBF3FF; border-radius:10px; flex-shrink:0; }
+  .pcard-title { font-size:11.5pt; font-weight:800; color:#414142; line-height:1.2; }
+  .pcard-sub { font-size:8pt; color:rgba(65,65,66,.62); line-height:1.35; }
+  .mrow { margin-bottom:14px; }
+  .mrow-top { display:flex; justify-content:space-between; align-items:center; font-size:9pt; color:#414142; margin-bottom:7px; }
+  .mrow .bar-num { display:inline-block; line-height:1.35; padding:2px 10px; min-width:38px; }
+  .mrow .bar-track { margin-top:0; }
+  .pcard-wide .mrow { display:inline-block; width:31%; margin-right:2%; vertical-align:top; }
+
+  /* "How AI may change this career" inside each career card */
+  .ai-panel { background:#fff; border:1px solid rgba(7,112,186,.16); border-radius:14px; padding:10px 12px; margin-top:10px; }
+  .ai-panel-title { font-size:10pt; font-weight:800; color:#414142; margin:0; }
+  .ai-panel, .ai-panel .body-text, .ai-panel strong { color:#414142 !important; }
+  .ai-chips-label { font-size:7.5pt; letter-spacing:1px; text-transform:uppercase; color:#545968; margin:8px 0 2px; font-weight:700; }
+  .ai-list { margin:3px 0 0 16px; padding:0; }
+  .ai-list li { margin-bottom:2px; }
+  .note-rose { background:#fde7eb; border-color:#f0a3b2; } .note-rose .note-label { color:#ae2440; }
+  .career-top .ai-panel .note-rose { background:#fde7eb; border-color:#f0a3b2; }
+  .career-top .ai-panel .note-blue { background:#e6f1fa; border-color:#9cc7e8; }
+  .career-top .ai-panel .note-green { background:#e2f6f0; border-color:#0a705a; }
+  .career-top .ai-panel .note, .career-top .ai-panel .note * { color:#414142; }
+  .career-top .ai-panel .note-rose .note-label { color:#ae2440; } .career-top .ai-panel .note-blue .note-label { color:#0b5c99; } .career-top .ai-panel .note-green .note-label { color:#0a705a; }
+  .career-top .ai-panel .tag-green { background:#e2f6f0; border-color:#8fd8c3; color:#0a705a; }
+  .career-top .ai-panel .tag-amber { background:#fff1d1; border-color:#f0c25e; color:#8a5300; }
+  .career-top .ai-panel .tag-rose { background:#fde7eb; border-color:#f0a3b2; color:#ae2440; }
+
+  /* Arabic: no mono face, no letter spacing, as on the website */
+  .rtl-mono-reset { letter-spacing:0; }
   """
     _side_l, _side_r = ('right', 'left') if T['dir'] == 'rtl' else ('left', 'right')
     _q = lambda v: str(v).replace('\\', ' ').replace('"', "'")
     css += (
-        "@page content { size:A4; margin:20mm 16mm 18mm; "
-        f"@top-{_side_l} {{ content:element(hdr); width:50%; border-bottom:2px solid #075288; padding-bottom:5px; vertical-align:bottom; }} "
-        f"@top-{_side_r} {{ content:string(secname, first); width:50%; border-bottom:2px solid #075288; padding-bottom:5px; "
+        "@page content { size:A4; margin:23mm 16mm 18mm; background:#F5F9FF; "
+        f"@top-{_side_l} {{ font-family:'Tajawal','Noto Sans',sans-serif; content:element(hdr); width:50%; border-bottom:1px solid rgba(7,112,186,.35); padding-bottom:5px; vertical-align:bottom; }} "
+        f"@top-{_side_r} {{ font-family:'Tajawal','Noto Sans',sans-serif; content:string(secname, first); width:50%; border-bottom:1px solid rgba(7,112,186,.35); padding-bottom:5px; "
         "vertical-align:bottom; font-size:8.5pt; color:#075288; font-weight:700; } "
-        f"@bottom-{_side_l} {{ content:\"{_q(_html.unescape(name))} · {_q(T['report_confidential_footer'])} · {_q(date_str)}\"; font-size:8.5pt; color:#888; }} "
-        f"@bottom-{_side_r} {{ content:\"{_q(T['page'])} \" counter(page); font-size:8.5pt; color:#888; }} }}"
+        f"@bottom-{_side_l} {{ font-family:'Tajawal','Noto Sans',sans-serif; content:\"{_q(_html.unescape(name))} · {_q(T['report_confidential_footer'])} · {_q(date_str)}\"; font-size:8.5pt; color:#888; }} "
+        f"@bottom-{_side_r} {{ font-family:'Tajawal','Noto Sans',sans-serif; content:\"{_q(T['page'])} \" counter(page); font-size:8.5pt; color:#888; }} }}"
     )
 
     if locale == 'ar':
@@ -1819,6 +2019,15 @@ def build_html_report(user_data: dict, summary: dict, raw_scores: list, ai: dict
   .value-rank  { text-align: right; }
   .bar-num     { text-align: left; }
   .cover-eyebrow, .mini-badge, .stat-lbl, .sec-num, .all-bars-label, .page-hdr-brand, .cover-brand, .back-brand, .back-tagline { letter-spacing: 0; }
+  .cover-eyebrow, .mini-badge, .stat-lbl, .sec-num, .all-bars-label, .note-label, .page-hdr-brand, .cover-brand, .cover-code-label, .back-brand, .back-tagline, .summary-hero-label { font-family:'Tajawal','Noto Naskh Arabic',sans-serif; }
+  .sec-num { margin-right:0; margin-left:8px; }
+  .pcard-wide .mrow { margin-right:0; margin-left:2%; }
+  .ai-list { margin:3px 16px 0 0; }
+  .strength-card { border-right-color:#00c9a7 !important; }
+  .callout-box { border-left:1px solid rgba(7,112,186,.14); border-right:3px solid #0770ba; }
+  .intro-box { border-left:1px solid rgba(7,112,186,.14); border-right:3px solid #00c9a7; }
+  .action-item { border-left:1px solid rgba(7,112,186,.12); border-right:3px solid #00c9a7; border-radius:12px 0 0 12px; }
+  .note { border-radius:12px 0 0 12px; }
   /* WeasyPrint mis-positions column-flex + align-items:center under direction:rtl,
      pushing centered content off-page — force ltr on these containers and restore
      rtl on their text children so glyph shaping/bidi still reads correctly. */
@@ -1842,14 +2051,17 @@ def build_html_report(user_data: dict, summary: dict, raw_scores: list, ai: dict
     _howto_items = ''.join(
         f'<li><strong>{T[k].split(": ", 1)[0]}:</strong> {T[k].split(": ", 1)[1] if ": " in T[k] else ""}</li>' for k in _howto_keys)
     howto_box = f'<div class="howto-box"><div class="howto-title">{T["howto_title"]}</div>{T["howto_intro"]}<ul>{_howto_items}</ul></div>'
+    # Same as the results page: the short guide and three quick cards. (Previously also an executive summary and a
+    # full RIASEC score overview, which the page does not show.)
+    _primary = (riasec_meta_src.get(riasec_types[0], {}).get('label', riasec_types[0].title()) if locale == 'ar' else riasec_types[0].title()) if riasec_types else '—'
     summary_body = (
-        howto_box + (f'<div class="summary-hero"><div class="summary-hero-label">{T["exec_summary"]}</div>'
-         f'<div class="summary-hero-text">{ai.get("executive_summary","")}</div></div>' if str(ai.get('executive_summary') or '').strip() else '')
-        + f'''<div class="all-bars-box">
-      <div class="all-bars-label">{T['full_riasec_overview']}</div>
-      {all_riasec_bars}
-    </div>'''
+        howto_box + '<div class="stat-grid">'
+        + f'<div class="stat-cell"><div class="stat-lbl">{T["q_type"]}</div><div class="stat-val">{_primary}</div></div>'
+        + f'<div class="stat-cell"><div class="stat-lbl">{T["q_value"]}</div><div class="stat-val">{top_value_label}</div></div>'
+        + f'<div class="stat-cell"><div class="stat-lbl">{T["q_strength"]}</div><div class="stat-val">{top_strength_label}</div></div>'
+        + '</div>'
     )
+    # summary_body (previous): how-to box + executive summary + 'full RIASEC score overview'
     riasec_body = (
         (f'<div class="riasec-overview"><div class="riasec-combo-title">{ai.get("riasec_combination_title","")}</div>'
          f'<p class="body-text" style="margin-top:6px;">{ai.get("riasec_overview","")}</p></div>'
@@ -1869,9 +2081,9 @@ def build_html_report(user_data: dict, summary: dict, raw_scores: list, ai: dict
         f'<div class="col-box"><div class="col-title">{T["entrepreneurship_scores"]}</div>{entre_bars}</div>'
         + _box('narr-box', ai.get('entrepreneurship_narrative'))
     ) if show_entre else ''
-    ai_body = (
-        _box('intro-box', ai_impact_summary) + ai_impact_cards
-    )
+    # ai_body = (_box('intro-box', ai_impact_summary) + ai_impact_cards)   # previous: its own section
+    ai_body = ''   # now shown inside each career card, with the overall note at the top of the careers section
+    ai_overview = _note('blue', T['sec09'], ai_impact_summary)
     # "Internships" only when every listing is an internship (final-year students and graduates get a mix).
     jobs_section_title = T['sec_jobs_internships'] if (user_data.get('current_stage') in STILL_ENROLLED_STAGES and all(j.get('is_internship') for j in jobs)) else T['sec_jobs']
 
@@ -1908,12 +2120,35 @@ def build_html_report(user_data: dict, summary: dict, raw_scores: list, ai: dict
         + f'<p class="muted" style="margin-top:10px;">{T["glance_more"]}</p>'
     ) if recs else ''
 
+    # ── Profile in numbers: compact cards in two columns, like the profile section of the results page ─────────────
+    _rs = sorted(['realistic','investigative','artistic','social','enterprising','conventional'], key=lambda k: -scores.get(k, 0))
+    _ov_riasec = ''.join(_mrow(riasec_meta_src.get(k, {}).get('label', k.title()) if locale == 'ar' else k.title(), scores.get(k, 0), f'{scores.get(k, 0):.0f}%') for k in _rs)
+    _ov_values = ''.join(_mrow(VALUE_NAMES_AR.get(v, v.replace('_',' ').title()) if locale == 'ar' else v.replace('_',' ').title(), scores.get(v, 0), f'{scores.get(v, 0):.0f}%') for v in top_values[:3])
+    _ov_strengths = ''.join(_mrow(STRENGTH_NAMES_AR.get(v, v.replace('_',' ').title()) if locale == 'ar' else v.replace('_',' ').title(), scores.get(v, 0), f'{scores.get(v, 0):.0f}%') for v in top_strengths[:3])
+    _ov_bf = ''.join(_mrow(big_five_labels_src.get(k, k.title()), scores.get(k, 50), (LEVEL_LABELS_AR.get(str(big_five.get(k, 'medium')), '') if locale == 'ar' else str(big_five.get(k, 'medium')).title())) for k in ['openness','conscientiousness','extraversion','agreeableness','stability'])
+    # Work style: the same six rows and wording as the results page (the either/or answers name the side leaned to)
+    _res = resilience or {}
+    _ov_ws = ''.join(_mrow(lbl, sc, (hi if sc >= 50 else lo), '#00c9a7') for lbl, lo, hi, sc in [
+        (T['work_pace'], T['wsl_steady'], T['wsl_fast'], work_style.get('pace', 50)),
+        (T['environment'], T['wsl_large'], T['wsl_startup'], work_style.get('environment', 50)),
+        (T['sector'], T['wsl_public'], T['wsl_private'], work_style.get('sector', 50)),
+        (T['mobility'], T['wsl_local'], T['wsl_reloc'], work_style.get('mobility', 50)),
+        (T['wsl_ltf'], T['wsl_short'], T['wsl_long'], _res.get('long_term_focus', 50)),
+        (T['wsl_res'], T['wsl_needs'], T['wsl_bounce'], _res.get('workplace_resilience', 50))])
+    profile_overview = (
+        '<div class="pgrid">' + _pcard('briefcase', T['ct_title'], T['ct_sub'], _ov_riasec)
+        + _pcard('heart', T['cv_title'], T['cv_sub'], _ov_values) + '</div>'
+        + '<div class="pgrid">' + _pcard('star', T['sec05'], T['intro_strengths'], _ov_strengths)
+        + _pcard('sparkles', T['pe_title'], T['pe_sub'], _ov_bf) + '</div>'
+        + _pcard('bolt', T['ws_title'], T['ws_sub'], _ov_ws, 'pcard-wide')
+    )
+
     # key -> pages; a page is a list of (title, body) sections that share it
     pages_by_key = {
         'glance':    [[(T['sec_glance'], glance_body)]],
         'summary':   [[(T['sec01'], summary_body)]],
         'majors':    [[(T['sec_student_track'], student_track_cards)]],
-        'careers':   [[(T['sec08'], career_cards)]],
+        'careers':   [[(T['sec08'], ai_overview + career_cards)]],
         'plan':      [[(T['sec_action_plan'], action_html)]],
         'path':      [[(T['sec_career_path'], career_path_cards)]],
         'jobs':      [[(jobs_section_title, job_cards)]],
@@ -1922,11 +2157,14 @@ def build_html_report(user_data: dict, summary: dict, raw_scores: list, ai: dict
         'companies': [[(T['sec_companies'], company_cards)]],
         'ai':        [[(T['sec09'], ai_body)]],
         'profile':   [
-            [(T['sec02'], riasec_body)],
-            [(T['sec03'], bigfive_body)],
-            [(T['sec04'], values_body)],
-            [(T['sec05'], strengths_body)],
-            [(T['sec06'], workstyle_body), (T['sec07'], entre_body)],
+            [(T['sec_profile_overview'], profile_overview)],
+            # The results page shows only the profile cards above, so the longer written sections that used to follow
+            # (an explanation per interest, trait, value and strength, work style and entrepreneurship) are left out:
+            # [(T['sec02'], riasec_body)],
+            # [(T['sec03'], bigfive_body)],
+            # [(T['sec04'], values_body)],
+            # [(T['sec05'], strengths_body)],
+            # [(T['sec06'], workstyle_body), (T['sec07'], entre_body)],
         ],
     }
     # one plain sentence under a section title: why it is there / what to do with it (same wording as the web page)
