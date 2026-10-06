@@ -1369,8 +1369,16 @@ def get_career_recommendations(response_id: str, locale: str | None = None, user
         # Free tier: no plan at all (not even the first step) and 3 suggested careers; both are part of the paid report.
         action_plan = {}
         recs = [{k: v for k, v in r.items() if k != "next_steps"} if isinstance(r, dict) else r for r in recs[:3]]
+    # The written profile explanations (paid only): shown under the profile cards on the results page
+    profile_details = None
+    if tier != "free" or _is_admin(user):
+        _keys = ("riasec_combination_title", "riasec_overview", "riasec_primary_narrative", "riasec_secondary_narrative",
+                 "riasec_tertiary_narrative", "big_five_overview", "big_five_narratives", "values_overview", "values_narratives",
+                 "strengths_overview", "strengths_narratives", "resilience_narrative", "work_style_narrative")
+        profile_details = {k: ai_content.get(k) for k in _keys if ai_content.get(k)} or None
     return {
         "career_recommendations": recs,
+        "profile_details": profile_details,
         "action_plan": action_plan,
         # Lets the results page order the "Build on what you have" / "Paths you may not have considered" groups.
         "career_direction": owner_row.data.get('career_direction'),

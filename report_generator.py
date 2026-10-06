@@ -2173,14 +2173,15 @@ def build_html_report(user_data: dict, summary: dict, raw_scores: list, ai: dict
         'ai':        [[(T['sec09'], ai_body)]],
         'profile':   [
             [(T['sec_profile_overview'], profile_overview)],
-            # The results page shows only the profile cards above, so the longer written sections that used to follow
-            # (an explanation per interest, trait, value and strength, work style and entrepreneurship) are left out:
-            # [(T['sec02'], riasec_body)],
-            # [(T['sec03'], bigfive_body)],
-            # [(T['sec04'], values_body)],
-            # [(T['sec05'], strengths_body)],
-            # [(T['sec06'], workstyle_body), (T['sec07'], entre_body)],
-        ],
+            # The longer written sections (an explanation per interest, trait, value and strength, work style and
+            # entrepreneurship) are part of the paid report only; the free report keeps just the cards above.
+        ] + ([] if tier == 'free' else [
+            [(T['sec02'], riasec_body)],
+            [(T['sec03'], bigfive_body)],
+            [(T['sec04'], values_body)],
+            [(T['sec05'], strengths_body)],
+            [(T['sec06'], workstyle_body), (T['sec07'], entre_body)],
+        ]),
     }
     # one plain sentence under a section title: why it is there / what to do with it (same wording as the web page)
     intro_by_title = {
