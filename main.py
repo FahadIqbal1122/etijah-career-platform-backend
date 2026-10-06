@@ -106,7 +106,7 @@ PLAN_CATALOG = {
     "pathfinder":        {"name": "Pathfinder",        "amount": 59,  "currency": "SAR", "interval": "lifetime", "extension_days": None, "available": True},
     # One-time payment: Pathfinder plus a 1:1 coaching session (enabled 4 Oct 2026); 365 days of Launchpad status (no renewal). Code kept as launchpad_monthly so the
     # landing page, api.ts PlanCode type and dashboard ?buy= handling keep working.
-    "launchpad_monthly": {"name": "Launchpad",          "amount": 440, "currency": "SAR", "interval": "one_time", "extension_days": 365,  "available": True},
+    "launchpad_monthly": {"name": "Launchpad",          "amount": 330, "currency": "SAR", "interval": "one_time", "extension_days": 365,  "available": True},
     # "launchpad_yearly":  {"name": "Launchpad Yearly",   "amount": 799, "currency": "SAR", "interval": "year",     "extension_days": 365,  "available": False},
 }
 
@@ -129,7 +129,9 @@ if _test_amount:
 # SAR is the base price in PLAN_CATALOG; anything not listed here is charged in SAR.
 LOCAL_PRICES = {
     "pathfinder":        {"BHD": 6,  "QAR": 58,  "KWD": 5,  "OMR": 6,  "AED": 58,  "USD": 16},
-    "launchpad_monthly": {"BHD": 44, "QAR": 428, "KWD": 36, "OMR": 45, "AED": 431, "USD": 117},
+    # "launchpad_monthly": {"BHD": 44, "QAR": 428, "KWD": 36, "OMR": 45, "AED": 431, "USD": 117},  # standard 440 SAR
+    # launch offer 330 SAR
+    "launchpad_monthly": {"BHD": 33, "QAR": 321, "KWD": 27, "OMR": 34, "AED": 323, "USD": 88},
 }
 
 _bearer = HTTPBearer()
