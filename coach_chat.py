@@ -27,6 +27,7 @@ MAX_HISTORY_TURNS = 6
 LIMIT_PER_IP = (30, 3600)
 LIMIT_ASSESSMENT_SESSION = (10, 6 * 3600)   # total messages per assessment session
 LIMIT_RESULTS_RESPONSE = (40, 3600)
+LIMIT_LANDING_SESSION = (20, 6 * 3600)      # anonymous visitors on the landing page
 
 _hits: dict[str, deque] = defaultdict(deque)
 _lock = threading.Lock()
@@ -38,7 +39,7 @@ def check_rate_limit(key: str, limit: tuple[int, int]) -> bool:
     now = time.monotonic()
     with _lock:
         if len(_hits) > 5000:   # bounded memory: forget keys idle for longer than the longest window
-            cutoff = now - max(LIMIT_PER_IP[1], LIMIT_ASSESSMENT_SESSION[1], LIMIT_RESULTS_RESPONSE[1])
+            cutoff = now - max(LIMIT_PER_IP[1], LIMIT_ASSESSMENT_SESSION[1], LIMIT_RESULTS_RESPONSE[1], LIMIT_LANDING_SESSION[1])
             for k in [k for k, d in _hits.items() if not d or d[-1] < cutoff]:
                 del _hits[k]
         q = _hits[key]
@@ -80,6 +81,27 @@ If asked for something not in the data below, say you don't have that informatio
 
 Profile summary (from their results):
 {profile}"""
+
+_LANDING_RULES = """
+Context: the visitor is on Etijahi's public landing page and has not signed in. You have NO information about them, their account, their orders or their results. You act like a friendly front-desk guide: answer simple questions about Etijahi, how it works and what each plan includes, and point people to the right next step.
+On this page the scope in the rules above is widened to: Etijahi, the assessment, the plans and prices, privacy, languages, and how to get in touch.
+Facts you may state (this is everything you know; for anything else say you are not sure and offer the contact options below):
+- Etijahi (Arabic: اتجاهي) is the digital career platform of Etijah Coaching & Consulting, a social enterprise registered in Bahrain with 15 years of coaching experience across the GCC. The platform is designed and supervised by Etijah's coaches.
+- The assessment takes most people 12-15 minutes. It covers five frameworks (interests, values, strengths, personality and work style), has no right or wrong answers, and is available in Arabic and English, including the report.
+- Explorer is free, with no card needed: the full assessment, a personality profile with top strengths and core values, the top 3 matched career paths with context for the person's market, a preview of AI's impact on the top 2 matches, and a shareable results link.
+- Pathfinder costs 59 SAR as an introductory price (it later goes to 99 SAR), one-time payment: everything in Explorer plus the full AI-impact deep dive, a 1-3 year outlook for matched roles, personalised course and certification recommendations, and live job and internship listings matched to the profile.
+- Launchpad costs 440 SAR, one-time payment: everything in Pathfinder plus a 1:1 session with a real coach to talk through the results and the next step.
+- A 1:1 session with a real coach can also be added to any plan. You do not know its price: say the team can share it.
+- Prices are in Saudi riyals (SAR); the page may show an approximate amount in the visitor's local currency.
+- Privacy: data is stored securely, is never sold to third parties, and the profile and results belong to the user.
+- Etijahi is built for the whole GCC with career context per market; coverage is deepest where Etijah has worked longest and is expanding.
+- Institutions (universities, schools, organisations) can partner with Etijah: there is a "Partner with us" button on the page.
+- Contact: email info@myetijahi.com, or WhatsApp +966 55 077 0711.
+Rules for this page:
+- Best next step for almost anyone is to start the free assessment (the "Start" button on the page). Suggest it naturally, never pushily, at most once per reply.
+- You cannot look up accounts, payments, refunds, invoices, login problems or technical bugs. For those, say the team will help and give the email or WhatsApp. State nothing about refund or cancellation policies.
+- Do not give career advice, say which careers suit someone, or predict results: that is what the assessment and report are for.
+- Never promise outcomes such as jobs or salaries."""
 
 _UPSELL_FREE = "; some of those sections are part of the paid plans (Pathfinder and Launchpad)"
 
@@ -139,6 +161,8 @@ def build_system_prompt(mode: str, locale: str, tier: str = "free", summary: dic
             tier_upsell=_UPSELL_FREE if tier == "free" else "",
             profile=_profile_text(summary or {}),
         )
+    elif mode == "landing":
+        prompt += _LANDING_RULES
     else:
         prompt += _ASSESSMENT_RULES
         if progress:

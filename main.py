@@ -103,7 +103,7 @@ INTERNAL_JOBS_KEY = os.getenv("INTERNAL_JOBS_KEY")
 DASHBOARD_SHARE_TOKEN = os.getenv("DASHBOARD_SHARE_TOKEN")
 
 PLAN_CATALOG = {
-    "pathfinder":        {"name": "Pathfinder",        "amount": 79,  "currency": "SAR", "interval": "lifetime", "extension_days": None, "available": True},
+    "pathfinder":        {"name": "Pathfinder",        "amount": 59,  "currency": "SAR", "interval": "lifetime", "extension_days": None, "available": True},
     # One-time payment: Pathfinder plus a 1:1 coaching session (enabled 4 Oct 2026); 365 days of Launchpad status (no renewal). Code kept as launchpad_monthly so the
     # landing page, api.ts PlanCode type and dashboard ?buy= handling keep working.
     "launchpad_monthly": {"name": "Launchpad",          "amount": 440, "currency": "SAR", "interval": "one_time", "extension_days": 365,  "available": True},
@@ -3205,7 +3205,7 @@ def coach(payload: CoachRequest, user=Depends(get_current_user)):
 
 
 class CoachChatRequest(BaseModel):
-    mode: Literal["assessment", "results"]
+    mode: Literal["assessment", "results", "landing"]
     message: str = Field(min_length=1, max_length=500)
     history: list[dict] = Field(default_factory=list, max_length=12)
     locale: Literal["en", "ar"] = "en"
@@ -3245,6 +3245,11 @@ def coach_chat(payload: CoachChatRequest, request: Request, user=Depends(get_opt
             raise HTTPException(status_code=404, detail="No results found for this response")
         summary = build_framework_output(rows.data)
         tier = "launchpad" if _is_admin(user) else get_effective_tier(profile.data.get('user_id'))
+    elif payload.mode == "landing":
+        if not payload.session_id:
+            raise HTTPException(status_code=400, detail="session_id is required in landing mode")
+        if not coach_chat_mod.check_rate_limit(f"land:{payload.session_id}", coach_chat_mod.LIMIT_LANDING_SESSION):
+            return {"reply": None, "limited": True}
     else:
         if not payload.session_id:
             raise HTTPException(status_code=400, detail="session_id is required in assessment mode")

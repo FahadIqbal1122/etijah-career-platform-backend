@@ -53,6 +53,25 @@ class PromptTests(unittest.TestCase):
         self.assertIn("Arabic", cc.build_system_prompt("assessment", "ar"))
 
 
+class LandingPromptTests(unittest.TestCase):
+    def test_landing_prompt_has_the_real_plan_facts_and_no_user_data(self):
+        p = cc.build_system_prompt("landing", "en")
+        for fact in ("59 SAR", "99 SAR", "440 SAR", "12-15 minutes", "info@myetijahi.com", "+966 55 077 0711"):
+            self.assertIn(fact, p)
+        self.assertNotIn("Profile summary", p)
+        self.assertNotIn("Current question", p)
+
+    def test_landing_prompt_refuses_account_lookups_and_career_advice(self):
+        p = cc.build_system_prompt("landing", "en")
+        self.assertIn("cannot look up accounts", p)
+        self.assertIn("Do not give career advice", p)
+        self.assertIn("State nothing about refund", p)
+
+    def test_landing_session_limit_exists_and_is_pruned_with_the_others(self):
+        self.assertTrue(cc.check_rate_limit("land:test-session", (1, 60)))
+        self.assertFalse(cc.check_rate_limit("land:test-session", (1, 60)))
+
+
 class CurrentQuestionTests(unittest.TestCase):
     Q = {"text": "Two work environments, one year each. Which would you choose?", "type": "forced_choice",
          "options": ["A creative role with freedom.", "A structured role with clear processes."]}
