@@ -2353,6 +2353,41 @@ def generate_ai_impact(user_data: dict, summary: dict, careers: list, locale: st
   return _generate_json(prompt, timeout_s=120 if include_focus else None, label="ai_impact")
 
 
+def impact_targets(ranked: list, ai_content: dict | None, cap: int) -> list:
+    """The careers the AI-impact call must cover: exactly the career cards the report shows (same weak-match filter and
+    cap as the cards), so no card is left without an AI-impact row. Falls back to the ranked list when the report has
+    no recommendations yet. Only title and sector are needed by the impact prompt."""
+    recs = [r for r in drop_weak_matches(_as_list((ai_content or {}).get('career_recommendations'))) if isinstance(r, dict) and r.get('title')][:cap]
+    if not recs:
+        return list(ranked or [])[:cap]
+    sector_of = {str(c.get('title')): c.get('sector') for c in (ranked or []) if isinstance(c, dict)}
+    return [{'title': r['title'], 'sector': r.get('sector') or sector_of.get(str(r['title'])) or ''} for r in recs]
+
+
+def generate_ai_impact_covering(user_data: dict, summary: dict, careers: list, locale: str = 'en', career_count: int = 5) -> dict:
+    """generate_ai_impact() plus a completeness check: the AI sometimes skips a career or rewords its title. Anything
+    missing is requested again once, in a small second call, then the careers are put back in the order of the cards.
+    Never returns a result with a silently missing career if the second call succeeds."""
+    wanted = [c for c in (careers or [])[:career_count] if isinstance(c, dict) and c.get('title')]
+    def _key(v) -> str:
+        return re.sub(r"\s*\([^)]*\)\s*$", "", str(v or "")).strip().lower()
+    out = generate_ai_impact(user_data, summary, wanted, locale, career_count=len(wanted) or career_count)
+    have = {_key(c.get('title')) for c in _as_list((out or {}).get('careers')) if isinstance(c, dict)}
+    missing = [c for c in wanted if _key(c.get('title')) not in have]
+    if missing:
+        try:
+            extra = generate_ai_impact(user_data, summary, missing, locale, career_count=len(missing))
+            add = [c for c in _as_list((extra or {}).get('careers')) if isinstance(c, dict)
+                   and _key(c.get('title')) in {_key(m.get('title')) for m in missing}]
+            out = {**out, 'careers': _as_list(out.get('careers')) + add}
+        except Exception as e:
+            print(f"[ai_impact] could not fill {len(missing)} missing career(s): {e}")
+    order = {_key(c.get('title')): i for i, c in enumerate(wanted)}
+    if isinstance(out, dict) and out.get('careers'):
+        out = {**out, 'careers': sorted(_as_list(out['careers']), key=lambda c: order.get(_key(c.get('title')), 99) if isinstance(c, dict) else 99)}
+    return out
+
+
 @_scoped_to_response
 def get_or_generate_ai_impact(response_id: str, summary: dict, profile_data: dict, top_careers: list,
                                careers_cap: int, supabase_client, cache_col: str, cache_col_ar: str,
@@ -2365,13 +2400,13 @@ def get_or_generate_ai_impact(response_id: str, summary: dict, profile_data: dic
     write-once race handling, which only makes sense for an initial, uncontested
     generation) — matching the original /ai-impact endpoint's forced-refresh semantics."""
     if force:
-        ai_impact_en = generate_ai_impact(profile_data, summary, top_careers, career_count=careers_cap)
+        ai_impact_en = generate_ai_impact_covering(profile_data, summary, top_careers, career_count=careers_cap)
         _execute_with_retry(supabase_client.table('assessment_responses')
             .update({cache_col: ai_impact_en}).eq('id', response_id))
     else:
         cached_en = profile_data.get(cache_col)
         ai_impact_en = cached_en or _generate_and_cache(supabase_client, response_id, cache_col,
-            lambda: generate_ai_impact(profile_data, summary, top_careers, career_count=careers_cap))
+            lambda: generate_ai_impact_covering(profile_data, summary, top_careers, career_count=careers_cap))
 
     if locale != 'ar':
         return ai_impact_en
@@ -3386,8 +3421,9 @@ def create_report(response_id: str, supabase_client, tier: str = "launchpad", lo
     # certifications are about the careers the user actually sees.
     top_careers = order_by_report(top_careers, ai_content)
 
+    # The impact covers exactly the career cards (see impact_targets), and is checked for gaps before it is saved.
     ai_impact = profile.data.get(impact_col) or _generate_and_cache(supabase_client, response_id,
-        impact_col, lambda: generate_ai_impact(profile.data, summary, top_careers[:impact_count], 'en', career_count=impact_count))
+        impact_col, lambda: generate_ai_impact_covering(profile.data, summary, impact_targets(top_careers, ai_content, impact_count), 'en', career_count=impact_count))
 
     if locale == 'ar':
         try:

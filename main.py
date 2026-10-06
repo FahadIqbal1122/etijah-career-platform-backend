@@ -1446,7 +1446,15 @@ def get_ai_impact(response_id: str, force: bool = False, locale: str | None = No
     summary = build_framework_output(rows.data)
     careers = _execute_with_retry(supabase.table('careers').select('*').eq('is_approved', True)).data or []
     semantic_scores = _get_semantic_scores(response_id, summary, profile_row.data or {})
-    top_careers = _report_order(response_id, score_careers(summary, profile_row.data or {}, careers, semantic_scores), tier)[:careers_cap]
+    ranked_all = score_careers(summary, profile_row.data or {}, careers, semantic_scores)
+    top_careers = _report_order(response_id, ranked_all, tier)[:careers_cap]
+    # Cover exactly the career cards the report shows, not just the top of the raw ranking
+    try:
+        from report_generator import impact_targets, get_or_generate_ai_content
+        _content = get_or_generate_ai_content(response_id, supabase, tier=tier, locale='en')
+        top_careers = impact_targets(ranked_all, _content, careers_cap)
+    except Exception as e:
+        print(f"[ai-impact] using ranked careers for {response_id}: {e}")
 
     from report_generator import get_or_generate_ai_impact
     try:
