@@ -1406,6 +1406,7 @@ def _trim_ai_impact_free(out: dict) -> dict:
         c = dict(c)
         for k in ("at_risk_tasks", "protected_skills"):
             if isinstance(c.get(k), list):
+                c[k + "_total"] = len(c[k])  # real count, so the page can say "N more" without sending the text
                 c[k] = c[k][:1]
         txt = c.get("what_this_means_for_you")
         if isinstance(txt, str) and txt:
