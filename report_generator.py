@@ -2143,12 +2143,27 @@ def build_html_report(user_data: dict, summary: dict, raw_scores: list, ai: dict
         + _pcard('bolt', T['ws_title'], T['ws_sub'], _ov_ws, 'pcard-wide')
     )
 
+    # Top three careers up front (as on the results page): why each was suggested and its AI risk
+    def _quick_card(r: dict) -> str:
+        pills = ''
+        if r.get('direction_tag') in ('builds_on_background', 'new_direction'):
+            pills += f'<span class="tag tag-{"purple" if r["direction_tag"] == "new_direction" else "blue"}">{T["direction_tag_" + r["direction_tag"]]}</span>'
+        _rk = risk_by_title.get(_tkey(r.get('title')))
+        if _rk in ('low', 'medium', 'high'):
+            pills += _risk_badge(_rk, locale)
+        return (f'<div class="card" style="margin-bottom:8px;"><div class="card-row"><div><h4 class="card-title">{r.get("title","")}</h4>'
+                f'<div style="margin-top:4px;">{pills}</div></div>'
+                f'<div style="text-align:center;flex-shrink:0;"><div style="font-size:12pt;font-weight:900;color:#0770ba;">{_fit_band(r.get("match_score"))}</div>'
+                f'<div class="muted" style="font-size:8pt;letter-spacing:1px;">{T["match"]}</div></div></div>'
+                f'<p class="body-text" style="margin-top:6px;">{_first_sentence(r.get("fit_summary"))}</p></div>')
+    quick_top3 = ''.join(_quick_card(r) for r in recs[:3])
+
     # key -> pages; a page is a list of (title, body) sections that share it
     pages_by_key = {
         'glance':    [[(T['sec_glance'], glance_body)]],
         'summary':   [[(T['sec01'], summary_body)]],
         'majors':    [[(T['sec_student_track'], student_track_cards)]],
-        'careers':   [[(T['sec08'], ai_overview + career_cards)]],
+        'careers':   [[(T['sec08'], quick_top3 + ai_overview + career_cards)]],
         'plan':      [[(T['sec_action_plan'], action_html)]],
         'path':      [[(T['sec_career_path'], career_path_cards)]],
         'jobs':      [[(jobs_section_title, job_cards)]],
@@ -2179,7 +2194,9 @@ def build_html_report(user_data: dict, summary: dict, raw_scores: list, ai: dict
     # Running header (logo + brand), placed in every page's top margin by the @page rule in the CSS.
     pages_html = f'<div class="running-hdr">{PAGE_HDR_LOGO_SVG}<span class="page-hdr-brand">{T["brand_header"]}</span></div>'
     sec_num = 1
-    for key in ['glance'] + section_order(user_data.get('current_stage')):
+    # The 'at a glance' page is no longer added: the top three careers now open the careers section, as on the results page.
+    # for key in ['glance'] + section_order(user_data.get('current_stage')):
+    for key in section_order(user_data.get('current_stage')):
         for pi, page in enumerate(pages_by_key.get(key, [])):
             subs = [(t, b) for t, b in page if str(b or '').strip()]
             if not subs:
