@@ -243,7 +243,7 @@ UI_TEXT = {
         'protected_skills_label': 'Human skills that stay valuable',
         'upskilling_label': 'How to prepare',
         'what_this_means_label': 'What this means for you',
-        'wsl_steady': 'Steady', 'wsl_fast': 'Fast-paced', 'wsl_large': 'Large org', 'wsl_startup': 'Startup', 'wsl_public': 'Public', 'wsl_private': 'Private', 'wsl_local': 'Local', 'wsl_reloc': 'Open to relocate', 'wsl_ltf': 'Long-term focus', 'wsl_res': 'Resilience', 'wsl_short': 'Short-term', 'wsl_long': 'Long-term', 'wsl_needs': 'Needs support', 'wsl_bounce': 'Bounces back', 'q_type': 'Career Type', 'q_value': 'Top Value', 'q_strength': 'Top Strength', 'ws_title': 'How you like to work', 'ws_sub': 'Your pace, setting and how you handle pressure', 'ct_title': 'Your interests', 'ct_sub': 'The kinds of work you enjoy most (your RIASEC profile)', 'cv_title': 'What matters to you', 'cv_sub': 'What you want from work and life', 'pe_title': 'How you think and act', 'pe_sub': 'Your personality, using the Big Five traits', 'ai_panel_title': 'How AI may change this career', 'ai_tasks_changing': 'Tasks that are changing', 'sec_profile_overview': 'Your profile', 'ai_global_evidence': 'Global evidence', 'ai_local_outlook': 'In your market', 'ai_focus_title': 'Your skills to build and practice exercise', 'ai_skills': 'Skills to build', 'ai_exercise': 'Practice exercise', 'ai_work_sample': 'You will have', 'job_posted': 'Posted', 'job_requires': 'Requires', 'edu_high_school': 'High school', 'edu_associates': 'Diploma', 'edu_bachelors': "Bachelor's degree", 'edu_postgraduate': 'Postgraduate degree', 'exp_none': 'no experience', 'exp_months': "{n} months' experience", 'exp_years': "{n}+ years' experience", 'dir_title': 'Your chosen direction', 'dir_yours': 'Your choice', 'dir_suggested': 'Suggested match', 'dir_gap': 'Gap to close', 'dir_steps': 'Steps to reach it', 'majors_leads_to': 'Leads to', 'link_find_it': 'Search for it', 'link_open_site': 'Open the site', 'link_find_programs': 'Find degree programs', 'majors_try_it': 'Try it', 'action_first_step': 'Your first step this week', 'action_week_plan': 'Days 2–7', 'action_weeks24': 'Weeks 2–4 — Build momentum', 'action_built_top': 'Built around your top match', 'action_why': 'Why', 'action_output': 'You will produce', 'action_when': 'When', 'action_worksheet': 'Worksheet', 'action_follow_on': 'Then', 'action_roadmap': 'Your next 90 days',
+        'wsl_steady': 'Steady', 'wsl_fast': 'Fast-paced', 'wsl_large': 'Large org', 'wsl_startup': 'Startup', 'wsl_public': 'Public', 'wsl_private': 'Private', 'wsl_local': 'Local', 'wsl_reloc': 'Open to relocate', 'wsl_ltf': 'Long-term focus', 'wsl_res': 'Resilience', 'wsl_short': 'Short-term', 'wsl_long': 'Long-term', 'wsl_needs': 'Needs support', 'wsl_bounce': 'Bounces back', 'q_type': 'Career Type', 'q_value': 'Top Value', 'q_strength': 'Top Strength', 'ws_title': 'How you like to work', 'ws_sub': 'Your pace, setting and how you handle pressure', 'ct_title': 'Your interests', 'ct_sub': 'The kinds of work you enjoy most (your RIASEC profile)', 'cv_title': 'What matters to you', 'cv_sub': 'What you want from work and life', 'pe_title': 'How you think and act', 'pe_sub': 'Your personality, using the Big Five traits', 'ai_panel_title': 'How AI may change this career', 'ai_tasks_changing': 'Tasks that are changing', 'sec_profile_overview': 'Your profile', 'in_short': 'In short', 'to_develop': 'To develop it', 'ai_global_evidence': 'Global evidence', 'ai_local_outlook': 'In your market', 'ai_focus_title': 'Your skills to build and practice exercise', 'ai_skills': 'Skills to build', 'ai_exercise': 'Practice exercise', 'ai_work_sample': 'You will have', 'job_posted': 'Posted', 'job_requires': 'Requires', 'edu_high_school': 'High school', 'edu_associates': 'Diploma', 'edu_bachelors': "Bachelor's degree", 'edu_postgraduate': 'Postgraduate degree', 'exp_none': 'no experience', 'exp_months': "{n} months' experience", 'exp_years': "{n}+ years' experience", 'dir_title': 'Your chosen direction', 'dir_yours': 'Your choice', 'dir_suggested': 'Suggested match', 'dir_gap': 'Gap to close', 'dir_steps': 'Steps to reach it', 'majors_leads_to': 'Leads to', 'link_find_it': 'Search for it', 'link_open_site': 'Open the site', 'link_find_programs': 'Find degree programs', 'majors_try_it': 'Try it', 'action_first_step': 'Your first step this week', 'action_week_plan': 'Days 2–7', 'action_weeks24': 'Weeks 2–4 — Build momentum', 'action_built_top': 'Built around your top match', 'action_why': 'Why', 'action_output': 'You will produce', 'action_when': 'When', 'action_worksheet': 'Worksheet', 'action_follow_on': 'Then', 'action_roadmap': 'Your next 90 days',
         'action_month1': 'Month 1 — Launch', 'action_months23': 'Months 2–3 — Build', 'action_months46': 'Months 4–6 — Grow',
         'back_headline': 'Your Journey Starts Here',
         'back_tagline_suffix': 'Etijahi Assessment',
@@ -306,7 +306,7 @@ UI_TEXT = {
         'protected_skills_label': 'مهارات إنسانية تبقى ذات قيمة',
         'upskilling_label': 'كيف تستعد',
         'what_this_means_label': 'ما الذي يعنيه هذا لك',
-        'wsl_steady': 'ثابتة', 'wsl_fast': 'سريعة الإيقاع', 'wsl_large': 'مؤسسة كبيرة', 'wsl_startup': 'شركة ناشئة', 'wsl_public': 'حكومي', 'wsl_private': 'خاص', 'wsl_local': 'محلي', 'wsl_reloc': 'مستعد للانتقال', 'wsl_ltf': 'التركيز طويل المدى', 'wsl_res': 'المرونة', 'wsl_short': 'قصير المدى', 'wsl_long': 'طويل المدى', 'wsl_needs': 'يحتاج دعماً', 'wsl_bounce': 'يتعافى بسرعة', 'q_type': 'النمط المهني', 'q_value': 'أهم قيمة', 'q_strength': 'أبرز نقطة قوة', 'ws_title': 'كيف تحب أن تعمل', 'ws_sub': 'وتيرتك وبيئتك وكيف تتعامل مع الضغط', 'ct_title': 'اهتماماتك', 'ct_sub': 'أنواع العمل التي تستمتع بها أكثر (ملف RIASEC)', 'cv_title': 'ما يهمك', 'cv_sub': 'ما تريده من العمل والحياة', 'pe_title': 'كيف تفكر وتتصرف', 'pe_sub': 'شخصيتك وفق سمات العوامل الخمسة الكبرى', 'ai_panel_title': 'كيف قد يغيّر الذكاء الاصطناعي هذه المهنة', 'ai_tasks_changing': 'مهام تتغيّر', 'sec_profile_overview': 'ملفك الشخصي', 'ai_global_evidence': 'الدلائل عالمياً', 'ai_local_outlook': 'في سوقك', 'ai_focus_title': 'المهارات التي تبنيها وتمرين تطبيقي', 'ai_skills': 'مهارات تبنيها', 'ai_exercise': 'تمرين تطبيقي', 'ai_work_sample': 'ستحصل على', 'job_posted': 'نُشرت', 'job_requires': 'المطلوب', 'edu_high_school': 'الثانوية', 'edu_associates': 'دبلوم', 'edu_bachelors': 'بكالوريوس', 'edu_postgraduate': 'دراسات عليا', 'exp_none': 'بلا خبرة', 'exp_months': 'خبرة {n} أشهر', 'exp_years': 'خبرة {n}+ سنوات', 'dir_title': 'الاتجاه الذي اخترته', 'dir_yours': 'اختيارك', 'dir_suggested': 'مسار مقترح', 'dir_gap': 'الفجوة التي تسدّها', 'dir_steps': 'خطوات للوصول إليه', 'majors_leads_to': 'يقود إلى', 'link_find_it': 'ابحث عنه', 'link_open_site': 'افتح الموقع', 'link_find_programs': 'ابحث عن البرامج الدراسية', 'majors_try_it': 'جرّبه', 'action_first_step': 'خطوتك الأولى هذا الأسبوع', 'action_week_plan': 'الأيام 2–7', 'action_weeks24': 'الأسابيع 2–4 — بناء الزخم', 'action_built_top': 'مبنية حول أفضل مسار مطابق لك', 'action_why': 'لماذا', 'action_output': 'ما ستنتجه', 'action_when': 'متى', 'action_worksheet': 'ورقة العمل', 'action_follow_on': 'بعد ذلك', 'action_roadmap': 'أيامك التسعون القادمة',
+        'wsl_steady': 'ثابتة', 'wsl_fast': 'سريعة الإيقاع', 'wsl_large': 'مؤسسة كبيرة', 'wsl_startup': 'شركة ناشئة', 'wsl_public': 'حكومي', 'wsl_private': 'خاص', 'wsl_local': 'محلي', 'wsl_reloc': 'مستعد للانتقال', 'wsl_ltf': 'التركيز طويل المدى', 'wsl_res': 'المرونة', 'wsl_short': 'قصير المدى', 'wsl_long': 'طويل المدى', 'wsl_needs': 'يحتاج دعماً', 'wsl_bounce': 'يتعافى بسرعة', 'q_type': 'النمط المهني', 'q_value': 'أهم قيمة', 'q_strength': 'أبرز نقطة قوة', 'ws_title': 'كيف تحب أن تعمل', 'ws_sub': 'وتيرتك وبيئتك وكيف تتعامل مع الضغط', 'ct_title': 'اهتماماتك', 'ct_sub': 'أنواع العمل التي تستمتع بها أكثر (ملف RIASEC)', 'cv_title': 'ما يهمك', 'cv_sub': 'ما تريده من العمل والحياة', 'pe_title': 'كيف تفكر وتتصرف', 'pe_sub': 'شخصيتك وفق سمات العوامل الخمسة الكبرى', 'ai_panel_title': 'كيف قد يغيّر الذكاء الاصطناعي هذه المهنة', 'ai_tasks_changing': 'مهام تتغيّر', 'sec_profile_overview': 'ملفك الشخصي', 'in_short': 'باختصار', 'to_develop': 'لتطويرها', 'ai_global_evidence': 'الدلائل عالمياً', 'ai_local_outlook': 'في سوقك', 'ai_focus_title': 'المهارات التي تبنيها وتمرين تطبيقي', 'ai_skills': 'مهارات تبنيها', 'ai_exercise': 'تمرين تطبيقي', 'ai_work_sample': 'ستحصل على', 'job_posted': 'نُشرت', 'job_requires': 'المطلوب', 'edu_high_school': 'الثانوية', 'edu_associates': 'دبلوم', 'edu_bachelors': 'بكالوريوس', 'edu_postgraduate': 'دراسات عليا', 'exp_none': 'بلا خبرة', 'exp_months': 'خبرة {n} أشهر', 'exp_years': 'خبرة {n}+ سنوات', 'dir_title': 'الاتجاه الذي اخترته', 'dir_yours': 'اختيارك', 'dir_suggested': 'مسار مقترح', 'dir_gap': 'الفجوة التي تسدّها', 'dir_steps': 'خطوات للوصول إليه', 'majors_leads_to': 'يقود إلى', 'link_find_it': 'ابحث عنه', 'link_open_site': 'افتح الموقع', 'link_find_programs': 'ابحث عن البرامج الدراسية', 'majors_try_it': 'جرّبه', 'action_first_step': 'خطوتك الأولى هذا الأسبوع', 'action_week_plan': 'الأيام 2–7', 'action_weeks24': 'الأسابيع 2–4 — بناء الزخم', 'action_built_top': 'مبنية حول أفضل مسار مطابق لك', 'action_why': 'لماذا', 'action_output': 'ما ستنتجه', 'action_when': 'متى', 'action_worksheet': 'ورقة العمل', 'action_follow_on': 'بعد ذلك', 'action_roadmap': 'أيامك التسعون القادمة',
         'action_month1': 'الشهر الأول — الانطلاقة', 'action_months23': 'الشهر 2–3 — البناء', 'action_months46': 'الشهر 4–6 — النمو',
         'back_headline': 'رحلتك تبدأ من هنا',
         'back_tagline_suffix': 'تقييم إتجاهي',
@@ -1096,18 +1096,109 @@ def _icon_tile(name: str) -> str:
         f'stroke-linecap="round" stroke-linejoin="round"><path d="{_PROFILE_ICONS[name]}"/></svg></span>'
     )
 
-def _mrow(label: str, pct: float, pill: str, color: str = "#0770ba") -> str:
+# ─── Short profile notes (shared by the PDF and the results page, so the two always match) ────────────────────────
+
+def _short_note(text, limit: int = 160) -> str:
+    """The first sentence of a longer explanation, trimmed to a readable length at a natural break."""
+    t = re.sub(r"\s+", " ", str(text or "")).strip()
+    if not t:
+        return ""
+    m = re.match(r"(.+?[.!?؟])(\s|$)", t)
+    t = m.group(1) if m else t
+    if len(t) <= limit:
+        return t
+    cut = t[:limit]
+    for sep in (" — ", " – ", "; ", ", "):
+        i = cut.rfind(sep)
+        if i > limit * 0.5:
+            return cut[:i].rstrip(" ,;—–") + "…"
+    return cut.rsplit(" ", 1)[0].rstrip(" ,;—–") + "…"
+
+
+def _match_notes_by_name(keys: list, names: dict, texts: list) -> dict:
+    """The AI writes one note per item in its own order, which differs from ours when two items tie on score. Each
+    note is given to the item it names first; any item left over falls back to its position."""
+    texts = [str(x or "") for x in texts]
+    def _subjects(name_of):
+        out = []
+        for tx in texts:
+            low, best, pos = tx.lower(), None, 10 ** 9
+            for k in keys:
+                for nm in name_of(k):
+                    i = low.find(nm.lower()) if nm else -1
+                    if 0 <= i < pos:
+                        best, pos = k, i
+            out.append(best)
+        return out
+    result: dict = {}
+    for name_of in (lambda k: names.get(k, []), lambda k: [w for w in (names.get(k) or [""])[0].split()[:1]]):
+        for k, tx in zip(_subjects(name_of), texts):
+            if k and k not in result and tx.strip():
+                result[k] = tx
+    used = set(result.values())
+    for i, k in enumerate(keys):
+        if k not in result and i < len(texts) and texts[i].strip() and texts[i] not in used:
+            result[k] = texts[i]
+            used.add(texts[i])
+    return result
+
+
+def profile_notes(ai: dict, summary: dict, locale: str = 'en') -> dict:
+    """Short takeaways for the profile cards, keyed by item (interest type, value, strength, trait), plus one-line
+    overviews. Used by the PDF and sent to the results page, so both show the same words."""
+    ai = ai or {}
+    ar = locale == 'ar'
+    riasec = list((summary.get('riasec') or {}).get('top_types') or [])[:3]
+    values = list((summary.get('values') or {}).get('top_values') or [])[:3]
+    strengths = list((summary.get('strengths') or {}).get('top_strengths') or [])[:3]
+    def _en(k): return [k.replace('_', ' ')]
+    r_names = {k: ([RIASEC_META_AR.get(k, {}).get('label', k)] if ar else []) + _en(k) for k in riasec}
+    v_names = {k: ([VALUE_NAMES_AR.get(k, k)] if ar else []) + _en(k) for k in values}
+    s_names = {k: ([STRENGTH_NAMES_AR.get(k, k)] if ar else []) + _en(k) for k in strengths}
+
+    r_texts = [ai.get('riasec_primary_narrative'), ai.get('riasec_secondary_narrative'), ai.get('riasec_tertiary_narrative')][:len(riasec)]
+    vn = _as_dict(ai.get('values_narratives'))
+    v_texts = [vn.get('value_1'), vn.get('value_2'), vn.get('value_3')][:len(values)]
+    sn = _as_dict(ai.get('strengths_narratives'))
+    s_objs = [_as_dict(sn.get('strength_1')), _as_dict(sn.get('strength_2')), _as_dict(sn.get('strength_3'))][:len(strengths)]
+    s_by_text = _match_notes_by_name(strengths, s_names, [o.get('narrative') for o in s_objs])
+    tip_of = {o.get('narrative'): o.get('development_tip') for o in s_objs}
+
+    ws = ' '.join(x for x in (_short_note(ai.get('resilience_narrative'), 150), _short_note(ai.get('work_style_narrative'), 150)) if x)
+    return {
+        'overview': {k: v for k, v in {
+            'riasec': _short_note(ai.get('riasec_overview'), 190),
+            'values': _short_note(ai.get('values_overview'), 190),
+            'strengths': _short_note(ai.get('strengths_overview'), 190),
+            'big_five': _short_note(ai.get('big_five_overview'), 190),
+            'work_style': ws,
+        }.items() if v},
+        'riasec': {k: _short_note(v) for k, v in _match_notes_by_name(riasec, r_names, r_texts).items()},
+        'values': {k: _short_note(v) for k, v in _match_notes_by_name(values, v_names, v_texts).items()},
+        'strengths': {k: {'note': _short_note(v), 'tip': _short_note(tip_of.get(v), 140)} for k, v in s_by_text.items()},
+        'big_five': {k: _short_note(v) for k, v in _as_dict(ai.get('big_five_narratives')).items() if str(v or '').strip()},
+    }
+
+
+def _mrow(label: str, pct: float, pill: str, color: str = "#0770ba", note: str = '', tip: str = '') -> str:
     """One line of a profile card: label, a pill on the right, the bar underneath (like the results page)."""
     pct = min(100, max(0, float(pct)))
     return (
         f'<div class="mrow"><div class="mrow-top"><span>{label}</span><span class="bar-num">{pill}</span></div>'
-        f'<div class="bar-track"><div class="bar-fill" style="width:{pct:.0f}%;background:{color};"></div></div></div>'
+        f'<div class="bar-track"><div class="bar-fill" style="width:{pct:.0f}%;background:{color};"></div></div>'
+        + (f'<div class="mnote">{note}</div>' if note else '')
+        + (f'<div class="mtip">{tip}</div>' if tip else '')
+        + '</div>'
     )
 
-def _pcard(icon: str, title: str, sub: str, rows: str, cls: str = '') -> str:
+def _pcard(icon: str, title: str, sub: str, rows: str, cls: str = '', intro: str = '', outro: str = '') -> str:
     return (
         f'<div class="pcard {cls}"><div class="pcard-head">{_icon_tile(icon)}<div><div class="pcard-title">{title}</div>'
-        f'<div class="pcard-sub">{sub}</div></div></div>{rows}</div>'
+        f'<div class="pcard-sub">{sub}</div></div></div>'
+        + (f'<div class="pintro"><span class="pintro-label">{intro[0]}</span> {intro[1]}</div>' if intro and intro[1] else '')
+        + rows
+        + (f'<div class="pintro" style="margin-top:6px;margin-bottom:0;">{outro}</div>' if outro else '')
+        + '</div>'
     )
 
 RISK_LABELS_AR = {'low': 'منخفضة', 'medium': 'متوسطة', 'high': 'عالية'}
@@ -1960,16 +2051,20 @@ def build_html_report(user_data: dict, summary: dict, raw_scores: list, ai: dict
 
   /* profile in numbers: compact cards in two columns with an icon tile, like the results page */
   .pgrid { display:flex; gap:12px; margin-bottom:12px; }
-  .pcard { flex:1; background:#fff; border:1px solid rgba(7,112,186,.14); border-radius:18px; padding:14px 16px; break-inside:avoid; page-break-inside:avoid; }
+  .pcard { flex:1; background:#fff; border:1px solid rgba(7,112,186,.14); border-radius:18px; padding:11px 14px; break-inside:avoid; page-break-inside:avoid; }
   .pcard-wide { width:100%; flex:none; margin-bottom:12px; }
-  .pcard-head { display:flex; align-items:center; gap:10px; margin-bottom:12px; }
+  .pcard-head { display:flex; align-items:center; gap:10px; margin-bottom:8px; }
   .icon-tile { display:inline-flex; align-items:center; justify-content:center; width:30px; height:30px; background:#EBF3FF; border-radius:10px; flex-shrink:0; }
   .pcard-title { font-size:11.5pt; font-weight:800; color:#414142; line-height:1.2; }
   .pcard-sub { font-size:8pt; color:rgba(65,65,66,.62); line-height:1.35; }
-  .mrow { margin-bottom:14px; }
+  .mrow { margin-bottom:9px; }
   .mrow-top { display:flex; justify-content:space-between; align-items:center; font-size:9pt; color:#414142; margin-bottom:7px; }
   .mrow .bar-num { display:inline-block; line-height:1.35; padding:2px 10px; min-width:38px; }
   .mrow .bar-track { margin-top:0; }
+  .mnote { font-size:8pt; line-height:1.4; color:rgba(65,65,66,.85); margin-top:5px; padding-left:8px; border-left:2px solid #00c9a7; }
+  .mtip { font-size:7.8pt; line-height:1.45; margin-top:4px; padding:3px 8px; border-radius:8px; background:#e2f6f0; color:#0a705a; }
+  .pintro { font-size:8.3pt; line-height:1.5; color:rgba(65,65,66,.9); background:#eef6fd; border:1px solid rgba(7,112,186,.18); border-radius:10px; padding:5px 9px; margin-bottom:8px; }
+  .pintro-label { font-weight:800; color:#0770ba; margin-right:4px; }
   .pcard-wide .mrow { display:inline-block; width:31%; margin-right:2%; vertical-align:top; }
 
   /* "How AI may change this career" inside each career card */
@@ -2022,6 +2117,7 @@ def build_html_report(user_data: dict, summary: dict, raw_scores: list, ai: dict
   .cover-eyebrow, .mini-badge, .stat-lbl, .sec-num, .all-bars-label, .note-label, .page-hdr-brand, .cover-brand, .cover-code-label, .back-brand, .back-tagline, .summary-hero-label { font-family:'Tajawal','Noto Naskh Arabic',sans-serif; }
   .sec-num { margin-right:0; margin-left:8px; }
   .pcard-wide .mrow { margin-right:0; margin-left:2%; }
+  .mnote { padding-left:0; border-left:0; padding-right:8px; border-right:2px solid #00c9a7; } .pintro-label { margin-right:0; margin-left:4px; }
   .ai-list { margin:3px 16px 0 0; }
   .strength-card { border-right-color:#00c9a7 !important; }
   .callout-box { border-left:1px solid rgba(7,112,186,.14); border-right:3px solid #0770ba; }
@@ -2121,11 +2217,14 @@ def build_html_report(user_data: dict, summary: dict, raw_scores: list, ai: dict
     ) if recs else ''
 
     # ── Profile in numbers: compact cards in two columns, like the profile section of the results page ─────────────
+    # Paid reports add a short takeaway under each bar and a one-line summary on each card (same words as the results page)
+    _pn = {} if tier == 'free' else profile_notes(ai, summary, locale)
+    _ov = _pn.get('overview', {})
     _rs = sorted(['realistic','investigative','artistic','social','enterprising','conventional'], key=lambda k: -scores.get(k, 0))
-    _ov_riasec = ''.join(_mrow(riasec_meta_src.get(k, {}).get('label', k.title()) if locale == 'ar' else k.title(), scores.get(k, 0), f'{scores.get(k, 0):.0f}%') for k in _rs)
-    _ov_values = ''.join(_mrow(VALUE_NAMES_AR.get(v, v.replace('_',' ').title()) if locale == 'ar' else v.replace('_',' ').title(), scores.get(v, 0), f'{scores.get(v, 0):.0f}%') for v in top_values[:3])
-    _ov_strengths = ''.join(_mrow(STRENGTH_NAMES_AR.get(v, v.replace('_',' ').title()) if locale == 'ar' else v.replace('_',' ').title(), scores.get(v, 0), f'{scores.get(v, 0):.0f}%') for v in top_strengths[:3])
-    _ov_bf = ''.join(_mrow(big_five_labels_src.get(k, k.title()), scores.get(k, 50), (LEVEL_LABELS_AR.get(str(big_five.get(k, 'medium')), '') if locale == 'ar' else str(big_five.get(k, 'medium')).title())) for k in ['openness','conscientiousness','extraversion','agreeableness','stability'])
+    _ov_riasec = ''.join(_mrow(riasec_meta_src.get(k, {}).get('label', k.title()) if locale == 'ar' else k.title(), scores.get(k, 0), f'{scores.get(k, 0):.0f}%', note=_pn.get('riasec', {}).get(k, '')) for k in _rs)
+    _ov_values = ''.join(_mrow(VALUE_NAMES_AR.get(v, v.replace('_',' ').title()) if locale == 'ar' else v.replace('_',' ').title(), scores.get(v, 0), f'{scores.get(v, 0):.0f}%', note=_pn.get('values', {}).get(v, '')) for v in top_values[:3])
+    _ov_strengths = ''.join(_mrow(STRENGTH_NAMES_AR.get(v, v.replace('_',' ').title()) if locale == 'ar' else v.replace('_',' ').title(), scores.get(v, 0), f'{scores.get(v, 0):.0f}%', note=_pn.get('strengths', {}).get(v, {}).get('note', ''), tip=((T['to_develop'] + ': ' + _pn['strengths'][v]['tip']) if _pn.get('strengths', {}).get(v, {}).get('tip') else '')) for v in top_strengths[:3])
+    _ov_bf = ''.join(_mrow(big_five_labels_src.get(k, k.title()), scores.get(k, 50), (LEVEL_LABELS_AR.get(str(big_five.get(k, 'medium')), '') if locale == 'ar' else str(big_five.get(k, 'medium')).title()), note=_pn.get('big_five', {}).get(k, '')) for k in ['openness','conscientiousness','extraversion','agreeableness','stability'])
     # Work style: the same six rows and wording as the results page (the either/or answers name the side leaned to)
     _res = resilience or {}
     _ov_ws = ''.join(_mrow(lbl, sc, (hi if sc >= 50 else lo), '#00c9a7') for lbl, lo, hi, sc in [
@@ -2136,11 +2235,11 @@ def build_html_report(user_data: dict, summary: dict, raw_scores: list, ai: dict
         (T['wsl_ltf'], T['wsl_short'], T['wsl_long'], _res.get('long_term_focus', 50)),
         (T['wsl_res'], T['wsl_needs'], T['wsl_bounce'], _res.get('workplace_resilience', 50))])
     profile_overview = (
-        '<div class="pgrid">' + _pcard('briefcase', T['ct_title'], T['ct_sub'], _ov_riasec)
-        + _pcard('heart', T['cv_title'], T['cv_sub'], _ov_values) + '</div>'
-        + '<div class="pgrid">' + _pcard('star', T['sec05'], T['intro_strengths'], _ov_strengths)
-        + _pcard('sparkles', T['pe_title'], T['pe_sub'], _ov_bf) + '</div>'
-        + _pcard('bolt', T['ws_title'], T['ws_sub'], _ov_ws, 'pcard-wide')
+        '<div class="pgrid">' + _pcard('briefcase', T['ct_title'], T['ct_sub'], _ov_riasec, intro=(T['in_short'], _ov.get('riasec', '')))
+        + _pcard('heart', T['cv_title'], T['cv_sub'], _ov_values, intro=(T['in_short'], _ov.get('values', ''))) + '</div>'
+        + '<div class="pgrid">' + _pcard('star', T['sec05'], T['intro_strengths'], _ov_strengths, intro=(T['in_short'], _ov.get('strengths', '')))
+        + _pcard('sparkles', T['pe_title'], T['pe_sub'], _ov_bf, intro=(T['in_short'], _ov.get('big_five', ''))) + '</div>'
+        + _pcard('bolt', T['ws_title'], T['ws_sub'], _ov_ws, 'pcard-wide', outro=_ov.get('work_style', ''))
     )
 
     # Top three careers up front (as on the results page): why each was suggested and its AI risk
@@ -2175,13 +2274,14 @@ def build_html_report(user_data: dict, summary: dict, raw_scores: list, ai: dict
             [(T['sec_profile_overview'], profile_overview)],
             # The longer written sections (an explanation per interest, trait, value and strength, work style and
             # entrepreneurship) are part of the paid report only; the free report keeps just the cards above.
-        ] + ([] if tier == 'free' else [
-            [(T['sec02'], riasec_body)],
-            [(T['sec03'], bigfive_body)],
-            [(T['sec04'], values_body)],
-            [(T['sec05'], strengths_body)],
-            [(T['sec06'], workstyle_body), (T['sec07'], entre_body)],
-        ]),
+            # Paid reports: the short takeaways now sit inside the cards above, exactly as on the results page, so the long
+            # separate sections are not added any more:
+            # [(T['sec02'], riasec_body)],
+            # [(T['sec03'], bigfive_body)],
+            # [(T['sec04'], values_body)],
+            # [(T['sec05'], strengths_body)],
+            # [(T['sec06'], workstyle_body), (T['sec07'], entre_body)],
+        ],
     }
     # one plain sentence under a section title: why it is there / what to do with it (same wording as the web page)
     intro_by_title = {
