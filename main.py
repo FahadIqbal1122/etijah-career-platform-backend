@@ -560,6 +560,13 @@ class WaitlistEventRequest(BaseModel):
     locale: str | None = None
     source: str | None = None
 
+class FeaturedCourseEventRequest(BaseModel):
+    event_type: str            # 'view' | 'click'
+    course_key: str
+    response_id: str | None = None
+    tier: str | None = None
+    locale: str | None = None
+
 TELEMETRY_EVENT_TYPES = {"session_start", "question_view", "break_open", "break_activity"}
 # Generous but bounded — these are always short, code-generated values (a
 # question id, an activity name), never free user input. Caps exist purely so
@@ -1127,6 +1134,32 @@ def track_waitlist_event(body: WaitlistEventRequest):
     except Exception as e:
         print("Failed to record waitlist event:", e)
     return {"status": "ok"}
+
+@app.post("/featured-course/events")
+def track_featured_course_event(body: FeaturedCourseEventRequest):
+    """Best-effort view/click tracking for the featured course card on the results page — never fails the caller."""
+    if body.event_type not in ("view", "click"):
+        raise HTTPException(status_code=400, detail="Invalid event_type")
+    try:
+        supabase.table('featured_course_events').insert({
+            "event_type": body.event_type,
+            "course_key": body.course_key[:80],
+            "response_id": (body.response_id or None) and body.response_id[:64],
+            "tier": (body.tier or None) and body.tier[:20],
+            "locale": (body.locale or None) and body.locale[:5],
+        }).execute()
+    except Exception as e:
+        print("Failed to record featured course event:", e)
+    return {"status": "ok"}
+
+@app.get("/admin/featured-course-events")
+def get_featured_course_events(_=Depends(require_admin)):
+    data = supabase.table('featured_course_events') \
+        .select('*') \
+        .order('created_at', desc=True) \
+        .limit(20000) \
+        .execute()
+    return data.data or []
 
 @app.post("/assessment/telemetry")
 def track_assessment_telemetry(body: TelemetryBatchRequest):
