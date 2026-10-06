@@ -58,6 +58,10 @@ class LandingPromptTests(unittest.TestCase):
         p = cc.build_system_prompt("landing", "en")
         for fact in ("59 SAR", "99 SAR", "440 SAR", "12-15 minutes", "info@myetijahi.com", "+966 55 077 0711"):
             self.assertIn(fact, p)
+        for fact in ("launch price", "standard price is 99 SAR", "no subscription", "coaching is not included", "90-day plan", "priced separately", "download it as a PDF"):
+            self.assertIn(fact, p)
+        for old in ("1-3 year outlook", "introductory price"):
+            self.assertNotIn(old, p)
         self.assertNotIn("Profile summary", p)
         self.assertNotIn("Current question", p)
 
