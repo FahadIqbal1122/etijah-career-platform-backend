@@ -2012,9 +2012,10 @@ def generate_ai_impact(user_data: dict, summary: dict, careers: list, locale: st
   top_strengths  = summary.get('strengths', {}).get('top_strengths', [])
   top_values     = summary.get('values',    {}).get('top_values',   [])
   careers_text   = "\n".join(f" - {c['title']} ({c['sector']})" for c in careers[:career_count])
-  # The free tier only shows 2 careers; the skills-to-build and practice-exercise block is part of
+  # The free tier only shows 3 careers; the skills-to-build and practice-exercise block is part of
   # the paid plan, so it is only generated for the full (paid) call.
-  include_focus = career_count > 2
+  # include_focus = career_count > 2
+  include_focus = career_count > 3  # free tier is 3 careers, paid is 8
   education_field = ', '.join(with_typed_other(user_data.get('education_field'), user_data.get('answers'), 'QO5_other')) or 'not specified'
 
   focus_label = user_data.get('focus_direction')
