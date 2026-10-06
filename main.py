@@ -124,6 +124,14 @@ if _test_amount:
     except ValueError:
         print(f"Ignoring PATHFINDER_TEST_AMOUNT={_test_amount!r}: not a number")
 
+# Local-currency prices for checkout, used only when the admin 'Multi-currency' switch is on (app_settings.multi_currency_enabled).
+# The amount always comes from this table, never from the browser. Keep it in step with PRICES in the frontend's src/lib/pricing.ts.
+# SAR is the base price in PLAN_CATALOG; anything not listed here is charged in SAR.
+LOCAL_PRICES = {
+    "pathfinder":        {"BHD": 6,  "QAR": 58,  "KWD": 5,  "OMR": 6,  "AED": 58,  "USD": 16},
+    "launchpad_monthly": {"BHD": 44, "QAR": 428, "KWD": 36, "OMR": 45, "AED": 431, "USD": 117},
+}
+
 _bearer = HTTPBearer()
 _bearer_optional = HTTPBearer(auto_error=False)
 
@@ -272,6 +280,26 @@ def _get_homepage_mode() -> str:
     _homepage_mode_cache["value"] = mode
     _homepage_mode_cache["checked_at"] = now
     return mode
+
+MULTI_CURRENCY_KEY = "multi_currency_enabled"
+_multi_currency_cache: dict[str, Any] = {"value": False, "checked_at": None}
+_MULTI_CURRENCY_CACHE_TTL = timedelta(seconds=10)
+
+def _is_multi_currency_enabled() -> bool:
+    """Admin switch (app_settings.multi_currency_enabled). Off = prices shown and charged in SAR only; on = local
+    currencies by visitor country. Defaults to off, including when the setting is missing or unreadable."""
+    now = datetime.now(timezone.utc)
+    if _multi_currency_cache["checked_at"] and now - _multi_currency_cache["checked_at"] < _MULTI_CURRENCY_CACHE_TTL:
+        return _multi_currency_cache["value"]
+    try:
+        row = supabase.table('app_settings').select('value').eq('key', MULTI_CURRENCY_KEY).execute()
+        enabled = row.data[0]['value'] is True if row.data else False
+    except Exception as e:
+        print("Multi-currency lookup failed, defaulting to off:", e)
+        enabled = False
+    _multi_currency_cache["value"] = enabled
+    _multi_currency_cache["checked_at"] = now
+    return enabled
 
 DASHBOARD_SHARE_TOKEN_KEY = "dashboard_share_token"
 _share_token_cache: dict[str, Any] = {"value": None, "checked_at": None}
@@ -575,6 +603,7 @@ class CheckoutRequest(BaseModel):
     fbp: str | None = Field(default=None, max_length=200)
     fbc: str | None = Field(default=None, max_length=300)
     locale: str | None = Field(default=None, max_length=5)  # 'en' | 'ar': the page language the buyer paid from
+    currency: str | None = Field(default=None, max_length=3)  # display currency the buyer saw; only used while multi-currency is on
 
 class HubTransactionBody(BaseModel):
     external_user_id: str
@@ -2253,6 +2282,26 @@ def set_homepage_mode(body: HomepageModeRequest, _=Depends(require_admin)):
     _homepage_mode_cache["checked_at"] = datetime.now(timezone.utc)
     return {"mode": body.mode}
 
+@app.get("/multi-currency")
+def get_multi_currency_public():
+    """Unauthenticated: the site reads this to decide whether to show local currencies or SAR only."""
+    return {"enabled": _is_multi_currency_enabled()}
+
+@app.get("/admin/multi-currency")
+def get_multi_currency_admin(_=Depends(require_admin)):
+    return {"enabled": _is_multi_currency_enabled()}
+
+@app.post("/admin/multi-currency")
+def set_multi_currency(body: TestModeRequest, _=Depends(require_admin)):
+    supabase.table('app_settings').upsert({
+        'key': MULTI_CURRENCY_KEY,
+        'value': body.enabled,
+        'updated_at': datetime.now(timezone.utc).isoformat(),
+    }, on_conflict='key').execute()
+    _multi_currency_cache["value"] = body.enabled
+    _multi_currency_cache["checked_at"] = datetime.now(timezone.utc)
+    return {"enabled": body.enabled}
+
 @app.get("/beta-status")
 def get_beta_status(request: Request):
     """Unauthenticated — read by the /assessment page to decide between the form and
@@ -3288,6 +3337,15 @@ def create_checkout(body: CheckoutRequest, request: Request, user=Depends(get_cu
     full_name = (user.user_metadata or {}).get("full_name", "") or ""
     first_name, _, last_name = full_name.strip().partition(" ")
 
+    # SAR unless the admin multi-currency switch is on and the buyer asked for a currency we have a price for.
+    # PATHFINDER_TEST_AMOUNT (payment testing) always wins, so test charges never change currency.
+    charge_amount, charge_currency = plan["amount"], plan["currency"]
+    wanted = (body.currency or "").upper()
+    if not _test_amount and wanted != charge_currency and _is_multi_currency_enabled():
+        local = LOCAL_PRICES.get(body.plan_code, {}).get(wanted)
+        if local is not None:
+            charge_amount, charge_currency = local, wanted
+
     payload = {
         "external_user_id": user.id,
         "first_name": first_name or "Customer",
@@ -3295,8 +3353,8 @@ def create_checkout(body: CheckoutRequest, request: Request, user=Depends(get_cu
         "email": user.email,
         "plan_code": body.plan_code,
         "plan_name": plan["name"],
-        "amount": plan["amount"],
-        "currency": plan["currency"],
+        "amount": charge_amount,
+        "currency": charge_currency,
         # Back to the page language the buyer was using (the frontend sends /<locale>/account/billing on to the dashboard)
         "return_url": BILLING_RETURN_URL.replace("/account/billing", f"/{body.locale if body.locale in ('en', 'ar') else 'en'}/account/billing"),
     }
