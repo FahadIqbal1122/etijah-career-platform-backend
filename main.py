@@ -13,7 +13,7 @@ from typing import Any, Literal
 import io
 from datetime import datetime, timezone, timedelta
 from collections import Counter
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, Response
 from report_generator import create_report, _execute_with_retry, WRITING_RULES
 from db_client import disable_http2
 from google.api_core.exceptions import GoogleAPICallError
@@ -24,6 +24,7 @@ from coaching_methodology import METHODOLOGY_DOC
 from coaching_pipeline import chunk_transcript, embed_and_store_chunks, client, embed_country_profile, sync_country_profile_embedding, sync_career_embedding, _gemini_embed
 from content_policy import drop_weak_matches, add_student_track_links, section_order, job_posted_date, is_job_fresh, job_requirements as parse_job_requirements, meets_requirements, MAX_EXPERIENCE_MONTHS_EARLY_CAREER, MAX_EXPERIENCE_MONTHS_INTERNSHIP, EDUCATION_RANK, clean_typed_text, clean_direction_label, direction_key, resolve_route, MAJORS_STAGES, CERTIFICATION_STAGES, NO_LISTINGS_STAGES, NO_COMPANIES_STAGES, is_appropriate, is_region_eligible, is_seniority_appropriate, STILL_ENROLLED_STAGES, ENTERING_MARKET_STAGES, PROFESSIONAL_STAGES, CULTURAL_GUARDRAIL
 import coach_chat as coach_chat_mod
+import receipt_generator
 from ai_provider import get_ai_provider, invalidate_ai_provider_cache, AI_PROVIDER_KEY, VALID_PROVIDERS
 
 load_dotenv()
@@ -3705,6 +3706,56 @@ def _notify_coaching_purchase(user_id: str, amount, currency: str):
     except Exception as e:
         print("coaching purchase notification failed:", e)
 
+def _receipt_party(user_id: str):
+    """(name, email, locale) for a receipt: the account first, the buyer's latest assessment for the language and as a fallback."""
+    name = email = ''
+    try:
+        u = supabase.auth.admin.get_user_by_id(user_id).user
+        email = getattr(u, 'email', '') or ''
+        name = (getattr(u, 'user_metadata', None) or {}).get('full_name', '') or ''
+    except Exception:
+        pass
+    locale = 'en'
+    try:
+        rows = supabase.table('assessment_responses').select('locale,email,full_name').eq('user_id', user_id) \
+            .order('created_at', desc=True).limit(1).execute().data or []
+        if rows:
+            locale = 'ar' if rows[0].get('locale') == 'ar' else 'en'
+            email = email or rows[0].get('email') or ''
+            name = name or rows[0].get('full_name') or ''
+    except Exception:
+        pass
+    return name, email, locale
+
+def _send_payment_receipt(user_id: str, order_ref: str):
+    """Emails the buyer a PDF payment receipt once, when a payment is first confirmed.
+    Best-effort: a failure here never affects the payment."""
+    try:
+        rows = supabase.table('transactions').select('*').eq('order_ref', order_ref).eq('user_id', user_id).limit(1).execute().data
+        if not rows:
+            return
+        tx = rows[0]
+        name, email, locale = _receipt_party(user_id)
+        if not email:
+            return
+        pdf = receipt_generator.receipt_pdf(tx, name, email, locale)
+        subject, html_body = receipt_generator.receipt_email(name, tx, locale)
+        send_email(to=email, subject=subject, html_body=html_body,
+                   attachments=[(f"{receipt_generator.receipt_number(tx)}.pdf", pdf, "application/pdf")], supabase=supabase)
+    except Exception as e:
+        print("payment receipt failed:", e)
+
+@app.get("/billing/receipt/{order_ref}")
+def download_receipt(order_ref: str, locale: str = "en", user=Depends(get_current_user)):
+    """The signed-in buyer's PDF receipt for one of their paid orders."""
+    rows = supabase.table('transactions').select('*').eq('order_ref', order_ref).eq('user_id', user.id).limit(1).execute().data
+    if not rows or rows[0].get('status') != 'paid':
+        raise HTTPException(status_code=404, detail="Receipt not found")
+    name, email, _ = _receipt_party(user.id)
+    pdf = receipt_generator.receipt_pdf(rows[0], name, email or user.email, locale)
+    return Response(content=pdf, media_type="application/pdf",
+                    headers={"Content-Disposition": f'attachment; filename="{receipt_generator.receipt_number(rows[0])}.pdf"'})
+
 def _create_academy_coaching_purchase(user_id: str, order_ref: str):
     """Gives a Launchpad buyer their 1:1 coaching entitlement in the Etijah academy (idempotent per order_ref).
     Best-effort: a failure here never affects the payment."""
@@ -3933,6 +3984,7 @@ async def receive_hub_transaction(request: Request, background_tasks: Background
         _activate_plan(body.external_user_id, body.plan_code)
         # Start building the full report now so it is mostly ready when the buyer comes back.
         background_tasks.add_task(_prewarm_full_report, body.external_user_id)
+        background_tasks.add_task(_send_payment_receipt, body.external_user_id, body.order_ref)
         if str(body.plan_code).startswith('launchpad'):
             background_tasks.add_task(_notify_coaching_purchase, body.external_user_id, body.amount, body.currency)
             background_tasks.add_task(_create_academy_coaching_purchase, body.external_user_id, body.order_ref)
