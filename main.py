@@ -92,6 +92,7 @@ supabase: Client = disable_http2(create_client(
 
 HUB_API_KEY = os.getenv("HUB_API_KEY")
 SHOP_BASE_URL = os.getenv("SHOP_BASE_URL", "https://shop.etijahcoaching.com")
+ACADEMY_BASE_URL = os.getenv("ACADEMY_BASE_URL", "https://academy.etijahcoaching.com")
 BILLING_RETURN_URL = "https://myetijahi.com/account/billing"
 
 META_PIXEL_ID = os.getenv("META_PIXEL_ID")          # "dataset ID" — same as your Pixel ID
@@ -3473,8 +3474,55 @@ def get_my_plan(user=Depends(get_current_user)):
         "subscription_plan_code": plan.get('subscription_plan_code'),
         "subscription_status": "active" if tier == "launchpad" else ("expired" if plan.get('subscription_current_period_end') else None),
         "subscription_current_period_end": plan.get('subscription_current_period_end'),
-        "booking_url": _coaching_booking_url(user) if tier == "launchpad" else None,
+        # Replaced by our own scheduling (the /coaching/* endpoints below); no longer a Calendly link.
+        # "booking_url": _coaching_booking_url(user) if tier == "launchpad" else None,
     }
+
+def _academy_coaching(method: str, path: str, user, *, params: dict | None = None, json_body: dict | None = None):
+    """Calls the academy's coaching API on behalf of a Launchpad user (identified by email). Raises HTTPException."""
+    if get_effective_tier(user.id) != "launchpad":
+        raise HTTPException(status_code=403, detail="launchpad_required")
+    if not HUB_API_KEY:
+        raise HTTPException(status_code=500, detail="HUB_API_KEY is not configured")
+    try:
+        resp = httpx.request(method, f"{ACADEMY_BASE_URL}/api/hub/coaching{path}",
+                             params={**(params or {}), **({"email": user.email} if method == "GET" else {})},
+                             json=({**json_body, "email": user.email} if json_body is not None else None),
+                             headers={"Authorization": f"Bearer {HUB_API_KEY}"}, timeout=20.0)
+    except httpx.RequestError as e:
+        print("academy coaching request failed:", e)
+        raise HTTPException(status_code=502, detail="coaching_unavailable")
+    if resp.status_code == 409:
+        raise HTTPException(status_code=409, detail=resp.json().get("error", "conflict"))
+    if resp.status_code >= 400:
+        print("academy coaching error:", resp.status_code, resp.text[:300])
+        raise HTTPException(status_code=502, detail="coaching_unavailable")
+    return resp.json()
+
+class CoachingBookRequest(BaseModel):
+    start: str = Field(max_length=40)
+
+class CoachingCancelRequest(BaseModel):
+    booking_id: int
+
+@app.get("/coaching/status")
+def coaching_status(user=Depends(get_current_user)):
+    """Sessions left and the user's upcoming sessions (with their Meet link)."""
+    return _academy_coaching("GET", "", user)
+
+@app.get("/coaching/slots")
+def coaching_slots(date_from: str | None = None, date_to: str | None = None, user=Depends(get_current_user)):
+    """Free start times (UTC ISO) for the user's next coaching session."""
+    params = {k: v for k, v in {"from": date_from, "to": date_to}.items() if v}
+    return _academy_coaching("GET", "/slots", user, params=params)
+
+@app.post("/coaching/book")
+def coaching_book(body: CoachingBookRequest, user=Depends(get_current_user)):
+    return _academy_coaching("POST", "/book", user, json_body={"start": body.start})
+
+@app.post("/coaching/cancel")
+def coaching_cancel(body: CoachingCancelRequest, user=Depends(get_current_user)):
+    return _academy_coaching("POST", "/cancel", user, json_body={"booking_id": body.booking_id})
 
 def _coaching_booking_url(user) -> str | None:
     """Scheduling link for the Launchpad coaching session (COACHING_BOOKING_URL, e.g. a Calendly event link), with the
@@ -3484,8 +3532,19 @@ def _coaching_booking_url(user) -> str | None:
     if not base:
         return None
     from urllib.parse import urlencode
+    # The booking is matched to an academy coaching purchase (utm_content=purchase_<id>), so the buyer must have
+    # one with sessions left. None otherwise (or if the academy is unreachable): the dashboard shows contact details.
+    try:
+        r = httpx.get(f"{ACADEMY_BASE_URL}/api/hub/coaching", params={"email": user.email},
+                      headers={"Authorization": f"Bearer {HUB_API_KEY}"}, timeout=8.0).json()
+    except Exception as e:
+        print("academy coaching lookup failed:", e)
+        return None
+    if not r.get("purchase_id"):
+        return None
     name = (user.user_metadata or {}).get("full_name", "") or ""
-    params = {"utm_source": "etijahi", "utm_content": f"launchpad_{user.id}"}
+    params = {"embed_domain": "myetijahi.com", "embed_type": "Inline", "hide_gdpr_banner": "1",
+              "utm_source": "etijahi", "utm_content": f"purchase_{r['purchase_id']}"}
     if name:
         params["name"] = name
     if user.email:
@@ -3541,6 +3600,18 @@ def _notify_coaching_purchase(user_id: str, amount, currency: str):
         send_email(to=ADMIN_ALERT_EMAIL, subject="New Launchpad purchase: book the coaching session", html_body=html, supabase=supabase)
     except Exception as e:
         print("coaching purchase notification failed:", e)
+
+def _create_academy_coaching_purchase(user_id: str, order_ref: str):
+    """Gives a Launchpad buyer their 1:1 coaching entitlement in the Etijah academy (idempotent per order_ref).
+    Best-effort: a failure here never affects the payment."""
+    try:
+        u = supabase.auth.admin.get_user_by_id(user_id).user
+        httpx.post(f"{ACADEMY_BASE_URL}/api/hub/coaching-purchases",
+                   json={"email": u.email, "name": (getattr(u, 'user_metadata', None) or {}).get("full_name", ""),
+                         "order_ref": order_ref},
+                   headers={"Authorization": f"Bearer {HUB_API_KEY}"}, timeout=15.0).raise_for_status()
+    except Exception as e:
+        print("academy coaching purchase failed:", e)
 
 _prewarm_inflight: set[str] = set()
 
@@ -3760,5 +3831,6 @@ async def receive_hub_transaction(request: Request, background_tasks: Background
         background_tasks.add_task(_prewarm_full_report, body.external_user_id)
         if str(body.plan_code).startswith('launchpad'):
             background_tasks.add_task(_notify_coaching_purchase, body.external_user_id, body.amount, body.currency)
+            background_tasks.add_task(_create_academy_coaching_purchase, body.external_user_id, body.order_ref)
 
     return {"received": True}
