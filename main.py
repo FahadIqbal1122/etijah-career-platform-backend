@@ -131,7 +131,8 @@ if _test_amount:
 # The amount always comes from this table, never from the browser. Keep it in step with PRICES in the frontend's src/lib/pricing.ts.
 # SAR is the base price in PLAN_CATALOG; anything not listed here is charged in SAR.
 LOCAL_PRICES = {
-    "pathfinder":        {"BHD": 6,  "QAR": 58,  "KWD": 5,  "OMR": 6,  "AED": 58,  "USD": 16},
+    # "pathfinder":        {"BHD": 6,  "QAR": 58,  "KWD": 5,  "OMR": 6,  "AED": 58,  "USD": 16},
+    "pathfinder":        {"BHD": 5.9,  "QAR": 58,  "KWD": 5,  "OMR": 6,  "AED": 58,  "USD": 16},  # BHD 5.9 to match 59 SAR
     # "launchpad_monthly": {"BHD": 44, "QAR": 428, "KWD": 36, "OMR": 45, "AED": 431, "USD": 117},  # standard 440 SAR
     # launch offer 330 SAR
     "launchpad_monthly": {"BHD": 33, "QAR": 321, "KWD": 27, "OMR": 34, "AED": 323, "USD": 88},
