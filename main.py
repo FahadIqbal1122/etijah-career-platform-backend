@@ -831,7 +831,7 @@ def submit_assessment(body: SubmitRequest, background_tasks: BackgroundTasks, us
 
 
     # Return summary
-    return {"response_id": response_id, "summary": summary}
+    return {"response_id": response_id, "summary": summary, "claim_token": _claim_token(str(response_id))}
 
 
 @app.get("/assessment/{response_id}/answers")
@@ -3302,6 +3302,33 @@ def get_companies_suggestions(response_id: str, user=Depends(get_optional_user))
     result = _execute_with_retry(query.order('name_en').limit(company_limit))
     return [c for c in (result.data or []) if is_appropriate(c.get('name_en'), c.get('sector'))]
 
+def _claim_token(response_id: str) -> str:
+    """Proof that a browser took this assessment: an HMAC of the response id with a server secret. It is handed back
+    only in the submit response (the browser keeps it), so someone who merely holds a shared report link cannot
+    compute it. Stateless, so no database column is needed."""
+    secret = os.getenv("CLAIM_TOKEN_SECRET") or HUB_API_KEY or os.getenv("SUPABASE_KEY")
+    if not secret:   # never sign with an empty key: the token would be guessable
+        return ""
+    return hmac.new(secret.encode(), f"claim:{response_id}".encode(), hashlib.sha256).hexdigest()[:40]
+
+def _claim_response(user, response_id: str | None, token: str | None) -> int:
+    """Attaches an unowned report to this account when the claim token is valid. Returns how many rows changed."""
+    expected = _claim_token(str(response_id)) if response_id else ""
+    if not expected or not token or not hmac.compare_digest(expected, str(token)):
+        return 0
+    result = supabase.table('assessment_responses').update({"user_id": user.id}) \
+        .eq('id', str(response_id)).is_('user_id', 'null').execute()
+    return len(result.data or [])
+
+class ClaimRequest(BaseModel):
+    token: str = Field(max_length=100)
+
+@app.post("/assessment/{response_id}/claim")
+def claim_assessment(response_id: str, body: ClaimRequest, user=Depends(get_current_user)):
+    """Saves the report this browser just took to the account it signed up or signed in with, even when the account
+    email differs from the email typed in the assessment (link-by-email only matches equal emails)."""
+    return {"linked": _claim_response(user, response_id, body.token)}
+
 @app.post("/assessment/link-by-email")
 def link_by_email(user=Depends(get_current_user)):
     # Escape ILIKE wildcards in the email so a "_" (a valid, common local-part
@@ -3314,7 +3341,13 @@ def link_by_email(user=Depends(get_current_user)):
         .ilike('email', safe_email) \
         .is_('user_id', 'null') \
         .execute()
-    return {"linked": len(result.data or [])}
+    linked = len(result.data or [])
+    # A claim made at sign-up travels in the account's metadata, so it still works when the confirmation email is
+    # opened in a different browser from the one that took the assessment.
+    claim = (user.user_metadata or {}).get("claim") or {}
+    if isinstance(claim, dict):
+        linked += _claim_response(user, claim.get("response_id"), claim.get("token"))
+    return {"linked": linked}
 
 @app.get("/admin/coaching-sessions")
 def list_coaching_sessions(user=Depends(require_admin)):
