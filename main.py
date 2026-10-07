@@ -502,51 +502,57 @@ class BugReportStatusUpdate(BaseModel):
 
 class BetaFeedbackStage1Request(BaseModel):
     response_id: str
-    s1_clarity: int | None = Field(default=None, ge=1, le=5)
-    s1_feeling: int | None = Field(default=None, ge=1, le=5)
+    # Launch form (7 Oct 2026): Q1 understood, Q2 intent, Q3 confidence, Q4 length.
+    # s1_clarity / s1_feeling were dropped from the form; the columns stay for the beta rows.
+    # s1_clarity: int | None = Field(default=None, ge=1, le=5)
+    # s1_feeling: int | None = Field(default=None, ge=1, le=5)
     s1_understood: int | None = Field(default=None, ge=1, le=5)
     # What the person wants from their results (confirm path / discover options /
     # choose a major / plan a change / get a job faster / understand AI impact) —
-    # analytics-only for now, segments Beta 2 by stated intent; not wired into
-    # report generation since the report is already being built by the time
-    # this loading-screen pulse fires.
+    # analytics-only, not wired into report generation since the report is already
+    # being built by the time this loading-screen pulse fires.
     s1_intent: str | None = None
+    s1_confidence: int | None = Field(default=None, ge=1, le=5)
+    s1_length: str | None = None
     locale: str | None = None
     stage1_form_version: str | None = None
 
 class BetaFeedbackStage2Request(BaseModel):
-    """Redesigned per the 10 Sept beta-strategy doc: ~12 questions, replacing
-    the old ~30-field form. language_used/device are no longer asked as
-    questions — the frontend auto-detects and includes them silently — kept
-    here (rather than dropped) so the admin dashboard's existing language/
-    device breakdowns keep working without changes on their read side."""
+    """The follow-up form (launch doc stage 3A for free users, 3B for paid users; stored in the
+    stage2_* columns the beta used). language_used/device are filled in silently by the frontend.
+    Fields the beta form asked and the launch form does not (understood_after, career_explained,
+    careers_seriously_considered, would_pay_at_price, pay_blockers, pay_blocker_priority,
+    first_action_text, had_issues, issue_detail, worth_paying_for) are no longer accepted; their
+    columns stay for the beta rows."""
     response_id: str
     language_used: str | None = None
     device: str | None = None
-    understood_after: int | None = Field(default=None, ge=1, le=5)
-    felt_like_mentor: str | None = None
-    careers_seriously_considered: str | None = None
-    career_explained: str | None = None
-    most_useful_part: str | None = None
-    least_useful_part: str | None = None
-    first_action_text: str | None = None
-    would_pay_at_price: str | None = None
-    pay_blockers: list[str] | None = None
-    pay_blocker_other_text: str | None = None
-    pay_blocker_priority: str | None = None
-    worth_paying_for: list[str] | None = None
-    wants_coach_session: str | None = None
-    would_recommend: str | None = None
-    had_issues: str | None = None
-    issue_detail: str | None = None
+    felt_like_mentor: str | None = None          # Q9
+    most_useful_part: str | None = None          # Q10
+    ai_impact_changed_thinking: str | None = None  # Q11
+    first_step: list[str] | None = None          # Q12 (free)
+    wants_coach_session: str | None = None       # Q13
+    would_recommend: str | None = None           # Q14
+    arabic_natural: str | None = None            # Q15 (Arabic reports)
+    purchase_blocker: str | None = None          # Q16 (free)
+    pay_blocker_other_text: str | None = Field(default=None, max_length=2000)  # Q17 (free)
+    overall_value: int | None = Field(default=None, ge=1, le=5)   # Q18 (paid)
+    jobs_relevant: int | None = Field(default=None, ge=1, le=5)   # Q19 (paid)
+    courses_useful: int | None = Field(default=None, ge=1, le=5)  # Q20 (paid)
+    plan_would_follow: str | None = None         # Q21 (paid)
+    least_useful_part: str | None = None         # Q22 (paid)
+    missing_text: str | None = Field(default=None, max_length=2000)  # Q23 (paid)
     stage2_form_version: str | None = None
 
 class BetaFeedbackResultStageRequest(BaseModel):
     response_id: str
+    # Launch form: Q5 accuracy, Q6 understood why, Q7 careers they'd consider, Q8 optional note.
     result_accuracy: str | None = None
-    would_recommend: str | None = None
-    would_pay: str | None = None
-    other_text: str | None = None
+    career_explained: str | None = None
+    careers_seriously_considered: str | None = None
+    # would_recommend: str | None = None   # moved to the follow-up form (Q14)
+    # would_pay: str | None = None         # dropped from the launch form
+    other_text: str | None = Field(default=None, max_length=2000)
     result_stage_form_version: str | None = None
     locale: str | None = None
 
@@ -1031,7 +1037,8 @@ def submit_beta_feedback_stage1(body: BetaFeedbackStage1Request, user=Depends(ge
     row = body.model_dump(exclude={'response_id'}, exclude_none=True)
     row['response_id'] = body.response_id
     row['user_id'] = user.id if user else None
-    if all(row.get(k) is not None for k in ('s1_clarity', 's1_feeling', 's1_understood', 's1_intent')):
+    row['plan_tier'] = _feedback_plan_tier(body.response_id)
+    if all(row.get(k) is not None for k in ('s1_understood', 's1_intent', 's1_confidence', 's1_length')):
         row['stage1_completed_at'] = datetime.now(timezone.utc).isoformat()
     result = supabase.table('beta_feedback').upsert(row, on_conflict='response_id').execute()
     if not result.data:
@@ -1040,22 +1047,57 @@ def submit_beta_feedback_stage1(body: BetaFeedbackStage1Request, user=Depends(ge
 
 @app.post("/beta-feedback/result-stage")
 def submit_beta_feedback_result_stage(body: BetaFeedbackResultStageRequest, user=Depends(get_optional_user)):
-    """Shown on the results page itself (not the loading screen, and not gating
-    anything) — accuracy/would-recommend/would-pay, asked right after someone's
-    actually seen their report, rather than waiting for the full Stage 2 survey.
-    would_recommend is the same beta_feedback column the redesigned Stage 2 also
-    asks about — not exclusive to this stage, just asked earlier too. would_pay
-    here is this stage's own quick pulse (no price shown); Stage 2's
-    would_pay_at_price is a separate, richer question shown with a real price —
-    intentionally two different columns, not shared."""
+    """Shown on the results page itself (never gating): accuracy, whether each career's
+    reason was understood, how many careers they'd consider, and an optional note —
+    asked right after someone has seen their report."""
     row = body.model_dump(exclude={'response_id'}, exclude_none=True)
     row['response_id'] = body.response_id
     row['user_id'] = user.id if user else None
-    if all(row.get(k) is not None for k in ('result_accuracy', 'would_recommend', 'would_pay')):
+    row['plan_tier'] = _feedback_plan_tier(body.response_id)
+    if all(row.get(k) is not None for k in ('result_accuracy', 'career_explained', 'careers_seriously_considered')):
         row['result_stage_completed_at'] = datetime.now(timezone.utc).isoformat()
     result = supabase.table('beta_feedback').upsert(row, on_conflict='response_id').execute()
     if not result.data:
         raise HTTPException(status_code=500, detail="Failed to save feedback")
+    return {"ok": True}
+
+def _feedback_plan_tier(response_id: str) -> str:
+    """'paid' when the person who took this assessment has bought Pathfinder or Launchpad, else
+    'free'. Reads user_plans (real purchases) rather than get_effective_tier, which admin test
+    mode inflates to launchpad. Stamped on every feedback save; the last save wins, so a free
+    user who buys later is tagged paid on their next answer."""
+    try:
+        row = supabase.table('assessment_responses').select('user_id').eq('id', response_id).limit(1).execute()
+        user_id = row.data[0].get('user_id') if row.data else None
+        return 'paid' if user_id and _owns_pathfinder(user_id) else 'free'
+    except Exception as e:
+        print("Feedback plan tier lookup failed:", repr(e))
+        return 'free'
+
+@app.get("/beta-feedback/{response_id}/context")
+def get_beta_feedback_context(response_id: str):
+    """Public (the follow-up link is opened from email, often signed out). Tells the follow-up
+    form which variant to show and which conditional questions apply: free vs paid, the language
+    of the report (Q15 is Arabic-only), and whether a free user opened the AI Impact preview (Q11)."""
+    profile = supabase.table('assessment_responses').select('locale').eq('id', response_id).limit(1).execute()
+    if not profile.data:
+        raise HTTPException(status_code=404, detail="No results found for this response")
+    fb = supabase.table('beta_feedback').select('opened_ai_impact').eq('response_id', response_id).limit(1).execute()
+    return {
+        'plan_tier': _feedback_plan_tier(response_id),
+        'report_locale': 'ar' if profile.data[0].get('locale') == 'ar' else 'en',
+        'opened_ai_impact': bool(fb.data and fb.data[0].get('opened_ai_impact')),
+    }
+
+@app.post("/beta-feedback/{response_id}/ai-impact-opened")
+def mark_ai_impact_opened(response_id: str):
+    """The results page calls this the first time a reader expands an AI Impact row; it decides
+    whether the free follow-up asks Q11. Only ever sets a flag."""
+    known = supabase.table('assessment_responses').select('id').eq('id', response_id).limit(1).execute()
+    if not known.data:   # no stray rows for ids that are not real responses
+        raise HTTPException(status_code=404, detail="No results found for this response")
+    supabase.table('beta_feedback').upsert(
+        {'response_id': response_id, 'opened_ai_impact': True}, on_conflict='response_id').execute()
     return {"ok": True}
 
 @app.get("/beta-feedback/{response_id}/status")
@@ -1090,6 +1132,7 @@ def submit_beta_feedback_stage2(body: BetaFeedbackStage2Request, user=Depends(ge
     row = body.model_dump(exclude={'response_id'}, exclude_none=True)
     row['response_id'] = body.response_id
     row['user_id'] = user.id if user else None
+    row['plan_tier'] = _feedback_plan_tier(body.response_id)
     row['stage2_completed_at'] = datetime.now(timezone.utc).isoformat()
     result = supabase.table('beta_feedback').upsert(row, on_conflict='response_id').execute()
     if not result.data:
