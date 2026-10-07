@@ -72,6 +72,8 @@ class CatchAllMiddleware(BaseHTTPMiddleware):
 
 
 app.add_middleware(CatchAllMiddleware)
+from request_guard import RequestGuardMiddleware, client_ip as _client_ip
+app.add_middleware(RequestGuardMiddleware)
 
 app.add_middleware(
     CORSMiddleware,
@@ -511,11 +513,11 @@ class BetaFeedbackStage1Request(BaseModel):
     # choose a major / plan a change / get a job faster / understand AI impact) —
     # analytics-only, not wired into report generation since the report is already
     # being built by the time this loading-screen pulse fires.
-    s1_intent: str | None = None
+    s1_intent: str | None = Field(default=None, max_length=100)
     s1_confidence: int | None = Field(default=None, ge=1, le=5)
-    s1_length: str | None = None
-    locale: str | None = None
-    stage1_form_version: str | None = None
+    s1_length: str | None = Field(default=None, max_length=100)
+    locale: str | None = Field(default=None, max_length=100)
+    stage1_form_version: str | None = Field(default=None, max_length=100)
 
 class BetaFeedbackStage2Request(BaseModel):
     """The follow-up form (launch doc stage 3A for free users, 3B for paid users; stored in the
@@ -525,36 +527,36 @@ class BetaFeedbackStage2Request(BaseModel):
     first_action_text, had_issues, issue_detail, worth_paying_for) are no longer accepted; their
     columns stay for the beta rows."""
     response_id: str
-    language_used: str | None = None
-    device: str | None = None
-    felt_like_mentor: str | None = None          # Q9
-    most_useful_part: str | None = None          # Q10
-    ai_impact_changed_thinking: str | None = None  # Q11
-    first_step: list[str] | None = None          # Q12 (free)
-    wants_coach_session: str | None = None       # Q13
-    would_recommend: str | None = None           # Q14
-    arabic_natural: str | None = None            # Q15 (Arabic reports)
-    purchase_blocker: str | None = None          # Q16 (free)
+    language_used: str | None = Field(default=None, max_length=100)
+    device: str | None = Field(default=None, max_length=100)
+    felt_like_mentor: str | None = Field(default=None, max_length=100)          # Q9
+    most_useful_part: str | None = Field(default=None, max_length=100)          # Q10
+    ai_impact_changed_thinking: str | None = Field(default=None, max_length=100)  # Q11
+    first_step: list[str] | None = Field(default=None, max_length=12)         # Q12 (free)
+    wants_coach_session: str | None = Field(default=None, max_length=100)       # Q13
+    would_recommend: str | None = Field(default=None, max_length=100)           # Q14
+    arabic_natural: str | None = Field(default=None, max_length=100)            # Q15 (Arabic reports)
+    purchase_blocker: str | None = Field(default=None, max_length=100)          # Q16 (free)
     pay_blocker_other_text: str | None = Field(default=None, max_length=2000)  # Q17 (free)
     overall_value: int | None = Field(default=None, ge=1, le=5)   # Q18 (paid)
     jobs_relevant: int | None = Field(default=None, ge=1, le=5)   # Q19 (paid)
     courses_useful: int | None = Field(default=None, ge=1, le=5)  # Q20 (paid)
-    plan_would_follow: str | None = None         # Q21 (paid)
-    least_useful_part: str | None = None         # Q22 (paid)
+    plan_would_follow: str | None = Field(default=None, max_length=100)         # Q21 (paid)
+    least_useful_part: str | None = Field(default=None, max_length=100)         # Q22 (paid)
     missing_text: str | None = Field(default=None, max_length=2000)  # Q23 (paid)
-    stage2_form_version: str | None = None
+    stage2_form_version: str | None = Field(default=None, max_length=100)
 
 class BetaFeedbackResultStageRequest(BaseModel):
     response_id: str
     # Launch form: Q5 accuracy, Q6 understood why, Q7 careers they'd consider, Q8 optional note.
-    result_accuracy: str | None = None
-    career_explained: str | None = None
-    careers_seriously_considered: str | None = None
+    result_accuracy: str | None = Field(default=None, max_length=100)
+    career_explained: str | None = Field(default=None, max_length=100)
+    careers_seriously_considered: str | None = Field(default=None, max_length=100)
     # would_recommend: str | None = None   # moved to the follow-up form (Q14)
     # would_pay: str | None = None         # dropped from the launch form
     other_text: str | None = Field(default=None, max_length=2000)
-    result_stage_form_version: str | None = None
-    locale: str | None = None
+    result_stage_form_version: str | None = Field(default=None, max_length=100)
+    locale: str | None = Field(default=None, max_length=100)
 
 class WaitlistRequest(BaseModel):
     email: EmailStr
@@ -1036,7 +1038,8 @@ def update_bug_report_status(bug_id: str, body: BugReportStatusUpdate, _=Depends
 def submit_beta_feedback_stage1(body: BetaFeedbackStage1Request, user=Depends(get_optional_user)):
     row = body.model_dump(exclude={'response_id'}, exclude_none=True)
     row['response_id'] = body.response_id
-    row['user_id'] = user.id if user else None
+    if user:   # a later anonymous save (link opened signed out) must not unlink the account
+        row['user_id'] = user.id
     row['plan_tier'] = _feedback_plan_tier(body.response_id)
     if all(row.get(k) is not None for k in ('s1_understood', 's1_intent', 's1_confidence', 's1_length')):
         row['stage1_completed_at'] = datetime.now(timezone.utc).isoformat()
@@ -1052,7 +1055,8 @@ def submit_beta_feedback_result_stage(body: BetaFeedbackResultStageRequest, user
     asked right after someone has seen their report."""
     row = body.model_dump(exclude={'response_id'}, exclude_none=True)
     row['response_id'] = body.response_id
-    row['user_id'] = user.id if user else None
+    if user:   # a later anonymous save (link opened signed out) must not unlink the account
+        row['user_id'] = user.id
     row['plan_tier'] = _feedback_plan_tier(body.response_id)
     if all(row.get(k) is not None for k in ('result_accuracy', 'career_explained', 'careers_seriously_considered')):
         row['result_stage_completed_at'] = datetime.now(timezone.utc).isoformat()
@@ -1131,7 +1135,8 @@ def get_beta_feedback_stage2(response_id: str, user=Depends(get_optional_user)):
 def submit_beta_feedback_stage2(body: BetaFeedbackStage2Request, user=Depends(get_optional_user)):
     row = body.model_dump(exclude={'response_id'}, exclude_none=True)
     row['response_id'] = body.response_id
-    row['user_id'] = user.id if user else None
+    if user:   # a later anonymous save (link opened signed out) must not unlink the account
+        row['user_id'] = user.id
     row['plan_tier'] = _feedback_plan_tier(body.response_id)
     row['stage2_completed_at'] = datetime.now(timezone.utc).isoformat()
     result = supabase.table('beta_feedback').upsert(row, on_conflict='response_id').execute()
@@ -3407,8 +3412,7 @@ def coach_chat(payload: CoachChatRequest, request: Request, user=Depends(get_opt
     """Two-way coach bubble (Gemini). See coach_chat.py: assessment mode gets no user data, results mode gets
     only the profile summary every tier already sees. Not the paid /coach (Claude + coaching library)."""
     # Behind Traefik the LAST X-Forwarded-For entry is the one the proxy appended; earlier ones are client-supplied.
-    fwd = request.headers.get("x-forwarded-for", "")
-    ip = (fwd.split(",")[-1].strip() if fwd else "") or (request.client.host if request.client else "unknown")
+    ip = _client_ip(request)
     if not coach_chat_mod.check_rate_limit(f"ip:{ip}", coach_chat_mod.LIMIT_PER_IP):
         raise HTTPException(status_code=429, detail="Too many messages, please try again later.")
 
@@ -3506,9 +3510,11 @@ def create_checkout(body: CheckoutRequest, request: Request, user=Depends(get_cu
         )
         resp.raise_for_status()
     except httpx.HTTPStatusError as e:
-        raise HTTPException(status_code=502, detail=f"Shop rejected the order: {e.response.text}")
+        print("Shop rejected the order:", e.response.status_code, e.response.text[:500])   # details stay in the logs, not the response
+        raise HTTPException(status_code=502, detail="The payment page could not be created. Please try again.")
     except httpx.RequestError as e:
-        raise HTTPException(status_code=502, detail=f"Could not reach Shop: {e}")
+        print("Could not reach Shop:", e)
+        raise HTTPException(status_code=502, detail="The payment page could not be created. Please try again.")
 
     checkout_url = resp.json().get("checkout_url")
     if not checkout_url:
