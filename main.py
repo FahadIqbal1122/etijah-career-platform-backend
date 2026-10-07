@@ -77,7 +77,6 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=[
         "http://localhost:3000",
-        "https://careercompass.etijahcoaching.com",
         "https://myetijahi.com",
         "https://www.myetijahi.com",
     ],

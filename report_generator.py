@@ -1098,7 +1098,7 @@ def _icon_tile(name: str) -> str:
 
 # ─── Short profile notes (shared by the PDF and the results page, so the two always match) ────────────────────────
 
-def _short_note(text, limit: int = 160) -> str:
+def _short_note(text, limit: int = 260) -> str:
     """The first sentence of a longer explanation, trimmed to a readable length at a natural break."""
     t = re.sub(r"\s+", " ", str(text or "")).strip()
     if not t:
@@ -1113,6 +1113,10 @@ def _short_note(text, limit: int = 160) -> str:
         if i > limit * 0.5:
             return cut[:i].rstrip(" ,;—–") + "…"
     return cut.rsplit(" ", 1)[0].rstrip(" ,;—–") + "…"
+
+
+def _full_note(text) -> str:
+    return re.sub(r"\s+", " ", str(text or "")).strip()
 
 
 def _match_notes_by_name(keys: list, names: dict, texts: list) -> dict:
@@ -1164,18 +1168,29 @@ def profile_notes(ai: dict, summary: dict, locale: str = 'en') -> dict:
     s_by_text = _match_notes_by_name(strengths, s_names, [o.get('narrative') for o in s_objs])
     tip_of = {o.get('narrative'): o.get('development_tip') for o in s_objs}
 
-    ws = ' '.join(x for x in (_short_note(ai.get('resilience_narrative'), 150), _short_note(ai.get('work_style_narrative'), 150)) if x)
+    ws = ' '.join(x for x in (_short_note(ai.get('resilience_narrative'), 300), _short_note(ai.get('work_style_narrative'), 300)) if x)
+    r_by = _match_notes_by_name(riasec, r_names, r_texts)
+    v_by = _match_notes_by_name(values, v_names, v_texts)
+    full = {  # the whole explanation behind each short note; the results page shows it under "Read more"
+        'overview': {k: _full_note(ai.get(f'{k}_overview')) for k in ('riasec', 'values', 'strengths', 'big_five')},
+        'riasec': {k: _full_note(v) for k, v in r_by.items()},
+        'values': {k: _full_note(v) for k, v in v_by.items()},
+        'strengths': {k: _full_note(v) for k, v in s_by_text.items()},
+        'big_five': {k: _full_note(v) for k, v in _as_dict(ai.get('big_five_narratives')).items() if str(v or '').strip()},
+        'work_style': ' '.join(x for x in (_full_note(ai.get('resilience_narrative')), _full_note(ai.get('work_style_narrative'))) if x),
+    }
     return {
+        'full': full,
         'overview': {k: v for k, v in {
-            'riasec': _short_note(ai.get('riasec_overview'), 190),
-            'values': _short_note(ai.get('values_overview'), 190),
-            'strengths': _short_note(ai.get('strengths_overview'), 190),
-            'big_five': _short_note(ai.get('big_five_overview'), 190),
+            'riasec': _short_note(ai.get('riasec_overview'), 300),
+            'values': _short_note(ai.get('values_overview'), 300),
+            'strengths': _short_note(ai.get('strengths_overview'), 300),
+            'big_five': _short_note(ai.get('big_five_overview'), 300),
             'work_style': ws,
         }.items() if v},
-        'riasec': {k: _short_note(v) for k, v in _match_notes_by_name(riasec, r_names, r_texts).items()},
-        'values': {k: _short_note(v) for k, v in _match_notes_by_name(values, v_names, v_texts).items()},
-        'strengths': {k: {'note': _short_note(v), 'tip': _short_note(tip_of.get(v), 140)} for k, v in s_by_text.items()},
+        'riasec': {k: _short_note(v) for k, v in r_by.items()},
+        'values': {k: _short_note(v) for k, v in v_by.items()},
+        'strengths': {k: {'note': _short_note(v), 'tip': _short_note(tip_of.get(v), 260)} for k, v in s_by_text.items()},
         'big_five': {k: _short_note(v) for k, v in _as_dict(ai.get('big_five_narratives')).items() if str(v or '').strip()},
     }
 
