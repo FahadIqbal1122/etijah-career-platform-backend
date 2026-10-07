@@ -29,8 +29,19 @@ LIMIT_ASSESSMENT_SESSION = (10, 6 * 3600)   # total messages per assessment sess
 LIMIT_RESULTS_RESPONSE = (40, 3600)
 LIMIT_LANDING_SESSION = (20, 6 * 3600)      # anonymous visitors on the landing page
 
+# Overall spend cap: per-visitor limits do not stop many visitors from running up the Gemini bill, so the coach
+# also stops answering after this many replies in a rolling day (COACH_DAILY_BUDGET overrides; 0 turns the cap off).
+DAILY_BUDGET = int(os.getenv("COACH_DAILY_BUDGET", "6000"))
+
 _hits: dict[str, deque] = defaultdict(deque)
 _lock = threading.Lock()
+
+
+def within_daily_budget() -> bool:
+    """True if the coach may still answer today (and counts this reply)."""
+    if DAILY_BUDGET <= 0:
+        return True
+    return check_rate_limit("global:daily", (DAILY_BUDGET, 24 * 3600))
 
 
 def check_rate_limit(key: str, limit: tuple[int, int]) -> bool:

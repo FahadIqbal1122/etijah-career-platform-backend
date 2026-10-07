@@ -152,3 +152,17 @@ class MemoryBoundTests(unittest.TestCase):
             cc._hits[f"old:{i}"].append(-10**9)       # ancient hit
         cc.check_rate_limit("fresh", (5, 60))
         self.assertLess(len(cc._hits), 10)
+
+
+class DailyBudgetTests(unittest.TestCase):
+    def test_coach_stops_after_the_daily_budget(self):
+        import coach_chat
+        coach_chat._hits.pop("global:daily", None)
+        with unittest.mock.patch.object(coach_chat, "DAILY_BUDGET", 3):
+            self.assertEqual([coach_chat.within_daily_budget() for _ in range(4)], [True, True, True, False])
+        coach_chat._hits.pop("global:daily", None)
+
+    def test_budget_of_zero_means_no_cap(self):
+        import coach_chat
+        with unittest.mock.patch.object(coach_chat, "DAILY_BUDGET", 0):
+            self.assertTrue(all(coach_chat.within_daily_budget() for _ in range(50)))

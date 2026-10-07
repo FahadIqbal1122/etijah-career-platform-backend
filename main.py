@@ -29,7 +29,10 @@ from ai_provider import get_ai_provider, invalidate_ai_provider_cache, AI_PROVID
 
 load_dotenv()
 
-app = FastAPI()
+# The interactive API docs list every endpoint, so they are off unless ENABLE_API_DOCS=1 (local development).
+_docs_on = os.getenv("ENABLE_API_DOCS") == "1"
+app = FastAPI(docs_url="/docs" if _docs_on else None, redoc_url="/redoc" if _docs_on else None,
+              openapi_url="/openapi.json" if _docs_on else None)
 
 import traceback
 from fastapi.responses import JSONResponse
@@ -711,6 +714,8 @@ def check_existing(body: CheckExistingRequest, user=Depends(get_optional_user), 
     return {"id": result.data}
 
 
+MAX_RESULT_EMAILS_PER_ADDRESS_PER_DAY = 3
+
 @app.post("/assessment/submit")
 def submit_assessment(body: SubmitRequest, background_tasks: BackgroundTasks, user=Depends(get_optional_user), _beta=Depends(require_beta_open)):
     # Score it first, before writing anything — a payload with no recognizable
@@ -792,7 +797,15 @@ def submit_assessment(body: SubmitRequest, background_tasks: BackgroundTasks, us
         .gte('created_at', (datetime.now(timezone.utc) - timedelta(minutes=5)).isoformat()) \
         .limit(1).execute()
 
-    if not recent_duplicate.data:
+    # Nobody can use this open form to flood one inbox: after a few reports for the same address in a day the
+    # results email is skipped (the person still sees their results on screen and can retrieve the link later).
+    day_count = supabase.table('assessment_responses') \
+        .select('id', count='exact') \
+        .eq('email', body.email) \
+        .gte('created_at', (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()) \
+        .execute().count or 0
+
+    if not recent_duplicate.data and day_count <= MAX_RESULT_EMAILS_PER_ADDRESS_PER_DAY:
         # locale is free-text from the client (SubmitRequest.locale) — clamp it before it
         # becomes part of a URL embedded in an email, rather than trusting it verbatim.
         locale = body.locale if body.locale in ('en', 'ar') else 'en'
@@ -957,7 +970,35 @@ def get_results(response_id: str, user=Depends(get_optional_user)):
 
     summary = build_framework_output(rows.data)
     tier = get_effective_tier(profile.data.get('user_id'))
+    owner_id = profile.data.get('user_id')
+    # Small extras the results page used to fetch with three separate requests (each one re-checked the login and
+    # re-read the report). The old endpoints still exist; the page just no longer calls them.
+    try:
+        fb = supabase.table('beta_feedback').select('stage1_completed_at, result_stage_completed_at') \
+            .eq('response_id', response_id).limit(1).execute()
+        fb_row = fb.data[0] if fb.data else None
+    except Exception as e:
+        print("feedback status read failed:", repr(e))
+        fb_row = None
+    rec_items: list = []
+    if not owner_id or _is_owner_or_admin(owner_id, user):   # same rule as GET /recommendation-feedback
+        try:
+            rec_items = supabase.table('recommendation_feedback').select('career_title,reason') \
+                .eq('response_id', response_id).execute().data or []
+        except Exception as e:
+            print("recommendation_feedback read failed (table missing?):", e)
+    try:
+        recent = supabase.table('assessment_responses').select('id', count='exact').eq('completed', True) \
+            .gte('created_at', (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()).execute().count or 0
+    except Exception:
+        recent = 0
     return {
+        'feedback_status': {
+            'stage1_completed': bool(fb_row and fb_row.get('stage1_completed_at')),
+            'result_stage_completed': bool(fb_row and fb_row.get('result_stage_completed_at')),
+        },
+        'recommendation_feedback': rec_items,
+        'recent_completions': recent,
         'results': rows.data, 'summary': summary,
         'email': profile.data.get('email') if (not profile.data.get('user_id') or _is_owner_or_admin(profile.data.get('user_id'), user)) else None,
         'tier': tier, 'locale': profile.data.get('locale') or 'en',
@@ -2027,7 +2068,7 @@ def get_report(response_id: str, locale: str | None = None, user=Depends(get_opt
         raise HTTPException(status_code=503, detail="Report generation is taking longer than expected. Please try again in a moment.")
     except Exception as e:
         send_failure_alert("PDF report download", e, response_id=response_id, supabase=supabase)
-        raise HTTPException(status_code=500, detail=f"Report generation failed: {str(e)}")
+        raise HTTPException(status_code=500, detail="Report generation failed, please try again")
 
     filename = f"career-report-{response_id[:8]}{'-' + locale if locale else ''}.pdf"
     return StreamingResponse(
@@ -2066,7 +2107,7 @@ def email_report(response_id: str, background_tasks: BackgroundTasks, locale: st
         raise HTTPException(status_code=503, detail="Report generation is taking longer than expected. Please try again in a moment.")
     except Exception as e:
         send_failure_alert("Email report", e, response_id=response_id, supabase=supabase)
-        raise HTTPException(status_code=500, detail=f"Report generation failed: {str(e)}")
+        raise HTTPException(status_code=500, detail="Report generation failed, please try again")
 
     filename = f"career-report-{response_id[:8]}{'-' + locale if locale else ''}.pdf"
     template_row = supabase.table('email_templates').select('*').eq('key', 'report_email').limit(1).execute()
@@ -3450,6 +3491,9 @@ def coach_chat(payload: CoachChatRequest, request: Request, user=Depends(get_opt
     ip = _client_ip(request)
     if not coach_chat_mod.check_rate_limit(f"ip:{ip}", coach_chat_mod.LIMIT_PER_IP):
         raise HTTPException(status_code=429, detail="Too many messages, please try again later.")
+
+    if not coach_chat_mod.within_daily_budget():
+        return {"reply": None, "limited": True}   # the coach rests for now; the page shows its normal "try later" message
 
     tier, summary = "free", None
     if payload.mode == "results":

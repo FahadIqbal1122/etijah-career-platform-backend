@@ -1,6 +1,7 @@
 """Abuse guards for the public (no-login) endpoints: a request-size cap, and per-IP rate limits on the POST
 endpoints that anyone can call and that write to the database. Registered as middleware in main.py (inside the CORS
 layer, so a refusal still carries the CORS headers and the browser can read it)."""
+import re
 import threading
 import time
 from collections import defaultdict, deque
@@ -13,15 +14,21 @@ MAX_BODY_BYTES = 1_000_000          # assessment submissions are a few tens of K
 MAX_ADMIN_BODY_BYTES = 20_000_000   # admin uploads (coaching transcripts, bulk imports)
 
 # path -> (max requests, window seconds) per client IP. Limits are generous: a classroom or an office shares one IP.
+# Only endpoints the BROWSER calls directly belong here. /waitlist, /partners, /bug-report, /feedback, /waitlist/events and
+# /featured-course/events are reached through the frontend's /api/* routes (server to server), so the backend sees one
+# IP for every visitor; those routes carry their own per-visitor limit (frontend src/lib/rateLimit.ts).
 POST_LIMITS: dict[str, tuple[int, int]] = {
-    "/waitlist": (30, 3600),
-    "/partners": (30, 3600),
-    "/bug-report": (30, 3600),
-    "/feedback": (30, 3600),
-    "/waitlist/events": (600, 3600),
-    "/featured-course/events": (600, 3600),
     "/assessment/telemetry": (6000, 3600),
+    # Anonymous, and each submit queues an email to the address typed in plus an AI call. Roomy enough for a school
+    # computer lab sharing one IP; main.py also caps the emails sent to any one address.
+    "/assessment/submit": (200, 3600),
+    # Answers "does this email/phone already have a report", so it must not be scriptable.
+    "/assessment/check-existing": (60, 3600),
 }
+# GET endpoints that are expensive and open to anyone holding a report link (the PDF is rebuilt on every call).
+GET_LIMITS: list[tuple["re.Pattern[str]", tuple[int, int]]] = [
+    (re.compile(r"^/assessment/[^/]+/report$"), (60, 3600)),
+]
 PREFIX_LIMITS: list[tuple[str, tuple[int, int]]] = [("/beta-feedback/", (600, 3600))]
 
 _hits: dict[str, deque] = defaultdict(deque)
@@ -69,8 +76,19 @@ class RequestGuardMiddleware(BaseHTTPMiddleware):
                 size = 0
             if size > cap:
                 return JSONResponse(status_code=413, content={"detail": "Request too large"})
+        found = None
         if request.method == "POST":
             found = _limit_for(request.url.path)
-            if found and not allow(f"{found[0]}|{client_ip(request)}", found[1]):
-                return JSONResponse(status_code=429, content={"detail": "Too many requests, please try again later."})
-        return await call_next(request)
+        elif request.method == "GET":
+            for pattern, lim in GET_LIMITS:
+                if pattern.match(request.url.path):
+                    found = (pattern.pattern, lim)
+                    break
+        if found and not allow(f"{found[0]}|{client_ip(request)}", found[1]):
+            return JSONResponse(status_code=429, content={"detail": "Too many requests, please try again later."})
+        response = await call_next(request)
+        # API responses are JSON, never pages: say so, and keep browsers from sniffing or framing them.
+        response.headers.setdefault("X-Content-Type-Options", "nosniff")
+        response.headers.setdefault("Referrer-Policy", "no-referrer")
+        response.headers.setdefault("Strict-Transport-Security", "max-age=63072000; includeSubDomains")
+        return response
