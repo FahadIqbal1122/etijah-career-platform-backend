@@ -134,6 +134,24 @@ LOCAL_PRICES = {
     "launchpad_monthly": {"BHD": 33, "QAR": 321, "KWD": 27, "OMR": 34, "AED": 323, "USD": 88},
 }
 
+# Launchpad for someone who already owns Pathfinder. The 330 SAR launch price is the package price (report + coaching bought
+# together), so a Pathfinder owner who adds coaching later pays this instead. Keep in step with launchpad_upgrade in the
+# frontend's src/lib/pricing.ts.
+LAUNCHPAD_UPGRADE_SAR = 400
+LAUNCHPAD_UPGRADE_LOCAL = {"BHD": 40, "QAR": 388, "KWD": 33, "OMR": 41, "AED": 392, "USD": 107}
+
+
+def _owns_pathfinder(user_id: str) -> bool:
+    """True when this user already bought Pathfinder (or Launchpad, which includes it) -- read from user_plans, not from
+    get_effective_tier, so the admin test mode can't change what a buyer is charged."""
+    try:
+        row = supabase.table('user_plans').select('pathfinder_unlocked').eq('user_id', user_id).execute()
+        return bool(row.data and row.data[0].get('pathfinder_unlocked'))
+    except Exception as e:
+        print("Pathfinder ownership check failed:", repr(e))
+        return False
+
+
 _bearer = HTTPBearer()
 _bearer_optional = HTTPBearer(auto_error=False)
 
@@ -3413,9 +3431,13 @@ def create_checkout(body: CheckoutRequest, request: Request, user=Depends(get_cu
     # SAR unless the admin multi-currency switch is on and the buyer asked for a currency we have a price for.
     # PATHFINDER_TEST_AMOUNT (payment testing) always wins, so test charges never change currency.
     charge_amount, charge_currency = plan["amount"], plan["currency"]
+    # Adding Launchpad on top of an existing Pathfinder purchase costs the upgrade price, not the package price.
+    upgrade = body.plan_code == "launchpad_monthly" and not _test_amount and _owns_pathfinder(user.id)
+    if upgrade:
+        charge_amount = LAUNCHPAD_UPGRADE_SAR
     wanted = (body.currency or "").upper()
     if not _test_amount and wanted != charge_currency and _is_multi_currency_enabled():
-        local = LOCAL_PRICES.get(body.plan_code, {}).get(wanted)
+        local = (LAUNCHPAD_UPGRADE_LOCAL if upgrade else LOCAL_PRICES.get(body.plan_code, {})).get(wanted)
         if local is not None:
             charge_amount, charge_currency = local, wanted
 
