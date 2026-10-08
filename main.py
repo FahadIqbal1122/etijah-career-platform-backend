@@ -3392,6 +3392,31 @@ def link_by_email(user=Depends(get_current_user)):
         linked += _claim_response(user, claim.get("response_id"), claim.get("token"))
     return {"linked": linked}
 
+@app.get("/admin/sales")
+def list_sales(_=Depends(require_admin)):
+    """Payments recorded from the shop webhook (transactions), newest first, with the buyer's name/email from their
+    latest assessment. Launchpad orders include a 1:1 coaching session, flagged as coaching_included."""
+    rows = _execute_with_retry(supabase.table('transactions').select('*').order('created_at', desc=True)).data or []
+    user_ids = list({r['user_id'] for r in rows if r.get('user_id')})
+    people: dict[str, dict] = {}
+    if user_ids:
+        ar = _execute_with_retry(supabase.table('assessment_responses')
+                                 .select('user_id, full_name, email, country, created_at')
+                                 .in_('user_id', user_ids).order('created_at', desc=True)).data or []
+        for a in ar:
+            people.setdefault(a['user_id'], a)  # newest first, so the first one seen is the latest
+    out = []
+    for r in rows:
+        p = people.get(r.get('user_id')) or {}
+        out.append({
+            **r,
+            'full_name': p.get('full_name'),
+            'email': p.get('email'),
+            'country': p.get('country'),
+            'coaching_included': str(r.get('plan_code') or '').startswith('launchpad'),
+        })
+    return out
+
 @app.get("/admin/coaching-sessions")
 def list_coaching_sessions(user=Depends(require_admin)):
     result = supabase.table("coaching_sessions") \
