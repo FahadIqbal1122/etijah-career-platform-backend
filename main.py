@@ -1217,6 +1217,49 @@ def get_waitlist(_=Depends(require_admin)):
         .execute()
     return data.data or []
 
+@app.get("/admin/abandoned-assessments")
+def get_abandoned_assessments(_=Depends(require_admin)):
+    """Everyone who gave an email and started the assessment but never completed it: autosaved drafts
+    (progress known) plus assessment_responses rows left completed=False. One row per email, newest activity
+    first. Anyone who has a completed response is excluded."""
+    completed = {(r.get('email') or '').strip().lower() for r in _select_all(
+        lambda: supabase.table('assessment_responses').select('email').eq('completed', True).order('id'))}
+    people: dict[str, dict] = {}
+
+    try:
+        drafts = _select_all(lambda: supabase.table('assessment_drafts')
+            .select('email, full_name, locale, current_index, total_questions, last_activity_at, reminder_sent_at')
+            .order('last_activity_at', desc=True))
+    except Exception as e:   # drafts table not migrated yet: still list the incomplete responses below
+        print(f"abandoned-assessments: drafts unavailable: {e}")
+        drafts = []
+    for d in drafts:
+        email = (d.get('email') or '').strip().lower()
+        if not email or email in completed or email in people:
+            continue   # newest draft per email wins
+        total = d.get('total_questions') or 0
+        people[email] = {
+            "email": d['email'], "full_name": d.get('full_name'), "locale": d.get('locale'),
+            "source": "draft", "current_index": d.get('current_index'), "total_questions": total or None,
+            "progress_pct": round(100 * (d.get('current_index') or 0) / total) if total else None,
+            "last_activity_at": d.get('last_activity_at'), "reminder_sent_at": d.get('reminder_sent_at'),
+        }
+
+    partial = _select_all(lambda: supabase.table('assessment_responses')
+        .select('email, full_name, locale, created_at')
+        .eq('completed', False).not_.is_('email', 'null').order('id', desc=True))
+    for r in partial:
+        email = (r.get('email') or '').strip().lower()
+        if not email or email in completed or email in people:
+            continue
+        people[email] = {
+            "email": r['email'], "full_name": r.get('full_name'), "locale": r.get('locale'),
+            "source": "response", "current_index": None, "total_questions": None, "progress_pct": None,
+            "last_activity_at": r.get('created_at'), "reminder_sent_at": None,
+        }
+
+    return sorted(people.values(), key=lambda p: p.get('last_activity_at') or '', reverse=True)
+
 @app.post("/partners")
 def submit_partner_inquiry(body: PartnerRequest):
     result = supabase.table('partner_inquiries').insert(body.model_dump()).execute()
