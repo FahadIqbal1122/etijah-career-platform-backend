@@ -179,7 +179,11 @@ def build_system_prompt(mode: str, locale: str, tier: str = "free", summary: dic
     else:
         prompt += _ASSESSMENT_RULES
         if progress:
-            prompt += f"\nThe user is on question {progress[0]} of {progress[1]}."
+            # A percentage, never the counts: people are not told how many questions are left (it read as daunting).
+            pct = max(0, min(100, round((progress[0] - 1) / max(1, progress[1]) * 100)))
+            prompt += (f"\nThe user is about {pct}% of the way through the assessment. Do not tell them how many "
+                       "questions they have answered, how many are left, or how many there are in total; you may say "
+                       "they are making good progress.")
         prompt += _question_block(question)
     return prompt
 
