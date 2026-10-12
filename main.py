@@ -682,6 +682,34 @@ def get_submissions(_=Depends(require_admin)):
     return data.data or []
 
 
+class ExportDetailsRequest(BaseModel):
+    ids: list[str] = Field(default_factory=list, max_length=5000)
+
+
+@app.post("/admin/export/assessment-details")
+def export_assessment_details(body: ExportDetailsRequest, _=Depends(require_admin)):
+    """Bulk raw answers + framework scores for the dashboard's Excel export, for exactly the submissions the admin
+    has filtered to. Admin-only; read-only. The question labels live on the frontend, so only raw values go back."""
+    ids = list(dict.fromkeys(i for i in body.ids if i))
+    answers: dict[str, dict] = {}
+    scores: dict[str, list[dict]] = {}
+    CHUNK = 100  # keeps the PostgREST `in` filter URL short
+    for start in range(0, len(ids), CHUNK):
+        chunk = ids[start:start + CHUNK]
+        rows = _select_all(lambda c=chunk: supabase.table('assessment_responses').select('id, answers, locale').in_('id', c))
+        for r in rows:
+            answers[r['id']] = {"answers": r.get('answers') or {}, "locale": r.get('locale')}
+        res = _select_all(lambda c=chunk: supabase.table('assessment_results')
+                          .select('response_id, framework, dimension, raw_score, normalized_score')
+                          .in_('response_id', c).order('response_id'))
+        for r in res:
+            scores.setdefault(r['response_id'], []).append({
+                "framework": r.get('framework'), "dimension": r.get('dimension'),
+                "raw_score": r.get('raw_score'), "normalized_score": r.get('normalized_score'),
+            })
+    return {"answers": answers, "scores": scores}
+
+
 @app.get("/admin/career-recommendations")
 def get_all_career_recommendations(_=Depends(require_admin)):
     """One page listing every submission's AI-generated career_recommendations
