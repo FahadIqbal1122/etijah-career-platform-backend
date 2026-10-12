@@ -2703,6 +2703,53 @@ def set_homepage_mode(body: HomepageModeRequest, _=Depends(require_admin)):
     _homepage_mode_cache["checked_at"] = datetime.now(timezone.utc)
     return {"mode": body.mode}
 
+REPORT_TEMPLATE_KEY = "report_template"
+REPORT_TEMPLATE_IDS = ("default", "clarity", "clarity-map", "constellation")
+_report_template_cache: dict[str, Any] = {"value": "default", "checked_at": None}
+_REPORT_TEMPLATE_CACHE_TTL = timedelta(seconds=10)
+
+def _get_report_template() -> str:
+    """Admin-chosen presentation of the results report (app_settings.report_template). 'default' is the
+    original page; the others are the alternative templates built in the frontend. Cached briefly since every
+    results page view reads it; an unknown or unreadable value falls back to 'default'."""
+    now = datetime.now(timezone.utc)
+    if _report_template_cache["checked_at"] and now - _report_template_cache["checked_at"] < _REPORT_TEMPLATE_CACHE_TTL:
+        return _report_template_cache["value"]
+    try:
+        row = supabase.table('app_settings').select('value').eq('key', REPORT_TEMPLATE_KEY).execute()
+        value = row.data[0]['value'] if row.data and row.data[0]['value'] in REPORT_TEMPLATE_IDS else 'default'
+    except Exception as e:
+        print("Report template lookup failed, defaulting to default:", e)
+        value = 'default'
+    _report_template_cache["value"] = value
+    _report_template_cache["checked_at"] = now
+    return value
+
+class ReportTemplateRequest(BaseModel):
+    template: str
+
+@app.get("/report-template")
+def get_report_template_public():
+    """Unauthenticated: the results page reads this to decide which report template to render."""
+    return {"template": _get_report_template()}
+
+@app.get("/admin/report-template")
+def get_report_template_admin(_=Depends(require_admin)):
+    return {"template": _get_report_template(), "available": list(REPORT_TEMPLATE_IDS)}
+
+@app.post("/admin/report-template")
+def set_report_template(body: ReportTemplateRequest, _=Depends(require_admin)):
+    if body.template not in REPORT_TEMPLATE_IDS:
+        raise HTTPException(status_code=400, detail=f"template must be one of: {', '.join(REPORT_TEMPLATE_IDS)}")
+    supabase.table('app_settings').upsert({
+        'key': REPORT_TEMPLATE_KEY,
+        'value': body.template,
+        'updated_at': datetime.now(timezone.utc).isoformat(),
+    }, on_conflict='key').execute()
+    _report_template_cache["value"] = body.template
+    _report_template_cache["checked_at"] = datetime.now(timezone.utc)
+    return {"template": body.template}
+
 @app.get("/multi-currency")
 def get_multi_currency_public():
     """Unauthenticated: the site reads this to decide whether to show local currencies or SAR only."""
