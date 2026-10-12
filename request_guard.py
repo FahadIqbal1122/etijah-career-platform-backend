@@ -24,10 +24,15 @@ POST_LIMITS: dict[str, tuple[int, int]] = {
     "/assessment/submit": (200, 3600),
     # Answers "does this email/phone already have a report", so it must not be scriptable.
     "/assessment/check-existing": (60, 3600),
+    # Autosave of an in-progress assessment (about one call per answer); roomy enough for a classroom sharing one IP.
+    "/assessment/draft": (6000, 3600),
+    "/assessment/draft/discard": (600, 3600),
 }
 # GET endpoints that are expensive and open to anyone holding a report link (the PDF is rebuilt on every call).
 GET_LIMITS: list[tuple["re.Pattern[str]", tuple[int, int]]] = [
     (re.compile(r"^/assessment/[^/]+/report$"), (60, 3600)),
+    # Resume-by-token lookup: the token is unguessable, this just stops scripted probing.
+    (re.compile(r"^/assessment/draft/[^/]+$"), (120, 3600)),
 ]
 PREFIX_LIMITS: list[tuple[str, tuple[int, int]]] = [("/beta-feedback/", (600, 3600))]
 

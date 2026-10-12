@@ -416,6 +416,19 @@ class CheckExistingRequest(BaseModel):
     email: str
     phone: str
 
+class DraftSaveRequest(BaseModel):
+    resume_token: str | None = Field(default=None, max_length=100)
+    email: EmailStr
+    full_name: str | None = Field(default=None, max_length=200)
+    locale: str | None = Field(default='en', max_length=10)
+    answers: dict[str, Any]
+    current_index: int = Field(ge=0, le=500)
+    revealed_frameworks: list[str] = Field(default_factory=list, max_length=20)
+    total_questions: int = Field(ge=1, le=500)
+
+class DraftDiscardRequest(BaseModel):
+    resume_token: str = Field(max_length=100)
+
 # Values the assessment can send as why_here (QO10 options, the goal-question options, and the fallbacks).
 WHY_HERE_VALUES = {"choosing_study", "first_job", "career_change", "curious", "recommended", "other", "not_asked",
     "stay_in_field", "unsure_subject", "change_field", "not_sure", "choosing_major", "explore_careers"}
@@ -714,6 +727,64 @@ def check_existing(body: CheckExistingRequest, user=Depends(get_optional_user), 
     return {"id": result.data}
 
 
+DRAFT_MAX_AGE_DAYS = 30
+DRAFT_MAX_ANSWERS_BYTES = 100_000   # a full assessment is a few tens of KB
+
+
+@app.post("/assessment/draft")
+def save_assessment_draft(body: DraftSaveRequest, _beta=Depends(require_beta_open)):
+    """Autosave of an in-progress assessment. The first call (no resume_token) creates a row and returns its token;
+    later calls send that token to update the same row. The token is the only credential for reading it back, and
+    there is deliberately no lookup by email (that would let anyone read someone else's answers)."""
+    if len(json.dumps(body.answers, default=str)) > DRAFT_MAX_ANSWERS_BYTES:
+        raise HTTPException(status_code=413, detail="Draft too large")
+    fields = {
+        'email': body.email.strip().lower(),
+        'full_name': body.full_name,
+        'locale': body.locale or 'en',
+        'answers': body.answers,
+        'current_index': body.current_index,
+        'revealed_frameworks': body.revealed_frameworks,
+        'total_questions': body.total_questions,
+        'last_activity_at': datetime.now(timezone.utc).isoformat(),
+    }
+    if body.resume_token:
+        updated = supabase.table('assessment_drafts').update(fields) \
+            .eq('resume_token', body.resume_token).execute()
+        if updated.data:
+            return {"resume_token": body.resume_token}
+        # unknown/expired token (e.g. the row was deleted after an earlier submit): start a new draft instead
+    token = secrets.token_urlsafe(32)
+    supabase.table('assessment_drafts').insert({**fields, 'resume_token': token}).execute()
+    return {"resume_token": token}
+
+
+@app.get("/assessment/draft/{token}")
+def get_assessment_draft(token: str):
+    # Expiry is decided in the query (not by parsing the stored timestamp in Python): Postgres trims trailing zeros
+    # from fractional seconds, and older Python versions' fromisoformat() rejects some of those forms.
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=DRAFT_MAX_AGE_DAYS)).isoformat()
+    rows = supabase.table('assessment_drafts') \
+        .select('answers, current_index, revealed_frameworks, total_questions') \
+        .eq('resume_token', token).gte('last_activity_at', cutoff).limit(1).execute().data
+    if not rows:
+        raise HTTPException(status_code=404, detail="Draft not found")
+    row = rows[0]
+    return {
+        "answers": row['answers'],
+        "current_index": row['current_index'],
+        "revealed_frameworks": row['revealed_frameworks'],
+        "total_questions": row['total_questions'],
+    }
+
+
+@app.post("/assessment/draft/discard")
+def discard_assessment_draft(body: DraftDiscardRequest):
+    """'Start fresh' on the resume prompt: forget the draft so no reminder is sent for it."""
+    supabase.table('assessment_drafts').delete().eq('resume_token', body.resume_token).execute()
+    return {"status": "discarded"}
+
+
 MAX_RESULT_EMAILS_PER_ADDRESS_PER_DAY = 3
 
 @app.post("/assessment/submit")
@@ -780,6 +851,12 @@ def submit_assessment(body: SubmitRequest, background_tasks: BackgroundTasks, us
                 .eq('session_id', body.telemetry_session_id).execute()
         except Exception as e:
             print("Failed to link telemetry events:", e)
+
+    # The assessment is finished — drop any saved draft, which also cancels its "come back and finish" reminder.
+    try:
+        supabase.table('assessment_drafts').delete().eq('email', body.email.strip().lower()).execute()
+    except Exception as e:
+        print("Failed to clear assessment draft:", e)
 
     rows = [{**r, "response_id": response_id} for r in results]
     # Insert results
@@ -2188,6 +2265,7 @@ BETA_COHORT_START_ISO = "2026-09-06T00:00:00Z"
 # (and a matching branch in _resolve_segment_recipients) rather than a migration.
 SEGMENT_KEYS = (
     'beta_incomplete',
+    'assessment_abandoned',
     'waitlist_all',
     'waitlist_no_assessment',
     'waitlist_assessment_completed',
@@ -2276,6 +2354,36 @@ def _resolve_segment_recipients(segment_key: str) -> list[dict]:
             })
         return recipients
 
+    if segment_key == 'assessment_abandoned':
+        # People who gave their email, answered past "Your Details", then left. Each carries its personal resume
+        # token (see /assessment/draft) and the ids of ALL its draft rows, so the sender can stamp every one and a
+        # person with several drafts is never reminded twice.
+        now = datetime.now(timezone.utc)
+        drafts = _select_all(lambda: supabase.table('assessment_drafts')
+            .select('id, email, full_name, locale, resume_token, last_activity_at')
+            .lt('last_activity_at', (now - timedelta(hours=24)).isoformat())
+            .gte('last_activity_at', (now - timedelta(days=DRAFT_MAX_AGE_DAYS)).isoformat())
+            .is_('reminder_sent_at', 'null')
+            .order('last_activity_at', desc=True))
+        completed = {(r.get('email') or '').strip().lower() for r in _select_all(
+            lambda: supabase.table('assessment_responses').select('email').eq('completed', True).order('id'))}
+        # One reminder per person: an email that already has a reminded draft (rows are kept for DRAFT_MAX_AGE_DAYS)
+        # is skipped even if it started a fresh draft since. This also caps how often a typed-in address can be mailed.
+        already_reminded = {(r.get('email') or '').strip().lower() for r in _select_all(
+            lambda: supabase.table('assessment_drafts').select('email').not_.is_('reminder_sent_at', 'null').order('id'))}
+        by_email: dict[str, dict] = {}
+        for d in drafts:   # newest first: the first row per email supplies the link
+            email = (d.get('email') or '').strip().lower()
+            if not email or email in completed or email in already_reminded:
+                continue
+            if email not in by_email:
+                by_email[email] = {
+                    "email": d['email'], "first_name": (d.get('full_name') or '').split(' ')[0],
+                    "locale": d.get('locale') or 'en', "resume_token": d['resume_token'], "draft_ids": [],
+                }
+            by_email[email]["draft_ids"].append(d['id'])
+        return list(by_email.values())
+
     if segment_key in ('waitlist_all', 'waitlist_no_assessment', 'waitlist_assessment_completed', 'waitlist_assessment_no_feedback'):
         waitlist_rows = supabase.table('waitlist_signups').select('email, name, locale').execute().data or []
         assessment_rows = supabase.table('assessment_responses').select('id, email, full_name, completed, locale').execute().data or []
@@ -2340,6 +2448,12 @@ def send_scheduled_emails(request: Request):
         raise HTTPException(status_code=401, detail="Invalid internal key")
 
     now = datetime.now(timezone.utc)
+    # Housekeeping: saved assessment drafts are kept for DRAFT_MAX_AGE_DAYS, then removed (best-effort).
+    try:
+        supabase.table('assessment_drafts').delete() \
+            .lt('last_activity_at', (now - timedelta(days=DRAFT_MAX_AGE_DAYS)).isoformat()).execute()
+    except Exception as e:
+        print("Failed to purge expired assessment drafts:", e)
     due = _execute_with_retry(supabase.table('scheduled_emails')
         .select('*')
         .eq('status', 'pending')
@@ -2403,9 +2517,23 @@ def send_scheduled_emails(request: Request):
                         frontend_base = os.getenv('FRONTEND_URL', '').rstrip('/')
                         variables['beta_feedback_url'] = f"{frontend_base}/{recipient_locale}/beta-feedback/{recipient['response_id']}"
                         variables['results_url'] = f"{frontend_base}/{recipient_locale}/results/{recipient['response_id']}"
+                    # {{continue_url}} for the "continue your assessment" template: a personal resume link when the
+                    # recipient came from the assessment_abandoned segment, else the plain assessment page.
+                    frontend_base = os.getenv('FRONTEND_URL', '').rstrip('/')
+                    if recipient.get('resume_token'):
+                        variables['continue_url'] = f"{frontend_base}/{recipient_locale}/assessment?resume={recipient['resume_token']}"
+                    else:
+                        variables.setdefault('continue_url', f"{frontend_base}/{recipient_locale}/assessment")
                     subject, html_body = render_template(template, variables, recipient_locale)
                     send_email(recipient['email'], subject, html_body, supabase=supabase)
                     sent_count += 1
+                    if recipient.get('draft_ids'):
+                        try:   # a bookkeeping failure must not turn a delivered email into a "failed" one
+                            supabase.table('assessment_drafts') \
+                                .update({'reminder_sent_at': datetime.now(timezone.utc).isoformat()}) \
+                                .in_('id', recipient['draft_ids']).execute()
+                        except Exception as e:
+                            print("Failed to stamp reminder_sent_at:", e)
                 except Exception as e:
                     failed_count += 1
                     last_error = str(e)
