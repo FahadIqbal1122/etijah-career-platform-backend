@@ -33,7 +33,7 @@ class ExportAssessmentDetailsTests(unittest.TestCase):
     def test_duplicates_and_blanks_are_dropped_and_empty_is_fine(self):
         with patch.object(main, "supabase", MagicMock()), patch.object(main, "_select_all", return_value=[]) as sel:
             out = main.export_assessment_details(main.ExportDetailsRequest(ids=["", ""]), _=None)
-            self.assertEqual(out, {"answers": {}, "scores": {}})
+            self.assertEqual(out, {"answers": {}, "scores": {}, "top": {}})
             sel.assert_not_called()
 
     def test_requires_admin(self):

@@ -32,7 +32,7 @@ def extract_specialisms(answers, allowed_fields=None) -> list[str]:
 
 # Maps forced-choice answers to numeric scores
 FORCED_CHOICE_SCORES = {
-    'Q6':  {'A': 5, 'B': 3},   # A=Artistic, B=Conventional
+    'Q6':  {'A': 6, 'B': 1},   # A=Artistic, B=Conventional (B also credits Conventional, see FORCED_CHOICE_OPPOSITE)
     'Q17': {'A': 6, 'B': 1},   # A=Extrovert, B=Introvert
     'Q36': {'A': 6, 'B': 1},   # A=Wealth, B=low Wealth                                                                                                                                                
     'Q38': {'A': 6, 'B': 1},   # A=National, B=International
@@ -45,8 +45,18 @@ FORCED_CHOICE_SCORES = {
     'Q66': {'A': 1, 'B': 6},   # A=large org, B=startup
     'Q67': {'A': 1, 'B': 6},   # A=public, B=private                                                                                                                                                   
     'Q71': {'A': 6, 'B': 1},   # A=high risk, B=low risk
-    'QFC_RI': {'A': 5, 'B': 1}, # A=Realistic, B=Low Realistic (Investigative)
-    'QFC_SE': {'A': 5, 'B': 1}, # A=Social, B=Low Social (Enterprising)
+    'QFC_RI': {'A': 6, 'B': 1}, # A=Realistic, B=Investigative (see FORCED_CHOICE_OPPOSITE)
+    'QFC_SE': {'A': 6, 'B': 1}, # A=Social, B=Enterprising (see FORCED_CHOICE_OPPOSITE)
+}
+
+# The RIASEC either/or questions are two-sided: the option NOT chosen is the other type. The answer scores the question's
+# own dimension (above) and the mirror score (7 - score) goes to this opposite dimension. Before 12 Oct 2026 the other
+# side got nothing and A was worth 5 not 6, so Artistic could never go below 20 or above 90, Realistic/Social above 93.3,
+# and Investigative/Enterprising/Conventional were never credited by these questions.
+FORCED_CHOICE_OPPOSITE = {
+    'Q6':     ('riasec', 'conventional'),
+    'QFC_RI': ('riasec', 'investigative'),
+    'QFC_SE': ('riasec', 'enterprising'),
 }
 
 # Questions whose agreement means LESS of the trait. None at the moment: Q21 ("I generally stay calm...") and Q22 ("I recover
@@ -173,16 +183,21 @@ def compute_scores(answers: dict) -> list[dict]:
         key = (framework, dimension)
         buckets.setdefault(key, []).append((score, weight))
 
+        # the unchosen side of an either/or question counts for the opposite type
+        if q_id in FORCED_CHOICE_OPPOSITE and q_id in FORCED_CHOICE_SCORES:
+            buckets.setdefault(FORCED_CHOICE_OPPOSITE[q_id], []).append((7.0 - score, weight))
+
     results = []
     for (framework, dimension), entries in buckets.items():
-        raw_score    = sum(s * w for s, w in entries)
+        weighted     = sum(s * w for s, w in entries)
         min_possible = sum(1.0 * w for _, w in entries)
         max_possible = sum(6.0 * w for _, w in entries)
-        normalized   = round((raw_score - min_possible) / (max_possible - min_possible) * 100, 1)
+        normalized   = round((weighted - min_possible) / (max_possible - min_possible) * 100, 1)
         results.append({
             'framework': framework,
             'dimension': dimension,
-            'raw_score': raw_score,
+            # plain sum of the answers (what the Excel shows); the flat-profile weighting only affects `normalized`
+            'raw_score': sum(s for s, _ in entries),
             'normalized_score': normalized,
         })
     return results
@@ -316,8 +331,10 @@ def get_career_semantic_scores(supabase_client, summary: dict, user_data: dict) 
             f"RIASEC: {', '.join(summary.get('riasec', {}).get('top_types', []))}. "
             f"Top values: {', '.join(summary.get('values', {}).get('top_values', []))}. "
             f"Top strengths: {', '.join(summary.get('strengths', {}).get('top_strengths', []))}. "
+            + (f"Personality (Big Five): {', '.join(f'{k} {v}' for k, v in summary['big_five'].items())}. "
+               if summary.get('big_five') else "")
             # a bare "other" is replaced by what the person typed for it (dropped if it fails the content filter)
-            f"Sectors of interest: {', '.join(with_typed_other(user_data.get('sectors_of_interest'), answers, 'QO6_other'))}. "
+            + f"Sectors of interest: {', '.join(with_typed_other(user_data.get('sectors_of_interest'), answers, 'QO6_other'))}. "
             f"Education field: {', '.join(with_typed_other(user_data.get('education_field'), answers, 'QO5_other'))}. "
             + (f"Specific area of study: {', '.join(user_data.get('education_specialisms') or [])}. " if user_data.get('education_specialisms') else "")
             + (f"Wants help with: {typed['goal']}. " if typed['goal'] else "")

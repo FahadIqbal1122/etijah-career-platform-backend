@@ -719,7 +719,20 @@ def export_assessment_details(body: ExportDetailsRequest, _=Depends(require_admi
                 "framework": r.get('framework'), "dimension": r.get('dimension'),
                 "raw_score": r.get('raw_score'), "normalized_score": r.get('normalized_score'),
             })
-    return {"answers": answers, "scores": scores}
+    # The top 3 of RIASEC / values / strengths exactly as the report ranks them (population-adjusted, so it can differ
+    # from the three highest raw scores). Lets the Excel show the rank next to each score.
+    top: dict[str, dict] = {}
+    for rid, rows in scores.items():
+        try:
+            summary = build_framework_output(rows)
+            top[rid] = {
+                'riasec': (summary.get('riasec') or {}).get('top_types', []),
+                'values': (summary.get('values') or {}).get('top_values', []),
+                'strengths': (summary.get('strengths') or {}).get('top_strengths', []),
+            }
+        except Exception:
+            top[rid] = {}
+    return {"answers": answers, "scores": scores, "top": top}
 
 
 @app.get("/admin/career-recommendations")
