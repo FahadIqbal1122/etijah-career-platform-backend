@@ -4037,7 +4037,7 @@ def _receipt_party(user_id: str):
     return name, email, locale
 
 def _send_payment_receipt(user_id: str, order_ref: str):
-    """Emails the buyer a PDF payment receipt once, when a payment is first confirmed.
+    """Emails the buyer the PDF tax invoice (prices include 10% VAT) once, when a payment is first confirmed.
     Best-effort: a failure here never affects the payment."""
     try:
         rows = supabase.table('transactions').select('*').eq('order_ref', order_ref).eq('user_id', user_id).limit(1).execute().data
@@ -4057,7 +4057,7 @@ def _send_payment_receipt(user_id: str, order_ref: str):
 
 @app.get("/billing/receipt/{order_ref}")
 def download_receipt(order_ref: str, locale: str = "en", user=Depends(get_current_user)):
-    """The signed-in buyer's PDF receipt for one of their paid orders."""
+    """The signed-in buyer's PDF invoice for one of their paid orders (path kept as /billing/receipt for the frontend)."""
     rows = supabase.table('transactions').select('*').eq('order_ref', order_ref).eq('user_id', user.id).limit(1).execute().data
     if not rows or rows[0].get('status') != 'paid':
         raise HTTPException(status_code=404, detail="Receipt not found")
