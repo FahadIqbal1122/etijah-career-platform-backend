@@ -17,6 +17,11 @@ SMTP_SETTINGS_KEY = "smtp_settings"
 _smtp_cache = {"value": None, "checked_at": None}
 _SMTP_CACHE_TTL = timedelta(seconds=10)
 
+# Silent (BCC) copy of every one-to-one customer email (results/feedback, receipt, report, full-report-ready) so the
+# team receives what customers receive. Not applied to bulk scheduled emails or internal alerts. Set EMAIL_COPY_TO to
+# another address, or to an empty string to switch it off.
+INTERNAL_COPY_EMAIL = os.getenv("EMAIL_COPY_TO", "programs@etijahcoaching.com").strip()
+
 _ENV_DEFAULTS = {
     "host": os.getenv("SMTP_HOST", "smtp.titan.email"),
     "port": int(os.getenv("SMTP_PORT", "465")),
@@ -51,10 +56,11 @@ def invalidate_smtp_cache():
     _smtp_cache["checked_at"] = None
 
 
-def send_email(to, subject, html_body, text_body=None, attachments=None, reply_to=None, supabase=None):
+def send_email(to, subject, html_body, text_body=None, attachments=None, reply_to=None, supabase=None, copy_internal=False):
     """
     to: str or list[str]
     attachments: list of (filename, bytes, mime_type) tuples, e.g. ("report.pdf", pdf_bytes, "application/pdf")
+    copy_internal: BCC INTERNAL_COPY_EMAIL (customer emails only). The customer never sees the address.
     """
     cfg = _get_smtp_config(supabase)
     if not cfg["user"] or not cfg["password"]:
@@ -68,6 +74,9 @@ def send_email(to, subject, html_body, text_body=None, attachments=None, reply_t
     msg["To"] = ", ".join(recipients)
     if reply_to:
         msg["Reply-To"] = reply_to
+    if copy_internal and INTERNAL_COPY_EMAIL and INTERNAL_COPY_EMAIL.lower() not in {r.lower() for r in recipients}:
+        # smtplib.send_message delivers to Bcc addresses and strips the header from the transmitted message.
+        msg["Bcc"] = INTERNAL_COPY_EMAIL
 
     msg.set_content(text_body or "This email requires an HTML-capable client to view.")
     msg.add_alternative(html_body, subtype="html")
@@ -147,6 +156,7 @@ def send_report_email(to_email, to_name, pdf_bytes, filename, locale="en", templ
         html_body=html_body,
         attachments=[(filename, pdf_bytes, "application/pdf")],
         supabase=supabase,
+        copy_internal=True,
     )
 
 
@@ -154,7 +164,7 @@ def send_feedback_email(to_email, to_name, feedback_url, locale="en", template_r
     if not template_row:
         return  # template not seeded/found — nothing to send
     subject, html_body = render_template(template_row, {"full_name": to_name, "feedback_url": feedback_url}, locale)
-    send_email(to=to_email, subject=subject, html_body=html_body, supabase=supabase)
+    send_email(to=to_email, subject=subject, html_body=html_body, supabase=supabase, copy_internal=True)
 
 
 def send_results_ready_email(to_email, to_name, results_url, locale="en", template_row=None, supabase=None, feedback_url=None):
@@ -182,7 +192,7 @@ def send_results_ready_email(to_email, to_name, results_url, locale="en", templa
                      f'<p>We would love your feedback. It takes about 3 minutes and shapes what we build next.</p>'
                      f'<p><a href="{_html.escape(feedback_url)}" style="background:#0770BA;color:#fff;padding:10px 20px;border-radius:8px;text-decoration:none;font-weight:600;">Share your feedback</a></p></div>')
         html_body += block
-    send_email(to=to_email, subject=subject, html_body=html_body, supabase=supabase)
+    send_email(to=to_email, subject=subject, html_body=html_body, supabase=supabase, copy_internal=True)
 
 
 def send_beta_feedback_email(to_email, to_name, beta_feedback_url, locale="en", template_row=None, supabase=None, results_url=None):
@@ -192,7 +202,7 @@ def send_beta_feedback_email(to_email, to_name, beta_feedback_url, locale="en", 
     if results_url:
         variables["results_url"] = results_url
     subject, html_body = render_template(template_row, variables, locale)
-    send_email(to=to_email, subject=subject, html_body=html_body, supabase=supabase)
+    send_email(to=to_email, subject=subject, html_body=html_body, supabase=supabase, copy_internal=True)
 
 
 ADMIN_ALERT_EMAIL = "business@etijahcoaching.com"

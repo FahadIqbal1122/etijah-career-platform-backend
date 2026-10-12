@@ -328,6 +328,18 @@ def _is_multi_currency_enabled() -> bool:
     _multi_currency_cache["checked_at"] = now
     return enabled
 
+AUTO_ABANDONED_KEY = "auto_abandoned_reminder"
+
+def _is_auto_abandoned_reminder_enabled() -> bool:
+    """Admin switch (app_settings.auto_abandoned_reminder). On = the scheduled-emails cron queues the
+    'continue where you left off' reminder by itself. Defaults to off, including when unreadable."""
+    try:
+        row = supabase.table('app_settings').select('value').eq('key', AUTO_ABANDONED_KEY).execute()
+        return row.data[0]['value'] is True if row.data else False
+    except Exception as e:
+        print("Auto abandoned-reminder lookup failed, defaulting to off:", e)
+        return False
+
 DASHBOARD_SHARE_TOKEN_KEY = "dashboard_share_token"
 _share_token_cache: dict[str, Any] = {"value": None, "checked_at": None}
 _SHARE_TOKEN_CACHE_TTL = timedelta(seconds=10)
@@ -2482,6 +2494,21 @@ def send_scheduled_emails(request: Request):
             .lt('last_activity_at', (now - timedelta(days=DRAFT_MAX_AGE_DAYS)).isoformat()).execute()
     except Exception as e:
         print("Failed to purge expired assessment drafts:", e)
+    # Auto-reminder: with the admin switch on, queue the "continue where you left off" email as soon as someone
+    # is eligible (24h+ idle, not completed, never reminded — all decided by the segment). Skipped while an
+    # earlier row is still pending/sending, and when nobody is eligible, so no empty "failed" rows pile up.
+    if _is_auto_abandoned_reminder_enabled():
+        try:
+            open_rows = supabase.table('scheduled_emails').select('id') \
+                .eq('segment_key', 'assessment_abandoned').in_('status', ['pending', 'sending']).limit(1).execute().data
+            if not open_rows and _resolve_segment_recipients('assessment_abandoned'):
+                supabase.table('scheduled_emails').insert({
+                    'template_key': 'assessment_continue_reminder', 'recipient_type': 'segment',
+                    'segment_key': 'assessment_abandoned', 'locale': 'en',
+                    'scheduled_for': now.isoformat(),
+                }).execute()
+        except Exception as e:
+            print("Failed to queue the automatic abandoned-assessment reminder:", e)
     due = _execute_with_retry(supabase.table('scheduled_emails')
         .select('*')
         .eq('status', 'pending')
@@ -2681,6 +2708,19 @@ def set_multi_currency(body: TestModeRequest, _=Depends(require_admin)):
     }, on_conflict='key').execute()
     _multi_currency_cache["value"] = body.enabled
     _multi_currency_cache["checked_at"] = datetime.now(timezone.utc)
+    return {"enabled": body.enabled}
+
+@app.get("/admin/auto-abandoned-reminder")
+def get_auto_abandoned_reminder(_=Depends(require_admin)):
+    return {"enabled": _is_auto_abandoned_reminder_enabled()}
+
+@app.post("/admin/auto-abandoned-reminder")
+def set_auto_abandoned_reminder(body: TestModeRequest, _=Depends(require_admin)):
+    supabase.table('app_settings').upsert({
+        'key': AUTO_ABANDONED_KEY,
+        'value': body.enabled,
+        'updated_at': datetime.now(timezone.utc).isoformat(),
+    }, on_conflict='key').execute()
     return {"enabled": body.enabled}
 
 @app.get("/beta-status")
@@ -4010,7 +4050,8 @@ def _send_payment_receipt(user_id: str, order_ref: str):
         pdf = receipt_generator.receipt_pdf(tx, name, email, locale)
         subject, html_body = receipt_generator.receipt_email(name, tx, locale)
         send_email(to=email, subject=subject, html_body=html_body,
-                   attachments=[(f"{receipt_generator.receipt_number(tx)}.pdf", pdf, "application/pdf")], supabase=supabase)
+                   attachments=[(f"{receipt_generator.receipt_number(tx)}.pdf", pdf, "application/pdf")], supabase=supabase,
+                   copy_internal=True)
     except Exception as e:
         print("payment receipt failed:", e)
 
@@ -4063,7 +4104,7 @@ def _prewarm_full_report(user_id: str):
         if row.get('email'):
             url = f"{(os.getenv('FRONTEND_URL') or 'https://myetijahi.com').rstrip('/')}/{locale}/results/{rid}"
             subject, html_body = _full_report_ready_email(row.get('full_name'), url, locale)
-            send_email(to=row['email'], subject=subject, html_body=html_body, supabase=supabase)
+            send_email(to=row['email'], subject=subject, html_body=html_body, supabase=supabase, copy_internal=True)
     except Exception as e:
         send_failure_alert("Full report build after purchase", e, response_id=rid, supabase=supabase)
 
