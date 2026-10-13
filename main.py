@@ -2770,6 +2770,67 @@ def set_multi_currency(body: TestModeRequest, _=Depends(require_admin)):
     _multi_currency_cache["checked_at"] = datetime.now(timezone.utc)
     return {"enabled": body.enabled}
 
+COACH_ENABLED_KEY = "coach_enabled"
+GAMES_ENABLED_KEY = "games_enabled"
+_COACH_SWITCH_CACHE_TTL = timedelta(seconds=10)
+_coach_switch_cache: dict[str, dict[str, Any]] = {}
+
+def _read_coach_switch(key: str) -> bool:
+    """Admin on/off switch kept in app_settings under `key`, cached briefly. Defaults to OFF, including when the
+    setting is missing or unreadable."""
+    now = datetime.now(timezone.utc)
+    cached = _coach_switch_cache.get(key)
+    if cached and now - cached["checked_at"] < _COACH_SWITCH_CACHE_TTL:
+        return cached["value"]
+    try:
+        row = supabase.table('app_settings').select('value').eq('key', key).execute()
+        enabled = row.data[0]['value'] is True if row.data else False
+    except Exception as e:
+        print(f"Switch lookup failed for {key}, defaulting to off:", e)
+        enabled = False
+    _coach_switch_cache[key] = {"value": enabled, "checked_at": now}
+    return enabled
+
+def _write_coach_switch(key: str, enabled: bool) -> bool:
+    supabase.table('app_settings').upsert({
+        'key': key,
+        'value': enabled,
+        'updated_at': datetime.now(timezone.utc).isoformat(),
+    }, on_conflict='key').execute()
+    _coach_switch_cache[key] = {"value": enabled, "checked_at": datetime.now(timezone.utc)}
+    return enabled
+
+def _is_coach_enabled() -> bool:
+    """Sarah, the coach, in the assessment (app_settings.coach_enabled). Off = no coach there and the feedback questions
+    are the original form cards."""
+    return _read_coach_switch(COACH_ENABLED_KEY)
+
+def _is_games_enabled() -> bool:
+    """The riddle / mini-games button (app_settings.games_enabled): the assessment's break button, the results loading
+    screen's game and the games Sarah offers. Off = none of them is shown."""
+    return _read_coach_switch(GAMES_ENABLED_KEY)
+
+@app.get("/coach-enabled")
+def get_coach_enabled_public():
+    """Unauthenticated: the assessment and results pages read this to decide whether Sarah and the games are on."""
+    return {"enabled": _is_coach_enabled(), "games": _is_games_enabled()}
+
+@app.get("/admin/coach-enabled")
+def get_coach_enabled_admin(_=Depends(require_admin)):
+    return {"enabled": _is_coach_enabled()}
+
+@app.post("/admin/coach-enabled")
+def set_coach_enabled(body: TestModeRequest, _=Depends(require_admin)):
+    return {"enabled": _write_coach_switch(COACH_ENABLED_KEY, body.enabled)}
+
+@app.get("/admin/games-enabled")
+def get_games_enabled_admin(_=Depends(require_admin)):
+    return {"enabled": _is_games_enabled()}
+
+@app.post("/admin/games-enabled")
+def set_games_enabled(body: TestModeRequest, _=Depends(require_admin)):
+    return {"enabled": _write_coach_switch(GAMES_ENABLED_KEY, body.enabled)}
+
 @app.get("/admin/auto-abandoned-reminder")
 def get_auto_abandoned_reminder(_=Depends(require_admin)):
     return {"enabled": _is_auto_abandoned_reminder_enabled()}
