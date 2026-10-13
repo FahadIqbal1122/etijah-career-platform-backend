@@ -726,6 +726,20 @@ def _first_step_context(user_data: dict) -> tuple[str, str]:
     return route_guidance, goal_guidance
 
 
+def _resilience_prompt_block(resilience: dict) -> str:
+    """The resilience lines of the AI prompt. School and early-university students are not asked the resilience
+    questions, so the scores are absent: say so instead of feeding the model a made-up 0/100."""
+    lines = []
+    if 'long_term_focus' in resilience:
+        lines.append(f"  - Long-term focus: {resilience['long_term_focus']:.0f}/100\n")
+    if 'workplace_resilience' in resilience:
+        lines.append(f"  - Workplace resilience: {resilience['workplace_resilience']:.0f}/100\n")
+    if not lines:
+        return ("Resilience: not assessed for this person (they are a student and were not asked these questions). "
+                "Do not comment on, estimate or mention resilience scores.\n\n")
+    return "Resilience:\n" + "".join(lines) + "\n"
+
+
 def generate_ai_content(user_data: dict, summary: dict, raw_scores: list, careers: list, country_profile: dict | None = None, coaching_chunks: list[dict] | None = None, locale: str = 'en', career_count: int = 8, include_plan: bool = True) -> dict:
     """include_plan=False (free tier) leaves the action plan out of the prompt, so it is not generated or paid for.
 
@@ -785,9 +799,7 @@ def generate_ai_content(user_data: dict, summary: dict, raw_scores: list, career
         f"Big Five: {json.dumps(bf_data)}\n\n"
         f"Core Values top 3:\n{val_lines}\n\n"
         f"Top Strengths top 3:\n{str_lines}\n\n"
-        f"Resilience:\n"
-        f"  - Long-term focus: {resilience.get('long_term_focus',0):.0f}/100\n"
-        f"  - Workplace resilience: {resilience.get('workplace_resilience',0):.0f}/100\n\n"
+        + _resilience_prompt_block(resilience) +
         f"Work Style (0=low, 100=high):\n"
         f"  - Pace: {work_style.get('pace',0):.0f}/100 (0=steady, 100=fast-paced)\n"
         f"  - Environment: {work_style.get('environment',0):.0f}/100 (0=large org, 100=startup)\n"
@@ -892,7 +904,7 @@ def generate_ai_content(user_data: dict, summary: dict, raw_scores: list, career
         '    "strength_2": {"narrative": "2 sentences.", "development_tip": "1 specific actionable tip."},\n'
         '    "strength_3": {"narrative": "2 sentences.", "development_tip": "1 specific actionable tip."}\n'
         '  },\n\n'
-        '  "resilience_narrative": "2-3 sentences interpreting resilience scores in context of workplace challenges.",\n'
+        + ('  "resilience_narrative": "2-3 sentences interpreting resilience scores in context of workplace challenges.",\n' if resilience else '') +
         '  "work_style_narrative": "2-3 sentences describing ideal work environment from all work style scores.",\n'
         + (
             '  "entrepreneurship_narrative": "2-3 sentences on entrepreneurial profile and whether/how to explore it.",\n\n'
@@ -1404,6 +1416,8 @@ def build_html_report(user_data: dict, summary: dict, raw_scores: list, ai: dict
     # ── Resilience bars ───────────────────────────────────────────────────────
     res_bars = ""
     for key, lbl in [('long_term_focus',T['long_term_focus']),('workplace_resilience',T['workplace_resilience'])]:
+        if key not in resilience:
+            continue  # not asked (school / early-university students): leave the bar out rather than show 0
         res_bars += (
             f'<div class="bar-row">'
             f'<span class="bar-label">{lbl}</span>'
@@ -2183,7 +2197,8 @@ def build_html_report(user_data: dict, summary: dict, raw_scores: list, ai: dict
     values_body = _box('intro-box', ai.get('values_overview')) + (f'<div class="values-grid">{value_cards}</div>' if value_cards.strip() else '')
     strengths_body = _box('intro-box', ai.get('strengths_overview')) + strength_cards
     workstyle_body = (
-        f'<div class="two-col"><div class="col-box"><div class="col-title">{T["resilience_scores"]}</div>{res_bars}</div>'
+        f'<div class="two-col">'
+        + (f'<div class="col-box"><div class="col-title">{T["resilience_scores"]}</div>{res_bars}</div>' if res_bars else '') +
         f'<div class="col-box"><div class="col-title">{T["work_style_prefs"]}</div>{ws_bars}</div></div>'
         + _box('narr-box', f'{ai.get("resilience_narrative","")} {ai.get("work_style_narrative","")}')
     )
@@ -2247,8 +2262,8 @@ def build_html_report(user_data: dict, summary: dict, raw_scores: list, ai: dict
         (T['environment'], T['wsl_large'], T['wsl_startup'], work_style.get('environment', 50)),
         (T['sector'], T['wsl_public'], T['wsl_private'], work_style.get('sector', 50)),
         (T['mobility'], T['wsl_local'], T['wsl_reloc'], work_style.get('mobility', 50)),
-        (T['wsl_ltf'], T['wsl_short'], T['wsl_long'], _res.get('long_term_focus', 50)),
-        (T['wsl_res'], T['wsl_needs'], T['wsl_bounce'], _res.get('workplace_resilience', 50))])
+        *([(T['wsl_ltf'], T['wsl_short'], T['wsl_long'], _res['long_term_focus'])] if 'long_term_focus' in _res else []),
+        *([(T['wsl_res'], T['wsl_needs'], T['wsl_bounce'], _res['workplace_resilience'])] if 'workplace_resilience' in _res else [])])
     profile_overview = (
         '<div class="pgrid">' + _pcard('briefcase', T['ct_title'], T['ct_sub'], _ov_riasec, intro=(T['in_short'], _ov.get('riasec', '')))
         + _pcard('heart', T['cv_title'], T['cv_sub'], _ov_values, intro=(T['in_short'], _ov.get('values', ''))) + '</div>'
