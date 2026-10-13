@@ -1271,7 +1271,10 @@ def _note(tone: str, label: str, text, side: str = 'left') -> str:
 
 # ─── HTML report builder ───────────────────────────────────────────────────────
 
-def build_html_report(user_data: dict, summary: dict, raw_scores: list, ai: dict, careers: list, ai_impact: dict | None = None, locale: str = 'en', tier: str = 'launchpad', jobs: list | None = None, companies: list | None = None, courses: list | None = None, student_track: dict | None = None, certifications: dict | None = None, career_path: dict | None = None, direction: dict | None = None) -> str:
+import report_template_pdf as _tpl
+
+
+def build_html_report(user_data: dict, summary: dict, raw_scores: list, ai: dict, careers: list, ai_impact: dict | None = None, locale: str = 'en', tier: str = 'launchpad', jobs: list | None = None, companies: list | None = None, courses: list | None = None, student_track: dict | None = None, certifications: dict | None = None, career_path: dict | None = None, direction: dict | None = None, template: str = 'default') -> str:
     # user_data/ai/ai_impact all carry user-supplied or AI-generated free text that could
     # otherwise inject markup (or, via WeasyPrint's URL fetcher, trigger SSRF) into this HTML.
     # jobs additionally comes from a third-party API (JSearch) — external content is the
@@ -1291,6 +1294,7 @@ def build_html_report(user_data: dict, summary: dict, raw_scores: list, ai: dict
     # ai_impact_cap  = 2 if tier == 'free' else 8
     ai_impact_cap  = 3 if tier == 'free' else 8
     T = UI_TEXT.get(locale, UI_TEXT['en'])
+    template = _tpl.normalize_template(template)  # the live report template (see report_template_pdf.py)
     riasec_meta_src    = RIASEC_META_AR    if locale == 'ar' else RIASEC_META
     values_meta_src    = VALUES_META_AR    if locale == 'ar' else VALUES_META
     strengths_meta_src = STRENGTHS_META_AR if locale == 'ar' else STRENGTHS_META
@@ -1491,6 +1495,12 @@ def build_html_report(user_data: dict, summary: dict, raw_scores: list, ai: dict
             + '</div>'
         )
 
+    def _disp(v) -> str:
+        # Templates capitalise English titles like the results page does (the default PDF keeps them as written)
+        if template == 'default' or locale != 'en':
+            return v
+        return _html.escape(re.sub(r"\b([a-z])", lambda m: m.group(1).upper(), _html.unescape(str(v or ''))), quote=False)
+
     def _career_card(rec: dict) -> str:
         ms = rec.get('match_score', 0)
         tag_pills = ""
@@ -1515,7 +1525,7 @@ def build_html_report(user_data: dict, summary: dict, raw_scores: list, ai: dict
             f'<div class="card career-card" style="margin-bottom:10px;">'
             f'<div class="card-row">'
             f'<div>'
-            f'<h4 class="card-title">{rec.get("title","")}</h4>'
+            f'<h4 class="card-title">{_disp(rec.get("title",""))}</h4>'
             f'<span class="tag tag-gray">{rec.get("sector","")}</span>{tag_pills}'
             f'</div>'
             f'<div style="text-align:center;flex-shrink:0;">'
@@ -1553,7 +1563,8 @@ def build_html_report(user_data: dict, summary: dict, raw_scores: list, ai: dict
         career_cards = "".join(_career_card(r) for r in recs)
 
     # The first career is filled blue, as on the results page.
-    career_cards = career_cards.replace('class="card career-card"', 'class="card career-card career-top"', 1)
+    # (Clarity templates: white with a teal outline instead, see report_template_pdf.theme_css)
+    career_cards = career_cards.replace('class="card career-card"', 'class="card career-card career-top-tpl"' if template in ('clarity', 'clarity-map') else 'class="card career-card career-top"', 1)
 
     # ── Job listing cards ──────────────────────────────────────────────────────
     job_cards = ""
@@ -2264,8 +2275,15 @@ def build_html_report(user_data: dict, summary: dict, raw_scores: list, ai: dict
         (T['mobility'], T['wsl_local'], T['wsl_reloc'], work_style.get('mobility', 50)),
         *([(T['wsl_ltf'], T['wsl_short'], T['wsl_long'], _res['long_term_focus'])] if 'long_term_focus' in _res else []),
         *([(T['wsl_res'], T['wsl_needs'], T['wsl_bounce'], _res['workplace_resilience'])] if 'workplace_resilience' in _res else [])])
+    # Clarity Plus and Constellation: the interests hexagon at the top of the profile, as on the results page
+    _tpl_hex = ''
+    if template in ('clarity-map', 'constellation'):
+        _tpl_hex = _tpl.hexagon_block(
+            {k: scores.get(k) for k in ['realistic','investigative','artistic','social','enterprising','conventional']},
+            {k: (riasec_meta_src.get(k, {}).get('label', k.title()) if locale == 'ar' else k.title()) for k in ['realistic','investigative','artistic','social','enterprising','conventional']},
+            locale == 'ar')
     profile_overview = (
-        '<div class="pgrid">' + _pcard('briefcase', T['ct_title'], T['ct_sub'], _ov_riasec, intro=(T['in_short'], _ov.get('riasec', '')))
+        '<div class="pgrid">' + _pcard('briefcase', T['ct_title'], T['ct_sub'], _tpl_hex + _ov_riasec, intro=(T['in_short'], _ov.get('riasec', '')))
         + _pcard('heart', T['cv_title'], T['cv_sub'], _ov_values, intro=(T['in_short'], _ov.get('values', ''))) + '</div>'
         + '<div class="pgrid">' + _pcard('star', T['sec05'], T['intro_strengths'], _ov_strengths, intro=(T['in_short'], _ov.get('strengths', '')))
         + _pcard('sparkles', T['pe_title'], T['pe_sub'], _ov_bf, intro=(T['in_short'], _ov.get('big_five', ''))) + '</div>'
@@ -2280,7 +2298,7 @@ def build_html_report(user_data: dict, summary: dict, raw_scores: list, ai: dict
         _rk = risk_by_title.get(_tkey(r.get('title')))
         if _rk in ('low', 'medium', 'high'):
             pills += _risk_badge(_rk, locale)
-        return (f'<div class="card" style="margin-bottom:8px;"><div class="card-row"><div><h4 class="card-title">{r.get("title","")}</h4>'
+        return (f'<div class="card" style="margin-bottom:8px;"><div class="card-row"><div><h4 class="card-title">{_disp(r.get("title",""))}</h4>'
                 f'<div style="margin-top:4px;">{pills}</div></div>'
                 f'<div style="text-align:center;flex-shrink:0;"><div style="font-size:12pt;font-weight:900;color:#0770ba;">{_fit_band(r.get("match_score"))}</div>'
                 f'<div class="muted" style="font-size:8pt;letter-spacing:1px;">{T["match"]}</div></div></div>'
@@ -2348,13 +2366,33 @@ def build_html_report(user_data: dict, summary: dict, raw_scores: list, ai: dict
   </div>
 '''
 
+    # A template (Clarity, Clarity Plus, Constellation) replaces the cover and restyles the pages; 'default' keeps both.
+    cover_block = ''
+    if template != 'default':
+        css += _tpl.theme_css(template, locale)
+        def _cap(v):
+            v = _html.unescape(str(v or ''))
+            return re.sub(r"\b([a-z])", lambda m: m.group(1).upper(), v) if locale == 'en' else v
+        _cv_careers = [{'title': _cap(r.get('title')), 'match': r.get('match_score') or 0,
+                        'risk': risk_by_title.get(_tkey(r.get('title')))} for r in recs]
+        cover_block = _tpl.cover_html(
+            template, locale=locale, paid=tier != 'free', name=name, date_str=date_str, brand=T['brand'],
+            confidential=T['confidential'], riasec_code=riasec_code,
+            top_type_label=_html.unescape(primary_meta.get('label', '') if locale == 'ar' else primary_type.title()),
+            top_value=top_value_label, top_strength=top_strength_label, careers=_cv_careers,
+            locked_more=3 if (tier == 'free' and recs) else 0,
+            logo_svg=_logomark_svg("tplCoverLogo", 42, "#FFFFFF" if template == 'constellation' else "#0052CC",
+                                   "#FFFFFF" if template == 'constellation' else "#0091C2"),
+            risk_labels={k: f"{T['risk_label']}: {LEVEL_LABELS_AR.get(k, k) if locale == 'ar' else k.capitalize()}" for k in ('medium', 'high')})
+
     return f"""<!DOCTYPE html>
   <html lang="{T['lang']}" dir="{T['dir']}">
   <head><meta charset="UTF-8"><style>{css}</style></head>
   <body>
 
   <!-- COVER -->
-  <div class="cover">
+  {cover_block}
+  <div class="cover"{' style="display:none;"' if cover_block else ''}>
     <div class="cover-accent"></div>
     <div class="cover-body">
       <div class="cover-logo">{COVER_LOGO_SVG}</div>
@@ -3477,7 +3515,22 @@ def get_or_generate_ai_content(response_id: str, supabase_client, tier: str = "l
 
 
 @_scoped_to_response
-def create_report(response_id: str, supabase_client, tier: str = "launchpad", locale_override: str | None = None) -> bytes:
+def live_report_template(supabase_client) -> str:
+    """The report template the admin has made live (app_settings.report_template), so the PDF has the same look as
+    the results page. Anything unknown or unreadable falls back to 'default' (the PDF as it has always been)."""
+    try:
+        row = supabase_client.table('app_settings').select('value').eq('key', 'report_template').execute()
+        value = (row.data[0].get('value') if row.data else None)
+        if isinstance(value, dict):
+            value = value.get('template') or value.get('value')
+        return _tpl.normalize_template(value)
+    except Exception as e:  # a settings hiccup must never stop a report
+        print("report template lookup failed (using default):", e)
+        return 'default'
+
+
+def create_report(response_id: str, supabase_client, tier: str = "launchpad", locale_override: str | None = None,
+                  template_override: str | None = None) -> bytes:
 
     profile = _execute_with_retry(supabase_client.table('assessment_responses')
         .select('full_name,email,age,age_bracket,experience_level,current_stage,education_field,'
@@ -3642,5 +3695,6 @@ def create_report(response_id: str, supabase_client, tier: str = "launchpad", lo
 
         courses = build_course_recommendations(response_id, summary, profile.data, top5, supabase_client, locale)
 
-    html = build_html_report(profile.data, summary, raw_scores, ai_content, top_careers, ai_impact, locale, tier=tier, jobs=jobs, companies=companies, courses=courses, student_track=student_track, certifications=certifications, career_path=career_path, direction=direction)
+    html = build_html_report(profile.data, summary, raw_scores, ai_content, top_careers, ai_impact, locale, tier=tier, jobs=jobs, companies=companies, courses=courses, student_track=student_track, certifications=certifications, career_path=career_path, direction=direction,
+                             template=_tpl.normalize_template(template_override) if template_override else live_report_template(supabase_client))
     return generate_pdf(html)

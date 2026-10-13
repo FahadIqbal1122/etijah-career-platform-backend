@@ -2212,7 +2212,7 @@ def choose_direction(response_id: str, body: DirectionRequest, user=Depends(get_
     return _build_direction_plan(response_id, profile, body.label, body.source, body.locale)
 
 @app.get("/assessment/{response_id}/report")
-def get_report(response_id: str, locale: str | None = None, user=Depends(get_optional_user)):
+def get_report(response_id: str, locale: str | None = None, template: str | None = None, user=Depends(get_optional_user)):
     owner_row = supabase.table('assessment_responses').select('user_id').eq('id', response_id).single().execute()
     if not owner_row.data:
         raise HTTPException(status_code=404, detail="No results found for this response")
@@ -2222,9 +2222,12 @@ def get_report(response_id: str, locale: str | None = None, user=Depends(get_opt
 
     if locale not in (None, 'en', 'ar'):
         raise HTTPException(status_code=400, detail="locale must be 'en' or 'ar'")
+    # The PDF follows the live report template (Settings -> Report Templates). ?template= previews another one, as
+    # on the results page; anything unknown is ignored.
+    template_override = template if template in REPORT_TEMPLATE_IDS else None
 
     try:
-        pdf_bytes = create_report(response_id, supabase, tier=tier, locale_override=locale)
+        pdf_bytes = create_report(response_id, supabase, tier=tier, locale_override=locale, template_override=template_override)
     except json.JSONDecodeError as e:
         # json.JSONDecodeError subclasses ValueError — must be caught before it so an
         # occasional malformed Gemini response isn't mistaken for the "not found" case below.
