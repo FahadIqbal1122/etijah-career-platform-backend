@@ -203,12 +203,20 @@ def receipt_email(buyer_name, tx, locale="en"):
     loc = _loc(locale)
     t = _T[loc]
     first = _html.escape((buyer_name or "").strip().split(" ")[0] or ("عميلنا" if loc == "ar" else "there"))
-    direction = ' dir="rtl"' if loc == "ar" else ""
     _, _, vat_no = _seller()
     net, vat, gross, currency, places = vat_breakdown(tx)
-    body = (f'<div{direction} style="font-family:Arial,sans-serif;font-size:15px;color:#1f2937;line-height:1.7">'
-            f"<p>{t['hi'].format(name=first)}</p><p>{t['body'].format(pct=_pct(loc))}</p>"
-            f"<p>{_html.escape(t['paid'])}: <b>{_html.escape(_money(gross, currency, places))}</b><br>"
+    from smtp_service import branded_email
+    body = branded_email(
+        loc,
+        band="فاتورتك من إتجاهي" if loc == "ar" else "Your Etijahi invoice",
+        heading=receipt_number(tx),
+        paragraphs=[
+            t['hi'].format(name=first),
+            t['body'].format(pct=_pct(loc)),
+            f"{_html.escape(t['paid'])}: <b>{_html.escape(_money(gross, currency, places))}</b><br>"
             f"{_html.escape(t['vat_total'].format(pct=_pct(loc)))}: {_html.escape(_money(vat, currency, places))}<br>"
-            f"{_html.escape(t['number'])}: {_html.escape(receipt_number(tx))}</p><p>{t['cta']}</p></div>")
+            f"{_html.escape(t['number'])}: {_html.escape(receipt_number(tx))}",
+            t['cta'],
+        ],
+    )
     return (t["subject"] if vat_no else t["subject_plain"]).format(number=receipt_number(tx)), body

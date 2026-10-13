@@ -56,6 +56,35 @@ def invalidate_smtp_cache():
     _smtp_cache["checked_at"] = None
 
 
+def branded_email(locale, band, heading, paragraphs, cta_label=None, cta_url=None):
+    """Etijahi-themed email shell, same look as the email_templates rows.
+    band / heading / cta_label are plain text (escaped here); paragraphs are ready-made, already-escaped HTML."""
+    ar = locale == "ar"
+    d, al = ("rtl", "right") if ar else ("ltr", "left")
+    font = '"Segoe UI", Tahoma, Arial, sans-serif' if ar else 'Arial, Helvetica, sans-serif'
+    body = "".join(f'<p style="margin:0 0 16px;font-size:15px;line-height:1.9;color:#2d2d2d">{p}</p>' for p in paragraphs)
+    cta = ""
+    if cta_label and cta_url:
+        cta = (f'<tr><td align="center" style="padding:8px 40px 24px"><table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr>'
+               f'<td align="center" bgcolor="#00C9A7" style="border-radius:40px"><a href="{_html.escape(cta_url)}" '
+               f'style="display:inline-block;font-family:{font};font-size:16px;font-weight:bold;color:#ffffff;text-decoration:none;padding:15px 40px;border-radius:40px">'
+               f'{_html.escape(cta_label)}&nbsp;{"←" if ar else "→"}</a></td></tr></table></td></tr>')
+    footer = "من اتجاه للإرشاد والاستشارات" if ar else "by Etijah Coaching &amp; Consulting"
+    return (
+        f'<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#ebf3ff"><tr><td align="center" style="padding:24px 10px">'
+        f'<table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0" dir="{d}" style="max-width:600px;width:100%;background:#ffffff;border-radius:18px;overflow:hidden">'
+        f'<tr><td align="center" style="padding:34px 40px 26px"><img src="https://erp.etijahcoaching.com/media/Etijahi/etijahi-logo-horizontal-single-icon.png" '
+        f'width="260" alt="Etijahi" style="display:block;width:260px;max-width:78%;height:auto;margin:0 auto 10px;border:0">'
+        f'<span style="font-family:{font};font-size:10px;color:#5a6a85">{footer}</span></td></tr>'
+        f'<tr><td bgcolor="#0052CC" style="background:#0052cc;padding:14px 40px;font-family:{font};font-size:13px;font-weight:bold;letter-spacing:1.5px;'
+        f'text-transform:uppercase;color:#ffffff;text-align:{al}">{_html.escape(band)}</td></tr>'
+        f'<tr><td style="height:4px;background:#00c9a7;font-size:0;line-height:0">&nbsp;</td></tr>'
+        f'<tr><td align="{al}" style="padding:30px 40px 8px;font-family:{font}">'
+        f'<p style="margin:0 0 20px;font-size:24px;line-height:1.5;font-weight:bold;color:#0052cc">{_html.escape(heading)}</p>{body}</td></tr>'
+        f'{cta}</table></td></tr></table>'
+    )
+
+
 def send_email(to, subject, html_body, text_body=None, attachments=None, reply_to=None, supabase=None, copy_internal=False):
     """
     to: str or list[str]

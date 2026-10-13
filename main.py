@@ -4100,20 +4100,17 @@ def _invalidate_free_tier_report_cache(user_id: str):
 
 def _full_report_ready_email(name: str | None, url: str, locale: str) -> tuple[str, str]:
     import html as _h
+    from smtp_service import branded_email
     first = _h.escape((name or '').strip().split(' ')[0])
     if locale == 'ar':
-        subject = "تقريرك الكامل من إتجاهي جاهز"
-        body = (f'<div dir="rtl" style="font-family:Arial,sans-serif;font-size:15px;color:#1f2937;line-height:1.7">'
-                f'<p>مرحباً {first}،</p><p>شكراً لك. تقريرك الكامل جاهز الآن، ويشمل الخطة والدورات والشهادات وتحليل تأثير الذكاء الاصطناعي.</p>'
-                f'<p><a href="{url}" style="display:inline-block;background:#0770ba;color:#fff;padding:11px 20px;border-radius:10px;text-decoration:none">افتح تقريرك الكامل</a></p>'
-                f'<p>فريق إتجاهي</p></div>')
-    else:
-        subject = "Your full Etijahi report is ready"
-        body = (f'<div style="font-family:Arial,sans-serif;font-size:15px;color:#1f2937;line-height:1.7">'
-                f'<p>Hi {first},</p><p>Thank you. Your full report is ready, including your plan, courses, certifications and the AI-impact analysis.</p>'
-                f'<p><a href="{url}" style="display:inline-block;background:#0770ba;color:#fff;padding:11px 20px;border-radius:10px;text-decoration:none">Open your full report</a></p>'
-                f'<p>The Etijahi team</p></div>')
-    return subject, body
+        return "تقريرك الكامل من إتجاهي جاهز", branded_email(
+            'ar', band="تقريرك الكامل جاهز", heading="تقريرك الكامل جاهز الآن",
+            paragraphs=[f'مرحباً {first}،', 'شكراً لك. تقريرك الكامل جاهز الآن، ويشمل الخطة والدورات والشهادات وتحليل تأثير الذكاء الاصطناعي.', 'فريق إتجاهي'],
+            cta_label="افتح تقريرك الكامل", cta_url=url)
+    return "Your full Etijahi report is ready", branded_email(
+        'en', band="Your full report is ready", heading="Your full report is ready",
+        paragraphs=[f'Hi {first},', 'Thank you. Your full report is ready, including your plan, courses, certifications and the AI-impact analysis.', 'The Etijahi team'],
+        cta_label="Open your full report", cta_url=url)
 
 def _notify_coaching_purchase(user_id: str, amount, currency: str):
     """Tells the team a Launchpad buyer is waiting for their 1:1 coaching session, so nobody falls through the cracks.
