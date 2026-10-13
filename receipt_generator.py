@@ -208,7 +208,8 @@ def receipt_email(buyer_name, tx, locale="en"):
     from smtp_service import branded_email
     body = branded_email(
         loc,
-        band="فاتورتك من إتجاهي" if loc == "ar" else "Your Etijahi invoice",
+        band=("فاتورتك الضريبية من إتجاهي" if vat_no else "فاتورتك من إتجاهي") if loc == "ar"
+             else ("Your Etijahi tax invoice" if vat_no else "Your Etijahi invoice"),
         heading=receipt_number(tx),
         paragraphs=[
             t['hi'].format(name=first),
