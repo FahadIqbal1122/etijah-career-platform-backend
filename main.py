@@ -1214,7 +1214,8 @@ def submit_beta_feedback_stage1(body: BetaFeedbackStage1Request, user=Depends(ge
     if user:   # a later anonymous save (link opened signed out) must not unlink the account
         row['user_id'] = user.id
     row['plan_tier'] = _feedback_plan_tier(body.response_id)
-    if all(row.get(k) is not None for k in ('s1_understood', 's1_intent', 's1_confidence', 's1_length')):
+    # s1_confidence was removed from F1 (14 Oct 2026), so it no longer counts toward completion.
+    if all(row.get(k) is not None for k in ('s1_understood', 's1_intent', 's1_length')):
         row['stage1_completed_at'] = datetime.now(timezone.utc).isoformat()
     result = supabase.table('beta_feedback').upsert(row, on_conflict='response_id').execute()
     if not result.data:
