@@ -3876,6 +3876,8 @@ class CoachChatRequest(BaseModel):
 def coach_chat(payload: CoachChatRequest, request: Request, user=Depends(get_optional_user)):
     """Two-way coach bubble (Gemini). See coach_chat.py: assessment mode gets no user data, results mode gets
     only the profile summary every tier already sees. Not the paid /coach (Claude + coaching library)."""
+    if not _is_coach_enabled():
+        return {"reply": None, "limited": True}   # coach switched off (admin Coach tab): no Gemini call from any page
     # Behind Traefik the LAST X-Forwarded-For entry is the one the proxy appended; earlier ones are client-supplied.
     ip = _client_ip(request)
     if not coach_chat_mod.check_rate_limit(f"ip:{ip}", coach_chat_mod.LIMIT_PER_IP):
