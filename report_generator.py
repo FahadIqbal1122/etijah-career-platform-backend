@@ -26,7 +26,7 @@ from db_client import disable_http2
 from scoring_engine import build_framework_output, score_careers, get_career_semantic_scores, COUNTRY_CODE_MAP, COUNTRY_NAMES
 from coaching_pipeline import _gemini_embed, client as anthropic_client
 from scoring_engine import extract_specialisms, enrich_profile, recommend_courses
-from content_policy import drop_weak_matches, opportunity_link, major_link, resolve_route, section_order, should_show_entrepreneurship, is_appropriate, with_typed_other, stage_text, typed_goal, typed_other, EARLY_STAGES, CULTURAL_GUARDRAIL, STILL_ENROLLED_STAGES, ENTERING_MARKET_STAGES, PROFESSIONAL_STAGES, MAJORS_STAGES, CERTIFICATION_STAGES, NO_LISTINGS_STAGES, NO_COMPANIES_STAGES
+from content_policy import free_snapshot_applies, drop_weak_matches, opportunity_link, major_link, resolve_route, section_order, should_show_entrepreneurship, is_appropriate, with_typed_other, stage_text, typed_goal, typed_other, EARLY_STAGES, CULTURAL_GUARDRAIL, STILL_ENROLLED_STAGES, ENTERING_MARKET_STAGES, PROFESSIONAL_STAGES, MAJORS_STAGES, CERTIFICATION_STAGES, NO_LISTINGS_STAGES, NO_COMPANIES_STAGES
 from ai_provider import get_ai_provider
 import ai_usage
 
@@ -3458,6 +3458,57 @@ def order_by_report(ranked: list, ai_content: dict | None) -> list:
     return first + [c for c in ranked if not (isinstance(c, dict) and c.get('title') in picked)]
 
 
+FREE_OVERVIEW_KEYS = ('riasec_overview', 'values_overview', 'strengths_overview', 'big_five_overview')
+
+
+def generate_free_overview(user_data: dict, summary: dict, raw_scores: list, locale: str = 'en') -> dict:
+    """The free snapshot needs only four short "what this means" lines (interests, values, strengths, personality).
+    This is one small call for just those, instead of the full free content (careers and every narrative), which the
+    snapshot never shows. Written directly in the requested language, so Arabic needs no separate translation call.
+    The result uses the same keys as the full content, so profile_notes() and the free PDF read it unchanged."""
+    scores = {r['dimension']: r['normalized_score'] for r in raw_scores}
+    riasec_types = summary.get('riasec', {}).get('top_types', [])
+    top_values = summary.get('values', {}).get('top_values', [])
+    top_strengths = summary.get('strengths', {}).get('top_strengths', [])
+    big_five = summary.get('big_five', {})
+    all_riasec = ", ".join(f"{k.title()} {round(scores.get(k, 0))}"
+                           for k in ['realistic', 'investigative', 'artistic', 'social', 'enterprising', 'conventional'])
+    val_lines = ", ".join(f"{v.replace('_', ' ').title()} {scores.get(v, 0):.0f}" for v in top_values)
+    str_lines = ", ".join(f"{x.replace('_', ' ').title()} {scores.get(x, 0):.0f}" for x in top_strengths)
+    bf_lines = ", ".join(f"{k.replace('_', ' ').title()}: {v} ({round(scores.get(k, 0))})" for k, v in big_five.items())
+    prompt = (
+        f"{CULTURAL_GUARDRAIL}\n\n"
+        + (ARABIC_LANGUAGE_INSTRUCTION if locale == 'ar' else "")
+        + "=== ASSESSMENT DATA ===\n\n"
+        f"Current stage: {stage_text(user_data)}\n"
+        f"Interest types, all six (0-100): {all_riasec}\n"
+        f"Top interest types in order: {', '.join(t.title() for t in riasec_types[:3])}\n"
+        f"Top values (0-100): {val_lines}\n"
+        f"Top strengths (0-100): {str_lines}\n"
+        f"Personality (Big Five level and score): {bf_lines}\n\n"
+        + _score_accuracy_rules(summary, scores)
+        + "=== TASK ===\n"
+        "Write four short notes for a free results page. Each note is exactly ONE plain sentence (at most 35 words), written to "
+        "the person as 'you', explaining what that part of their profile suggests about how they like to work. Describe "
+        "tendencies from their answers, never abilities or guarantees. Do NOT mention any career, job, course, qualification "
+        "or the person's name. Do not repeat the numbers. Return ONLY valid JSON with exactly these keys:\n"
+        "{\n"
+        '  "riasec_overview": "what the top interest types together suggest about the kind of work they enjoy",\n'
+        '  "values_overview": "what the top values together suggest about what they want from work",\n'
+        '  "strengths_overview": "what the top strengths together suggest about how they work with others and ideas",\n'
+        '  "big_five_overview": "what the overall personality pattern suggests about how they think and act"\n'
+        "}"
+    )
+    out = _generate_json(prompt, label="free_overview")
+    result = {}
+    for k in FREE_OVERVIEW_KEYS:
+        v = out.get(k) if isinstance(out, dict) else None
+        if not isinstance(v, str) or not v.strip():
+            raise ValueError(f"free overview is missing {k}")   # not cached: the next request tries again
+        result[k] = v.strip()[:320]
+    return result
+
+
 def get_or_generate_ai_content(response_id: str, supabase_client, tier: str = "launchpad", locale: str = 'en') -> dict:
     """Returns the ai_content dict (career_recommendations + narrative fields) for the
     given locale, generating and caching it on first call. Mirrors the equivalent block
@@ -3472,7 +3523,7 @@ def get_or_generate_ai_content(response_id: str, supabase_client, tier: str = "l
         .select('full_name,email,age,age_bracket,experience_level,current_stage,education_field,'
                 'major_was_own_choice,major_choice_reason,career_direction,'
                 'sectors_of_interest,career_structure,geographic_openness,why_here,country,'
-                'ai_content_cache,ai_content_cache_free,ai_content_cache_ar,ai_content_cache_ar_free,answers')
+                'ai_content_cache,ai_content_cache_free,ai_content_cache_ar,ai_content_cache_ar_free,answers,created_at')
         .eq('id', response_id).single())
     if not profile.data:
         raise ValueError(f"No assessment found for {response_id}")
@@ -3497,6 +3548,13 @@ def get_or_generate_ai_content(response_id: str, supabase_client, tier: str = "l
         raise ValueError(f"No scores found for {response_id}")
     raw_scores = scores_row.data
     summary = build_framework_output(raw_scores)
+
+    # Free snapshot: only the four short notes are ever shown, so only those are generated (one small call, written
+    # directly in the requested language). Free reports made before the snapshot, and every paid report, are unchanged.
+    if is_free and free_snapshot_applies(profile.data.get('created_at')):
+        return _generate_and_cache(supabase_client, response_id, content_col_ar if locale == 'ar' else content_col,
+            lambda: generate_free_overview(profile.data, summary, raw_scores, locale))
+
     all_careers = _execute_with_retry(supabase_client.table('careers').select('*').eq('is_approved', True)).data or []
 
     user_country_code = COUNTRY_CODE_MAP.get(profile.data.get('country') or '')
@@ -3547,6 +3605,30 @@ def live_report_template(supabase_client) -> str:
         return 'default'
 
 
+def _create_free_snapshot_pdf(response_id: str, supabase_client, profile: dict, raw_scores: list, locale_override: str | None) -> bytes:
+    """The free report as the two-page snapshot PDF (see free_snapshot_pdf.py)."""
+    from free_snapshot_pdf import build_free_snapshot_html
+    locale = locale_override or profile.get('locale') or 'en'
+    summary = build_framework_output(raw_scores)
+    # The four short notes come from the free content cache (one small AI call, made the first time the results page is opened).
+    try:
+        ai = get_or_generate_ai_content(response_id, supabase_client, tier='free', locale=locale)
+    except (json.JSONDecodeError, ValueError, GoogleAPICallError, RequestException,
+            anthropic.APIConnectionError, anthropic.RateLimitError, anthropic.APIStatusError):
+        # The Arabic notes could not be generated: hand back the English snapshot rather than no PDF (same as the full report)
+        locale = 'en'
+        ai = get_or_generate_ai_content(response_id, supabase_client, tier='free', locale='en')
+    notes = (profile_notes(ai, summary, locale).get('overview') or {})
+    scores = {r['dimension']: r['normalized_score'] for r in raw_scores}
+    first = ((profile.get('full_name') or '').strip().split(' ') or [''])[0] or None
+    html = build_free_snapshot_html(
+        profile, summary, scores, notes, locale, _format_date(locale),
+        # the results page sends a signed-in reader to the plans and a signed-out one to sign-up with this report attached
+        upgrade_url=f"https://myetijahi.com/{locale}/results/{response_id}", price="59 SAR" if locale == 'en' else "59 ريال",
+        first_name=first)
+    return generate_pdf(html)
+
+
 def create_report(response_id: str, supabase_client, tier: str = "launchpad", locale_override: str | None = None,
                   template_override: str | None = None) -> bytes:
 
@@ -3557,7 +3639,7 @@ def create_report(response_id: str, supabase_client, tier: str = "launchpad", lo
                 'ai_impact_cache,ai_content_cache,ai_impact_cache_ar,ai_content_cache_ar,'
                 'ai_impact_cache_free,ai_content_cache_free,ai_impact_cache_ar_free,ai_content_cache_ar_free,'
                 'student_track_cache,student_track_cache_ar,'
-                'certifications_cache,certifications_cache_ar,career_path_cache,career_path_cache_ar,locale,answers')
+                'certifications_cache,certifications_cache_ar,career_path_cache,career_path_cache_ar,locale,answers,created_at')
         .eq('id', response_id).single())
     if not profile.data:
         raise ValueError(f"No assessment found for {response_id}")
@@ -3567,6 +3649,12 @@ def create_report(response_id: str, supabase_client, tier: str = "launchpad", lo
         .select('*').eq('response_id', response_id))
     if not scores_row.data:
         raise ValueError(f"No scores found for {response_id}")
+
+    # Free report made since the snapshot went live: the two-page snapshot, built from the saved scores and the short
+    # AI overview lines only (no career scoring, impact, jobs or courses, which are the full report). Earlier free
+    # reports keep the layout they were given, below.
+    if tier == 'free' and free_snapshot_applies(profile.data.get('created_at')):
+        return _create_free_snapshot_pdf(response_id, supabase_client, profile.data, scores_row.data, locale_override)
 
     # assessment_responses.country stores the QO1 slug (e.g. "saudi_arabia"), not a
     # display name, so it can't be matched against country_profiles.country_name

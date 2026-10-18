@@ -22,7 +22,7 @@ from smtp_service import send_report_email, send_feedback_email, send_results_re
 import httpx, hmac, hashlib, json, secrets, time
 from coaching_methodology import METHODOLOGY_DOC
 from coaching_pipeline import chunk_transcript, embed_and_store_chunks, client, embed_country_profile, sync_country_profile_embedding, sync_career_embedding, _gemini_embed
-from content_policy import drop_weak_matches, add_student_track_links, section_order, job_posted_date, is_job_fresh, job_requirements as parse_job_requirements, meets_requirements, MAX_EXPERIENCE_MONTHS_EARLY_CAREER, MAX_EXPERIENCE_MONTHS_INTERNSHIP, EDUCATION_RANK, clean_typed_text, clean_direction_label, direction_key, resolve_route, MAJORS_STAGES, CERTIFICATION_STAGES, NO_LISTINGS_STAGES, NO_COMPANIES_STAGES, is_appropriate, is_region_eligible, is_seniority_appropriate, STILL_ENROLLED_STAGES, ENTERING_MARKET_STAGES, PROFESSIONAL_STAGES, CULTURAL_GUARDRAIL
+from content_policy import free_snapshot_applies, drop_weak_matches, add_student_track_links, section_order, job_posted_date, is_job_fresh, job_requirements as parse_job_requirements, meets_requirements, MAX_EXPERIENCE_MONTHS_EARLY_CAREER, MAX_EXPERIENCE_MONTHS_INTERNSHIP, EDUCATION_RANK, clean_typed_text, clean_direction_label, direction_key, resolve_route, MAJORS_STAGES, CERTIFICATION_STAGES, NO_LISTINGS_STAGES, NO_COMPANIES_STAGES, is_appropriate, is_region_eligible, is_seniority_appropriate, STILL_ENROLLED_STAGES, ENTERING_MARKET_STAGES, PROFESSIONAL_STAGES, CULTURAL_GUARDRAIL
 import coach_chat as coach_chat_mod
 import receipt_generator
 from ai_provider import get_ai_provider, invalidate_ai_provider_cache, AI_PROVIDER_KEY, VALID_PROVIDERS
@@ -583,6 +583,9 @@ class BetaFeedbackResultStageRequest(BaseModel):
     result_accuracy: str | None = Field(default=None, max_length=100)
     career_explained: str | None = Field(default=None, max_length=100)
     careers_seriously_considered: str | None = Field(default=None, max_length=100)
+    # Free snapshot form (v5_free_snapshot): replaces the two career questions above, which a free user cannot answer
+    self_understanding: str | None = Field(default=None, max_length=100)
+    unlock_intent: str | None = Field(default=None, max_length=100)
     # would_recommend: str | None = None   # moved to the follow-up form (Q14)
     # would_pay: str | None = None         # dropped from the launch form
     other_text: str | None = Field(default=None, max_length=2000)
@@ -1087,7 +1090,7 @@ def get_recent_completions():
 @app.get("/assessment/{response_id}/results")
 def get_results(response_id: str, user=Depends(get_optional_user)):
     profile = _execute_with_retry(supabase.table('assessment_responses')
-        .select('email, user_id, locale, current_stage')
+        .select('email, user_id, locale, current_stage, full_name, created_at')
         .eq('id', response_id).single())
     if not profile.data:
         raise HTTPException(status_code=404, detail="No results found for this response")
@@ -1133,6 +1136,11 @@ def get_results(response_id: str, user=Depends(get_optional_user)):
         'results': rows.data, 'summary': summary,
         'email': profile.data.get('email') if (not profile.data.get('user_id') or _is_owner_or_admin(profile.data.get('user_id'), user)) else None,
         'tier': tier, 'locale': profile.data.get('locale') or 'en',
+        # Free reports made since the snapshot went live get the two-part snapshot; earlier ones keep their layout.
+        'free_snapshot': free_snapshot_applies(profile.data.get('created_at')),
+        # First name only, and only for the owner (or an anonymous report, like the email above)
+        'first_name': ((profile.data.get('full_name') or '').strip().split(' ')[0] or None)
+            if (not profile.data.get('user_id') or _is_owner_or_admin(profile.data.get('user_id'), user)) else None,
         'is_still_enrolled': profile.data.get('current_stage') in STILL_ENROLLED_STAGES,
         'route': resolve_route(profile.data.get('current_stage')),
         # Order of the report sections for this person (shared with the PDF; see content_policy.SECTION_ORDER).
@@ -1233,7 +1241,10 @@ def submit_beta_feedback_result_stage(body: BetaFeedbackResultStageRequest, user
     if user:   # a later anonymous save (link opened signed out) must not unlink the account
         row['user_id'] = user.id
     row['plan_tier'] = _feedback_plan_tier(body.response_id)
-    if all(row.get(k) is not None for k in ('result_accuracy', 'career_explained', 'careers_seriously_considered')):
+    # The free snapshot form asks accuracy + self_understanding + unlock_intent; every other form asks the career pair.
+    _needed = ('result_accuracy', 'self_understanding', 'unlock_intent') if body.result_stage_form_version == 'v5_free_snapshot' \
+        else ('result_accuracy', 'career_explained', 'careers_seriously_considered')
+    if all(row.get(k) is not None for k in _needed):
         row['result_stage_completed_at'] = datetime.now(timezone.utc).isoformat()
     result = supabase.table('beta_feedback').upsert(row, on_conflict='response_id').execute()
     if not result.data:
@@ -1686,15 +1697,18 @@ def get_career_recommendations(response_id: str, locale: str | None = None, user
         # Free tier: no plan at all (not even the first step) and 3 suggested careers; both are part of the paid report.
         action_plan = {}
         recs = [{k: v for k, v in r.items() if k != "next_steps"} if isinstance(r, dict) else r for r in recs[:3]]
-    # Short takeaways for the profile cards (paid only), the same words the PDF uses
+    # Short takeaways for the profile cards, the same words the PDF uses. Paid: the full set. Free: only the short
+    # overview line per section (the free snapshot's "what this means"); the per-item notes and tips stay paid.
     profile_details = None
-    if tier != "free" or _is_admin(user):
-        try:
-            from report_generator import profile_notes
-            _rows = supabase.table('assessment_results').select('*').eq('response_id', response_id).execute()
-            profile_details = profile_notes(ai_content, build_framework_output(_rows.data), locale or 'en') if _rows.data else None
-        except Exception as e:
-            print(f"[career-recommendations] profile notes skipped for {response_id}: {e}")
+    try:
+        from report_generator import profile_notes
+        _rows = supabase.table('assessment_results').select('*').eq('response_id', response_id).execute()
+        profile_details = profile_notes(ai_content, build_framework_output(_rows.data), locale or 'en') if _rows.data else None
+        if profile_details and tier == "free" and not _is_admin(user):
+            _ov = profile_details.get('overview') or {}
+            profile_details = {'overview': {k: _ov[k] for k in ('riasec', 'values', 'strengths', 'big_five') if _ov.get(k)}}
+    except Exception as e:
+        print(f"[career-recommendations] profile notes skipped for {response_id}: {e}")
     return {
         "career_recommendations": recs,
         "profile_details": profile_details,
@@ -1737,7 +1751,7 @@ def _trim_ai_impact_free(out: dict) -> dict:
 def get_ai_impact(response_id: str, force: bool = False, locale: str | None = None, user=Depends(get_optional_user)):
     profile_row = _execute_with_retry(supabase.table('assessment_responses')
         .select('full_name,current_stage,country,experience_level,education_field,career_direction,sectors_of_interest,'
-                'ai_impact_cache,ai_impact_cache_free,ai_impact_cache_ar,ai_impact_cache_ar_free,user_id,answers')
+                'ai_impact_cache,ai_impact_cache_free,ai_impact_cache_ar,ai_impact_cache_ar_free,user_id,answers,created_at')
         .eq('id', response_id).single())
     if not profile_row.data:
         raise HTTPException(status_code=404, detail="No results found for this response")
@@ -1751,6 +1765,10 @@ def get_ai_impact(response_id: str, force: bool = False, locale: str | None = No
     # of paying for a 5-career Gemini call and discarding 3 — see create_report()'s
     # matching *_free cache columns for why paid tiers share a single "full" cache.
     is_free = tier == "free"
+    # The free snapshot shows no careers and no AI impact, so none is generated for it (an AI call per free user that
+    # nobody would see). Free reports made before the snapshot, and admins looking at a report, are unchanged.
+    if is_free and not _is_admin(user) and free_snapshot_applies(profile_row.data.get('created_at')):
+        return {"careers": []}
     # careers_cap = 2 if is_free else 8  # paid
     careers_cap = 3 if is_free else 8  # free: 3 (matches the 3 career cards); paid: one AI-impact row for every career card shown (8)
     cache_col = 'ai_impact_cache_free' if is_free else 'ai_impact_cache'

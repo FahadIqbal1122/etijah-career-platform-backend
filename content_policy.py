@@ -560,3 +560,40 @@ def drop_weak_matches(recs: list) -> list:
             return None
     strong = [r for r in recs if (score(r) is None or score(r) >= MIN_MATCH_SHOWN)]
     return strong if len(strong) >= MIN_CAREERS_SHOWN else recs[:max(MIN_CAREERS_SHOWN, len(strong))]
+
+
+# ── Free "snapshot" report ────────────────────────────────────────────────────────────────────────────────────
+# Free reports created at or after this moment use the two-part snapshot (the results page and the free PDF).
+# Free reports created earlier keep the layout those people were given. Set FREE_SNAPSHOT_FROM (ISO date/time,
+# UTC) in the backend environment to the moment the snapshot goes live; the default is the day it was built.
+import os as _os
+
+def _snapshot_cutoff() -> datetime:
+    raw = (_os.getenv("FREE_SNAPSHOT_FROM") or "2026-10-18T00:00:00+00:00").strip()
+    if re.fullmatch(r"\d{4}-\d{2}-\d{2}", raw):   # a bare date means the start of that day (UTC)
+        raw += "T00:00:00+00:00"
+    return _parse_timestamp(raw) or datetime(2026, 10, 18, tzinfo=timezone.utc)
+
+def _parse_timestamp(raw) -> datetime | None:
+    """Parses what Supabase returns for a timestamp ('2026-10-18 08:00:03.94714+00', 'T' separators, a fraction of any
+    length, 'Z' or a short UTC offset). Python 3.10's fromisoformat is stricter than 3.11's, so normalise first."""
+    text = str(raw or "").strip().replace(" ", "T", 1).replace("Z", "+00:00")
+    m = re.fullmatch(r"(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})(?:\.(\d+))?(?:([+-]\d{2})(?::?(\d{2}))?)?", text)
+    if not m:
+        return None
+    base, frac, off_h, off_m = m.groups()
+    text = base + (("." + frac[:6].ljust(6, "0")) if frac else "") + (f"{off_h}:{off_m or '00'}" if off_h else "")
+    try:
+        d = datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    return d if d.tzinfo else d.replace(tzinfo=timezone.utc)
+
+
+def free_snapshot_applies(created_at) -> bool:
+    """True when a free report created at `created_at` gets the snapshot layout. A missing or unreadable timestamp
+    counts as new (the snapshot)."""
+    if not created_at:
+        return True
+    d = _parse_timestamp(created_at)
+    return True if d is None else d >= _snapshot_cutoff()
