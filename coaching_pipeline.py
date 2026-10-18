@@ -5,6 +5,7 @@ import requests
 from anthropic import Anthropic
 from supabase import create_client, Client
 from db_client import disable_http2
+import ai_usage
 
 client = Anthropic()
 supabase = disable_http2(create_client(os.getenv("SUPABASE_URL"), os.getenv("SUPABASE_KEY")))
@@ -27,6 +28,9 @@ def _gemini_embed(text: str, retries: int = 2) -> list[float]:
             resp = requests.post(url, json={"content": {"parts": [{"text": text}]}, "outputDimensionality": 768},
                                  headers={"x-goog-api-key": api_key or ""}, timeout=30)
             resp.raise_for_status()
+            # the embedding API reports no token usage: estimate from the text length (~4 characters a token)
+            ai_usage.record(provider="gemini", model="gemini-embedding-001", kind="embed", label="embed",
+                            input_tokens=max(1, len(text) // 4), seconds=resp.elapsed.total_seconds())
             return resp.json()["embedding"]["values"]
         except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as e:
             last_err = e
@@ -52,6 +56,8 @@ def chunk_transcript(raw_transcript: str) -> list[dict]:
         messages=[{"role": "user", "content": prompt}],
         timeout=60.0,
     )
+    ai_usage.record(provider="claude", model="claude-sonnet-4-6", kind="transcript_chunk", label="transcript_chunk",
+                    **ai_usage.from_claude(getattr(response, "usage", None)))
     return parse_json_beats(response.content[0].text) #parse + validate JSON
 
 def embed_and_store_chunks(session_id: str, chunks: list[dict]):

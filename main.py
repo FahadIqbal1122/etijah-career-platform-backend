@@ -77,6 +77,7 @@ class CatchAllMiddleware(BaseHTTPMiddleware):
 
 app.add_middleware(CatchAllMiddleware)
 from request_guard import RequestGuardMiddleware, client_ip as _client_ip
+import ai_usage
 app.add_middleware(RequestGuardMiddleware)
 
 app.add_middleware(
@@ -2819,6 +2820,11 @@ def get_coach_enabled_public():
     """Unauthenticated: the assessment and results pages read this to decide whether Sarah and the games are on."""
     return {"enabled": _is_coach_enabled(), "games": _is_games_enabled()}
 
+@app.get("/admin/ai-usage")
+def get_ai_usage(days: int = 3, _=Depends(require_admin)):
+    """Estimated Gemini / Claude spend for the last `days` days, with the biggest causes (see ai_usage.py)."""
+    return ai_usage.summarize(days=max(1, min(days, 30)))
+
 @app.get("/admin/coach-enabled")
 def get_coach_enabled_admin(_=Depends(require_admin)):
     return {"enabled": _is_coach_enabled()}
@@ -3854,6 +3860,8 @@ def coach(payload: CoachRequest, user=Depends(get_current_user)):
         # See the AI Impact generation handler above for why this is an
         # HTTPException rather than a bare `raise`.
         raise HTTPException(status_code=500, detail="AI Coach is temporarily unavailable, please try again.")
+    ai_usage.record(provider="claude", model="claude-sonnet-4-6", kind="coach_paid", label="coach_paid",
+                    **ai_usage.from_claude(getattr(response, "usage", None)))
     return {"reply": response.content[0].text}
 
 

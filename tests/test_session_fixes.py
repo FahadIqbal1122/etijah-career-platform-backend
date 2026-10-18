@@ -189,7 +189,7 @@ class Generation(unittest.TestCase):
         rg.get_ai_provider = lambda: "claude"
 
     def fake(self, behaviour):
-        def call(prompt, provider=None, timeout_s=None):
+        def call(prompt, provider=None, timeout_s=None, label=""):
             self.calls.append((provider, timeout_s))
             return behaviour(provider)
         rg._call_model = call

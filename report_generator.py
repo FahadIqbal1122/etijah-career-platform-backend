@@ -10,6 +10,7 @@ import html as _html
 import threading
 import contextvars
 import functools
+import time
 from contextlib import contextmanager
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor
@@ -27,6 +28,7 @@ from coaching_pipeline import _gemini_embed, client as anthropic_client
 from scoring_engine import extract_specialisms, enrich_profile, recommend_courses
 from content_policy import drop_weak_matches, opportunity_link, major_link, resolve_route, section_order, should_show_entrepreneurship, is_appropriate, with_typed_other, stage_text, typed_goal, typed_other, EARLY_STAGES, CULTURAL_GUARDRAIL, STILL_ENROLLED_STAGES, ENTERING_MARKET_STAGES, PROFESSIONAL_STAGES, MAJORS_STAGES, CERTIFICATION_STAGES, NO_LISTINGS_STAGES, NO_COMPANIES_STAGES
 from ai_provider import get_ai_provider
+import ai_usage
 
 # Self-contained client (like ai_provider.py / smtp_service.py) purely for the
 # provider-fallback admin alert — report_generator.py doesn't otherwise touch
@@ -398,28 +400,44 @@ def _get_gemini_model():
         )
     return _gemini_model
 
-def _call_model(prompt: str, provider: str | None = None, timeout_s: float | None = None) -> str:
+def _call_model(prompt: str, provider: str | None = None, timeout_s: float | None = None, label: str = "") -> str:
     """Dispatches to `provider`, or the app_settings.ai_provider toggle when not given,
     and returns raw text. `timeout_s` overrides the provider's default budget (see
     CLAUDE_CONTENT_TIMEOUT_S) for calls expected to return a much larger response.
     Both providers get the same "return only JSON" instructions in the prompt
     itself — downstream fence-stripping/brace-extraction in _generate_json is
-    provider-agnostic."""
-    if (provider or get_ai_provider()) == "claude":
+    provider-agnostic. `label` only names the call in the ai_usage spend log."""
+    provider = provider or get_ai_provider()
+    started = time.monotonic()
+    if provider == "claude":
         # max_retries=0: the SDK's own 2 retries made one slow call take 3 x the timeout (a 150s budget meant 7.5
         # minutes before _generate_json even saw the failure). _generate_json does the retrying and the fallback.
-        response = anthropic_client.with_options(max_retries=0).messages.create(
-            model=CLAUDE_REPORT_MODEL,
-            max_tokens=8000,
-            messages=[{"role": "user", "content": prompt}],
-            timeout=timeout_s or CLAUDE_TIMEOUT_S,
-        )
+        try:
+            response = anthropic_client.with_options(max_retries=0).messages.create(
+                model=CLAUDE_REPORT_MODEL,
+                max_tokens=8000,
+                messages=[{"role": "user", "content": prompt}],
+                timeout=timeout_s or CLAUDE_TIMEOUT_S,
+            )
+        except Exception as e:
+            ai_usage.record(provider="claude", model=CLAUDE_REPORT_MODEL, kind="report", label=label,
+                            seconds=time.monotonic() - started, ok=False, error=type(e).__name__)
+            raise
+        ai_usage.record(provider="claude", model=CLAUDE_REPORT_MODEL, kind="report", label=label,
+                        seconds=time.monotonic() - started, **ai_usage.from_claude(getattr(response, "usage", None)))
         text_block = next((b for b in response.content if b.type == "text"), None)
         if text_block is None:
             raise ValueError(f"Claude response had no text block (stop_reason={response.stop_reason!r})")
         return text_block.text
 
-    response = _get_gemini_model().generate_content(prompt, request_options={"timeout": timeout_s or GEMINI_TIMEOUT_S})
+    try:
+        response = _get_gemini_model().generate_content(prompt, request_options={"timeout": timeout_s or GEMINI_TIMEOUT_S})
+    except Exception as e:
+        ai_usage.record(provider="gemini", model="gemini-2.5-flash", kind="report", label=label,
+                        seconds=time.monotonic() - started, ok=False, error=type(e).__name__)
+        raise
+    ai_usage.record(provider="gemini", model="gemini-2.5-flash", kind="report", label=label,
+                    seconds=time.monotonic() - started, **ai_usage.from_gemini(getattr(response, "usage_metadata", None)))
     return response.text
 
 
@@ -511,7 +529,7 @@ def translate_typed_labels(labels: dict) -> dict:
         + json.dumps(todo, ensure_ascii=False)
     )
     try:
-        text = _call_model(prompt, provider="gemini", timeout_s=15).strip()
+        text = _call_model(prompt, provider="gemini", timeout_s=15, label="typed_labels").strip()
         text = re.sub(r"^```[a-z]*\n?", "", text)
         text = re.sub(r"\n?```$", "", text).strip()
         obj_text = _extract_json_object(text)
@@ -586,7 +604,7 @@ def _generate_json(prompt: str, retries: int = 1, timeout_s: float | None = None
         call_timeout = min(timeout_s or CLAUDE_TIMEOUT_S, CLAUDE_FALLBACK_TIMEOUT_S) if (provider == "claude" and not catch_broadly) else timeout_s
         for attempt in range(retries + 1):
             try:
-                text = _call_model(prompt, provider=provider, timeout_s=call_timeout)
+                text = _call_model(prompt, provider=provider, timeout_s=call_timeout, label=label)
             except anthropic.APITimeoutError as e:
                 # A call that used its whole budget will not do better a second time: go straight to the other provider.
                 last_err = e

@@ -18,6 +18,8 @@ from collections import defaultdict, deque
 
 import google.generativeai as genai
 
+import ai_usage
+
 COACH_MODEL = "gemini-2.5-flash"
 COACH_TIMEOUT_S = 20
 MAX_MESSAGE_CHARS = 500
@@ -216,7 +218,15 @@ def generate_reply(mode: str, message: str, history: list[dict], locale: str,
         generation_config={"max_output_tokens": 900, "temperature": 0.6},
     )
     contents = _clean_history(history) + [{"role": "user", "parts": [message.strip()[:MAX_MESSAGE_CHARS]]}]
-    response = model.generate_content(contents, request_options={"timeout": COACH_TIMEOUT_S})
+    started = time.monotonic()
+    try:
+        response = model.generate_content(contents, request_options={"timeout": COACH_TIMEOUT_S})
+    except Exception as e:
+        ai_usage.record(provider="gemini", model=COACH_MODEL, kind="coach_chat", label=f"coach:{mode}",
+                        seconds=time.monotonic() - started, ok=False, error=type(e).__name__)
+        raise
+    ai_usage.record(provider="gemini", model=COACH_MODEL, kind="coach_chat", label=f"coach:{mode}",
+                    seconds=time.monotonic() - started, **ai_usage.from_gemini(getattr(response, "usage_metadata", None)))
     text = (response.text or "").strip()   # raises ValueError when the response was blocked/empty
     if not text:
         raise ValueError("empty coach reply")

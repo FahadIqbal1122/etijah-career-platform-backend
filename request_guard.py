@@ -91,6 +91,8 @@ class RequestGuardMiddleware(BaseHTTPMiddleware):
                     break
         if found and not allow(f"{found[0]}|{client_ip(request)}", found[1]):
             return JSONResponse(status_code=429, content={"detail": "Too many requests, please try again later."})
+        import ai_usage   # which request (and client) any AI call made while serving it belongs to
+        ai_usage.set_request_context(request.url.path, client_ip(request))
         response = await call_next(request)
         # API responses are JSON, never pages: say so, and keep browsers from sniffing or framing them.
         response.headers.setdefault("X-Content-Type-Options", "nosniff")
