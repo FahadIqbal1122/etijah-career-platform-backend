@@ -86,6 +86,26 @@ class FreePdf(unittest.TestCase):
         for withheld in ('match', 'Economist', 'gap', '90-day plan</b>'):
             self.assertNotIn(f'>{withheld}', h)
 
+    def test_teasers_name_fields_not_careers_and_list_the_locked_sections(self):
+        h = self.build()
+        self.assertIn('8 ranked career matches', h)
+        self.assertIn('Business leadership', h)          # fields for the top interest types, never career titles
+        self.assertEqual(h.count('class="lst"'), 1)
+        for title in ('Your career matches', 'Why each career fits you', 'Your career in the age of AI',
+                      'Your personal career action plan', 'Compare your career options'):
+            self.assertGreaterEqual(h.count(title), 2)    # once as a locked line, once in "what else you get"
+
+    def test_the_observation_appears_only_when_a_rule_matches(self):
+        self.assertNotIn('class="ins"', self.build())    # this sample is medium extraversion: no rule fires
+        quiet = {**SUMMARY, 'big_five': {**SUMMARY['big_five'], 'extraversion': 'low'}}
+        h = build_free_snapshot_html({}, quiet, SCORES, NOTES, 'en', 'd', upgrade_url='u', price='59 SAR')
+        self.assertIn('prefer to exercise it quietly', h)
+
+    def test_the_arabic_pdf_has_the_teasers_too(self):
+        h = self.build('ar')
+        self.assertIn('8 مسارات مهنية مرتبة', h)
+        self.assertIn('مقفل', h)
+
     def test_headline_never_repeats_the_same_phrase(self):
         one = {**SUMMARY, 'riasec': {'top_types': ['investigative']}}
         h = build_free_snapshot_html({}, one, SCORES, NOTES, 'en', 'd', upgrade_url='u', price='59 SAR')

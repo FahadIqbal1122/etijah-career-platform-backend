@@ -45,6 +45,22 @@ _TXT = {
         'includes': 'Your full report adds: suggested careers and why they fit · qualification gaps and learning · AI implications · a personalised 90-day plan.',
         'disclaimer': 'This profile reflects self-reported preferences, not a test of ability or a guarantee of career fit.',
         'confidential': 'Etijahi Report · Confidential', 'levels': {'low': 'Low', 'medium': 'Medium', 'high': 'High'},
+        'found': 'We found <b>8 ranked career matches</b> for this profile, across these fields:',
+        'locked_title': 'Your full report includes', 'locked': 'Locked',
+        'locked_items': ['Your career matches', 'Why each career fits you', 'Your career in the age of AI',
+                         'Your personal career action plan', 'Compare your career options'],
+        'tension_title': 'An interesting combination.',
+        'tension': {
+            'enterprisingLowExtraversion': 'You want influence but prefer to exercise it quietly. That points some roles toward you and others away. Your full report shows which.',
+            'artisticHighConscientiousness': 'You combine creative drive with discipline. That is a less common mix and it favours some roles over others. Your full report shows which.',
+            'socialLowAgreeableness': 'You care about people but you are direct about your views. That suits some roles better than others. Your full report shows which.',
+        },
+        'else_title': 'What else you get in your full report',
+        'else_items': [('Your career matches', 'Eight ranked careers, and why each fits you'),
+                       ('Why each career fits you', 'How your profile relates to each career'),
+                       ('Your career in the age of AI', 'How AI may change the tasks in each career'),
+                       ('Your personal career action plan', 'Skills to build and next steps to take'),
+                       ('Compare your career options', 'A side-by-side look at your matches: the work, the fit and the skills needed')],
     },
     'ar': {
         'brand_sub': 'اتجاه للتدريب والاستشارات', 'ready': 'نتائجك جاهزة',
@@ -66,10 +82,53 @@ _TXT = {
         'includes': 'يضيف تقريرك الكامل: المسارات المهنية المقترحة وسبب ملاءمتها · فجوات المؤهلات والتعلّم · أثر الذكاء الاصطناعي · خطة شخصية لمدة 90 يومًا.',
         'disclaimer': 'يعكس هذا الملف تفضيلاتك كما ذكرتها، وليس اختبارًا للقدرات ولا ضمانًا لملاءمة مسار مهني.',
         'confidential': 'تقرير إتجاهي · سرّي', 'levels': {'low': 'منخفض', 'medium': 'متوسط', 'high': 'مرتفع'},
+        'found': 'وجدنا <b>8 مسارات مهنية مرتبة</b> تناسب ملفك، في المجالات التالية:',
+        'locked_title': 'يتضمن تقريرك الكامل', 'locked': 'مقفل',
+        'locked_items': ['مساراتك المهنية المقترحة', 'لماذا يناسبك كل مسار', 'مسيرتك المهنية في عصر الذكاء الاصطناعي',
+                         'خطتك المهنية الشخصية', 'قارن بين خياراتك المهنية'],
+        'tension_title': 'تركيبة لافتة.',
+        'tension': {
+            'enterprisingLowExtraversion': 'تريد التأثير لكنك تفضّل ممارسته بهدوء. هذا يقرّب بعض الأدوار منك ويبعد أخرى، ويوضح تقريرك الكامل أيها.',
+            'artisticHighConscientiousness': 'تجمع بين الدافع الإبداعي والانضباط. هذه تركيبة أقل شيوعًا وتميل بك نحو أدوار أكثر من غيرها، ويوضح تقريرك الكامل أيها.',
+            'socialLowAgreeableness': 'تهتم بالناس لكنك مباشر في رأيك. هذا يناسب بعض الأدوار أكثر من غيرها، ويوضح تقريرك الكامل أيها.',
+        },
+        'else_title': 'ماذا تحصل أيضًا في تقريرك الكامل',
+        'else_items': [('مساراتك المهنية المقترحة', 'ثمانية مسارات مرتبة، وسبب ملاءمة كل منها لك'),
+                       ('لماذا يناسبك كل مسار', 'كيف يرتبط ملفك بكل مسار مهني'),
+                       ('مسيرتك المهنية في عصر الذكاء الاصطناعي', 'كيف قد يغيّر الذكاء الاصطناعي مهام كل مسار'),
+                       ('خطتك المهنية الشخصية', 'مهارات تبنيها وخطوات تتخذها بعد ذلك'),
+                       ('قارن بين خياراتك المهنية', 'نظرة جنبًا إلى جنب على مساراتك: طبيعة العمل ومدى الملاءمة والمهارات المطلوبة')],
     },
 }
 
 _LEVEL_PCT = {'low': 20, 'medium': 55, 'high': 88}
+
+# Broad fields (not careers) per interest type, same wording as the results page (messages freeSnapshot.fields). The
+# page shows both of the top type's and the first of the second type's.
+_FIELDS = {
+    'en': {
+        'realistic': ['Engineering & technical work', 'Hands-on operations'], 'investigative': ['Research & analysis', 'Science & technology'],
+        'artistic': ['Design & creative work', 'Media & communication'], 'social': ['Education & training', 'Health & community services'],
+        'enterprising': ['Business leadership', 'Strategy & policy'], 'conventional': ['Finance & administration', 'Planning & operations'],
+    },
+    'ar': {
+        'realistic': ['الهندسة والأعمال التقنية', 'العمليات التطبيقية'], 'investigative': ['البحث والتحليل', 'العلوم والتقنية'],
+        'artistic': ['التصميم والأعمال الإبداعية', 'الإعلام والتواصل'], 'social': ['التعليم والتدريب', 'الصحة والخدمات المجتمعية'],
+        'enterprising': ['قيادة الأعمال', 'الاستراتيجية والسياسات'], 'conventional': ['المالية والإدارة', 'التخطيط والعمليات'],
+    },
+}
+
+
+def _tension_key(types: list, big_five: dict) -> str | None:
+    """One observation drawn from the person's own scores (no AI): the first rule that matches, or none (same rules as the results page)."""
+    top2 = types[:2]
+    if 'enterprising' in top2 and big_five.get('extraversion') == 'low':
+        return 'enterprisingLowExtraversion'
+    if 'artistic' in top2 and big_five.get('conscientiousness') == 'high':
+        return 'artisticHighConscientiousness'
+    if 'social' in top2 and big_five.get('agreeableness') == 'low':
+        return 'socialLowAgreeableness'
+    return None
 
 
 def _e(v) -> str:
@@ -149,6 +208,15 @@ def build_free_snapshot_html(user_data: dict, summary: dict, scores: dict, notes
     strength_line = sname(top_strengths[0]) if top_strengths else ''
     eyebrow = T['ready'] + (f' · {_e(first_name)}' if first_name else '')
     buy = T['buy'].format(price=price)
+    fa = _FIELDS[L].get(top_types[0] if top_types else 'enterprising', _FIELDS[L]['enterprising'])
+    fb = _FIELDS[L].get(top_types[1], []) if len(top_types) > 1 and top_types[1] != (top_types[0] if top_types else None) else []
+    fields_html = ''.join(f'<span>{_e(x)}</span>' for x in (fa + fb[:1])[:3])
+    locked_html = ''.join(f'<div><b>{_e(x)}</b><u>{T["locked"]}</u></div>' for x in T['locked_items'])
+    tk = _tension_key(top_types, big_five)
+    tension_html = f'<div class="ins"><b>{T["tension_title"]}</b> {_e(T["tension"][tk])}</div>' if tk else ''
+    else_items = T['else_items']
+    else_html = ''.join(f'<div{" class=wide" if i == len(else_items) - 1 else ""}><b>{_e(a)}</b> {"· " if i == len(else_items) - 1 else "<br>"}{_e(b)}</div>'
+                        for i, (a, b) in enumerate(else_items))
 
     sc = lambda k: float(scores.get(k, 0) or 0)
     radar_items = [(rname(k), sc(k)) for k in _RIASEC_ORDER]
@@ -209,7 +277,20 @@ p {{ margin:0 0 2.5mm }} .lead {{ font-size:11.5pt; color:#3a4553 }}
 .mean {{ margin-top:2mm; padding-top:1.5mm; border-top:1px dashed #dbe7f3; font-size:8.8pt; color:#3a4553; line-height:1.45 }} .mean b {{ color:#0770ba }}
 .cta {{ position:absolute; left:18mm; right:18mm; bottom:19.5mm; background:#f2f8fd; border-radius:14px; padding:4mm 7mm }}
 .cta p {{ font-size:9.5pt; margin-bottom:2mm; text-align:center; font-weight:700 }}
-.ben {{ font-size:8.6pt; color:#3a4553; text-align:center; margin-top:2.5mm }}
+.ben {{ font-size:8.8pt; color:#3a4553; text-align:center; margin-top:1.5mm }}
+.nw {{ margin-top:2mm; border-top:1px dashed #cfe0ef; padding-top:2mm }}
+.fl span {{ display:inline-block; background:#e3f1fb; color:#075288; border-radius:20px; padding:1px 10px; margin:0 0 3px 4px; font-size:9.5pt; font-weight:700 }}
+.lst {{ margin-top:2mm; border:1px dashed #b9c6d6; border-radius:8px; background:#fff; padding:2mm 3.5mm; font-size:9.5pt; line-height:1.5 }}
+.lst .lh {{ font-size:7.8pt; letter-spacing:{'0' if ar else '1.5px'}; text-transform:uppercase; color:#6b7480; line-height:1.4 }}
+.lst div + div {{ border-top:1px solid #eef2f7; padding:.4mm 0; display:flex; justify-content:space-between; align-items:center }}
+.lst u {{ text-decoration:none; font-size:7pt; color:#6b7480; border:1px solid #cdd5e0; border-radius:10px; padding:0 6px; line-height:1.4 }}
+.ins {{ margin-top:2mm; border-inline-start:3px solid #c8962e; background:#fdf8ec; padding:1.5mm 3mm; font-size:9pt; border-radius:6px }}
+.gt {{ display:flex; flex-wrap:wrap; gap:1.2mm 2.5mm; margin-top:.8mm }}
+.gt div {{ width:calc(50% - 1.3mm); font-size:7.4pt; line-height:1.3; color:#3a4553; background:#fff; border:1px solid #dbe7f3; border-radius:6px; padding:.8mm 2mm }}
+.gt b {{ color:#075288 }} .gt .wide {{ width:100%; background:#f2f8fd }}
+.cta {{ padding:2.5mm 7mm !important; bottom:21mm !important }} .cta .btn {{ padding:7px !important; font-size:12pt !important }} .cta .fine {{ margin-top:1mm }}
+.cont {{ margin-top:0 !important; font-size:9pt !important }} .q {{ margin-top:4mm !important; padding:5.5mm 7mm !important }}
+.radar {{ position:relative }}
 </style></head><body>
 <div class="page"><div class="top"></div>
 <div class="hdr"><span class="brand">{'إتجاهي' if ar else 'ETIJAHI'}</span><span class="sub">{T['brand_sub']}</span></div>
@@ -223,6 +304,10 @@ p {{ margin:0 0 2.5mm }} .lead {{ font-size:11.5pt; color:#3a4553 }}
 <div class="q"><span class="k">{T['q_eyebrow']}</span>
 <h2 style="margin-top:2mm;font-size:18pt">{T['question']}</h2>
 <p>{T['q_body']}</p>
+<div class="nw"><p style="margin:1mm 0 2mm">{T['found']}</p>
+<div class="fl">{fields_html}</div>
+<div class="lst"><div class="lh">{T['locked_title']}</div>{locked_html}</div>
+{tension_html}</div>
 <a class="btn" style="margin-top:5mm" href="{_html.escape(upgrade_url, quote=True)}">{_e(buy)}</a>
 <div class="fine">{T['buy_fine']}</div></div>
 <div class="cont">{T['continue']}</div>
@@ -233,9 +318,10 @@ p {{ margin:0 0 2.5mm }} .lead {{ font-size:11.5pt; color:#3a4553 }}
 <div style="margin-top:4mm" class="k">{T['p_eyebrow']}</div>
 <h2 style="font-size:17pt;margin-top:0">{T['p_title']}</h2>
 <div class="grid"><div class="col">{left}</div><div class="col">{right}</div></div>
-<div class="cta"><p>{T['buy_lead']}</p>
+<div class="cta">
 <a class="btn" href="{_html.escape(upgrade_url, quote=True)}">{_e(buy)}</a>
-<div class="ben">{T['includes']}</div>
+<div class="ben"><b>{T['else_title']}</b></div>
+<div class="gt">{else_html}</div>
 <div class="fine">{T['buy_fine']}</div></div>
 <div class="disc">{T['disclaimer']}</div>
 <div class="foot"><span>{T['confidential']} · {_e(date_str)}</span><span>2 / 2</span></div></div>
