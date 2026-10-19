@@ -27,6 +27,18 @@ NOTES = {'riasec': 'You enjoy organising ideas.', 'values': 'Freedom and family 
 
 
 class SnapshotRule(unittest.TestCase):
+    def setUp(self):
+        # the default cutoff now covers every free report; these tests check the cutoff logic with an explicit one
+        os.environ['FREE_SNAPSHOT_FROM'] = '2026-10-18'
+
+    def tearDown(self):
+        os.environ.pop('FREE_SNAPSHOT_FROM', None)
+
+    def test_by_default_every_free_report_gets_the_snapshot(self):
+        os.environ.pop('FREE_SNAPSHOT_FROM', None)
+        self.assertTrue(cp.free_snapshot_applies('2026-10-14T13:19:58.535672+00:00'))
+        self.assertTrue(cp.free_snapshot_applies('2025-01-01T00:00:00Z'))
+
     def test_new_reports_get_the_snapshot_old_ones_keep_their_layout(self):
         self.assertTrue(cp.free_snapshot_applies('2026-10-18T11:30:04.675288+00:00'))
         self.assertTrue(cp.free_snapshot_applies('2026-12-01T00:00:00Z'))
@@ -45,7 +57,7 @@ class SnapshotRule(unittest.TestCase):
             self.assertFalse(cp.free_snapshot_applies('2026-10-31T23:59:59Z'))
             self.assertTrue(cp.free_snapshot_applies('2026-11-01T00:00:00Z'))
         finally:
-            del os.environ['FREE_SNAPSHOT_FROM']
+            os.environ['FREE_SNAPSHOT_FROM'] = '2026-10-18'
 
     def test_missing_or_unreadable_timestamp_counts_as_new(self):
         self.assertTrue(cp.free_snapshot_applies(None))
@@ -192,8 +204,16 @@ class FreeContentRouting(unittest.TestCase):
         self.assertTrue(small); self.assertFalse(full)
         self.assertEqual(cols, ['ai_content_cache_ar_free'])
 
-    def test_old_free_report_still_uses_the_full_generation(self):
+    def test_old_free_report_uses_the_small_call_by_default(self):
         small, full, _ = self.run_routing('free', '2026-10-01T00:00:00+00:00')
+        self.assertTrue(small); self.assertFalse(full)
+
+    def test_old_free_report_still_uses_the_full_generation_when_the_cutoff_is_set(self):
+        os.environ['FREE_SNAPSHOT_FROM'] = '2026-10-18'
+        try:
+            small, full, _ = self.run_routing('free', '2026-10-01T00:00:00+00:00')
+        finally:
+            os.environ.pop('FREE_SNAPSHOT_FROM', None)
         self.assertFalse(small); self.assertTrue(full)
 
     def test_paid_report_still_uses_the_full_generation(self):

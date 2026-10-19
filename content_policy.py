@@ -565,14 +565,15 @@ def drop_weak_matches(recs: list) -> list:
 # ── Free "snapshot" report ────────────────────────────────────────────────────────────────────────────────────
 # Free reports created at or after this moment use the two-part snapshot (the results page and the free PDF).
 # Free reports created earlier keep the layout those people were given. Set FREE_SNAPSHOT_FROM (ISO date/time,
-# UTC) in the backend environment to the moment the snapshot goes live; the default is the day it was built.
+# UTC) in the backend environment to bring that cutoff back. 19 Oct 2026: the default is now long ago, so EVERY free
+# report gets the snapshot (no careers, courses, jobs or impact for free); it was "2026-10-18T00:00:00+00:00" before.
 import os as _os
 
 def _snapshot_cutoff() -> datetime:
-    raw = (_os.getenv("FREE_SNAPSHOT_FROM") or "2026-10-18T00:00:00+00:00").strip()
+    raw = (_os.getenv("FREE_SNAPSHOT_FROM") or "2000-01-01T00:00:00+00:00").strip()
     if re.fullmatch(r"\d{4}-\d{2}-\d{2}", raw):   # a bare date means the start of that day (UTC)
         raw += "T00:00:00+00:00"
-    return _parse_timestamp(raw) or datetime(2026, 10, 18, tzinfo=timezone.utc)
+    return _parse_timestamp(raw) or datetime(2000, 1, 1, tzinfo=timezone.utc)
 
 def _parse_timestamp(raw) -> datetime | None:
     """Parses what Supabase returns for a timestamp ('2026-10-18 08:00:03.94714+00', 'T' separators, a fraction of any
