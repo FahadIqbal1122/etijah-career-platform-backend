@@ -26,7 +26,19 @@ PRICES = {
     "gemini-2.5-flash": (0.30, 2.50, 0.03),
     "gemini-embedding-001": (0.15, 0.0, 0.0),
     "claude-sonnet-4-6": (3.00, 15.00, 0.30),
+    "claude-sonnet-5-5": (2.00, 10.00, 0.20),
+    "claude-haiku-5-5": (0.10, 0.50, 0.01),
+    "claude-haiku-4-5": (1.00, 5.00, 0.10),
 }
+# A model missing from the table is priced at the most expensive Claude rate rather than at $0, so the daily cap
+# still counts it (and its log line says so) instead of letting an unpriced model spend freely.
+UNKNOWN_MODEL_PRICE = (5.00, 25.00, 0.50)
+# Daily spend cap (rolling 24h, estimated cost across Gemini + Claude). app_settings.ai_daily_cap_usd overrides this
+# default (0 or less = no cap). Over the cap, check_budget() raises DailyCapExceeded and no new AI call is made;
+# reports and answers already cached keep working. Fails OPEN: if the spend cannot be read, nothing is blocked.
+DEFAULT_DAILY_CAP_USD = float(os.getenv("AI_DAILY_CAP_USD", "10"))
+CAP_SETTING_KEY = "ai_daily_cap_usd"
+_BUDGET_REFRESH_S = 60
 EXPENSIVE_CALL_USD = 0.25   # a single call above this gets an extra warning line in the logs
 
 # Set per request by RequestGuardMiddleware (request_guard.py): {"path": ..., "ip": ...}. Copied into worker threads
@@ -34,6 +46,10 @@ EXPENSIVE_CALL_USD = 0.25   # a single call above this gets an extra warning lin
 _request_ctx: contextvars.ContextVar = contextvars.ContextVar("ai_usage_request", default=None)
 
 _UUID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
+
+
+class DailyCapExceeded(Exception):
+    """The estimated AI spend of the last 24 hours reached the daily cap (see check_budget)."""
 
 
 def set_request_context(path: str, ip: str | None):
@@ -64,7 +80,7 @@ def from_claude(usage) -> dict:
 
 
 def _estimate(model: str, input_tokens: int, cached_tokens: int, output_tokens: int) -> float:
-    p_in, p_out, p_cached = PRICES.get(model or "", (0.0, 0.0, 0.0))
+    p_in, p_out, p_cached = PRICES.get(model or "") or UNKNOWN_MODEL_PRICE
     return (input_tokens * p_in + cached_tokens * p_cached + output_tokens * p_out) / 1_000_000
 
 
@@ -94,12 +110,89 @@ def record(*, provider: str, model: str, kind: str, label: str = "", response_id
               f"think={thinking_tokens} ~${cost:.4f} {seconds or 0:.1f}s ok={ok}" + (f" err={error}" if error else ""))
         if cost >= EXPENSIVE_CALL_USD:
             print(f"[AI usage] EXPENSIVE CALL ~${cost:.2f}: {provider}/{model} label={row['label']} endpoint={row['endpoint']}")
+        with _budget_lock:
+            _budget["pending"] += cost   # counts straight away, before the background writer has stored the row
         _queue.put_nowait(row)
         _ensure_worker()
     except queue.Full:
         pass
     except Exception as e:  # tracking must never break a request
         print("[AI usage] could not record:", type(e).__name__, e)
+
+
+# ── daily spend cap ──────────────────────────────────────────────────────────
+_budget_lock = threading.Lock()
+_refresh_lock = threading.Lock()   # one thread refreshes the spend; the others carry on with the current value
+_budget = {"spent": 0.0, "pending": 0.0, "cap": DEFAULT_DAILY_CAP_USD, "checked_at": None, "alerted": None}
+_cap_alert = None   # set by main.py: called once per day when the cap is first hit
+
+
+def set_cap_alert(fn):
+    global _cap_alert
+    _cap_alert = fn
+
+
+def _read_cap() -> float:
+    try:
+        row = _get_client().table("app_settings").select("value").eq("key", CAP_SETTING_KEY).execute()
+        if row.data and isinstance(row.data[0]["value"], (int, float)) and not isinstance(row.data[0]["value"], bool):
+            return float(row.data[0]["value"])
+    except Exception as e:
+        print("[AI usage] could not read the daily cap setting, using the default:", type(e).__name__)
+    return DEFAULT_DAILY_CAP_USD
+
+
+def _read_spent_24h() -> float:
+    since = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
+    total, page = 0.0, 0
+    while page < 100:
+        rows = (_get_client().table("ai_usage_log").select("est_cost_usd").gte("created_at", since)
+                .order("created_at").range(page * 1000, page * 1000 + 999).execute().data or [])
+        total += sum(float(r.get("est_cost_usd") or 0) for r in rows)
+        if len(rows) < 1000:
+            break
+        page += 1
+    return total
+
+
+def budget_status(refresh: bool = False) -> dict:
+    """{"cap": usd (<=0 means no cap), "spent_24h": estimated usd, "blocked": bool}. Refreshed at most every minute."""
+    now = time.monotonic()
+    with _budget_lock:
+        stale = refresh or _budget["checked_at"] is None or now - _budget["checked_at"] > _BUDGET_REFRESH_S
+    if stale and _refresh_lock.acquire(blocking=False):
+        try:
+            cap, spent = _read_cap(), _read_spent_24h()
+            with _budget_lock:
+                _budget.update(cap=cap, spent=spent, pending=0.0, checked_at=now)
+        except Exception as e:   # fail open
+            print("[AI usage] could not read AI spend, not blocking:", type(e).__name__, str(e)[:120])
+            with _budget_lock:
+                _budget["checked_at"] = now
+        finally:
+            _refresh_lock.release()
+    with _budget_lock:
+        spent = _budget["spent"] + _budget["pending"]
+        cap = _budget["cap"]
+    return {"cap": cap, "spent_24h": round(spent, 3), "blocked": cap > 0 and spent >= cap}
+
+
+def check_budget():
+    """Call before any paid AI call. Raises DailyCapExceeded when the last 24h of estimated spend reached the cap."""
+    st = budget_status()
+    if not st["blocked"]:
+        return
+    today = datetime.now(timezone.utc).date().isoformat()
+    with _budget_lock:
+        first_today = _budget["alerted"] != today
+        _budget["alerted"] = today
+    print(f"[AI usage] DAILY CAP REACHED: ~${st['spent_24h']} of ${st['cap']} in 24h, refusing new AI calls")
+    if first_today and _cap_alert:
+        try:
+            _cap_alert(st["spent_24h"], st["cap"])
+        except Exception as e:
+            print("[AI usage] cap alert failed:", type(e).__name__)
+    raise DailyCapExceeded(f"AI daily spend cap reached (~${st['spent_24h']} of ${st['cap']} in 24h)")
 
 
 # ── background writer ────────────────────────────────────────────────────────
@@ -170,6 +263,7 @@ def summarize(days: int = 3, top: int = 10) -> dict:
     by_day = group(lambda r: str(r["created_at"])[:10], limit=days + 1, by_cost=False)
     priciest = sorted(rows, key=lambda r: -float(r.get("est_cost_usd") or 0))[:top]
     return {
+        "cap": budget_status(refresh=True),
         "since": since, "calls": len(rows), "est_cost_usd": round(sum(float(r.get("est_cost_usd") or 0) for r in rows), 3),
         "by_day": by_day,
         "by_provider_model": group(lambda r: f"{r['provider']}/{r.get('model')}"),

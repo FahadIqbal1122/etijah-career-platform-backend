@@ -409,6 +409,7 @@ def _call_model(prompt: str, provider: str | None = None, timeout_s: float | Non
     Both providers get the same "return only JSON" instructions in the prompt
     itself — downstream fence-stripping/brace-extraction in _generate_json is
     provider-agnostic. `label` only names the call in the ai_usage spend log."""
+    ai_usage.check_budget()   # raises DailyCapExceeded once the day's estimated AI spend reached the cap
     provider = provider or get_ai_provider()
     started = time.monotonic()
     if provider == "claude":
@@ -613,6 +614,8 @@ def _generate_json(prompt: str, retries: int = 1, timeout_s: float | None = None
         for attempt in range(retries + 1):
             try:
                 text = _call_model(prompt, provider=provider, timeout_s=call_timeout, label=label)
+            except ai_usage.DailyCapExceeded:
+                raise   # not a provider failure: no retry, no fallback to the other provider
             except anthropic.APITimeoutError as e:
                 # A call that used its whole budget will not do better a second time: go straight to the other provider.
                 last_err = e
@@ -3242,7 +3245,7 @@ def translate_report_json(data: dict, target_locale: str = 'ar') -> dict:
 
     return _generate_json(prompt, timeout_s=CLAUDE_CONTENT_TIMEOUT_S, label=f"translate:{target_locale}")
 
-def _translate_piece_with_retry(piece: dict, target_locale: str, max_attempts: int = 3) -> dict:
+def _translate_piece_with_retry(piece: dict, target_locale: str, max_attempts: int = 2) -> dict:
     """translate_report_json already retries once internally inside _generate_json for a fast
     transient blip — this covers the rarer case of a piece being unlucky on both of those
     attempts (observed ~1 in 5 in testing). Only exercised on the failure path, so a normal
@@ -3252,12 +3255,15 @@ def _translate_piece_with_retry(piece: dict, target_locale: str, max_attempts: i
     for _ in range(max_attempts):
         try:
             return translate_report_json(piece, target_locale)
+        except anthropic.APITimeoutError:
+            # A call that used its whole budget (up to 240s of billed output) will not do better a second time.
+            raise
         except (GoogleAPICallError, RequestException, json.JSONDecodeError, ValueError,
                 anthropic.APIConnectionError, anthropic.RateLimitError, anthropic.APIStatusError) as e:
             last_err = e
     raise last_err
 
-def _translate_careers_with_retry(careers: list, target_locale: str, max_attempts: int = 3) -> list:
+def _translate_careers_with_retry(careers: list, target_locale: str, max_attempts: int = 2) -> list:
     """Same retry budget as _translate_piece_with_retry, but additionally treats a
     malformed response (wrong type, or a different item count than the source list)
     as a failure to retry rather than silently returning fewer/no careers — a report
@@ -3274,6 +3280,9 @@ def _translate_careers_with_retry(careers: list, target_locale: str, max_attempt
             if isinstance(translated, list) and len(translated) == len(careers):
                 return translated
             last_err = ValueError(f"Career-recommendations translation returned {translated!r} for {len(careers)} source careers")
+        except anthropic.APITimeoutError:
+            # A call that used its whole budget (up to 240s of billed output) will not do better a second time.
+            raise
         except (GoogleAPICallError, RequestException, json.JSONDecodeError, ValueError,
                 anthropic.APIConnectionError, anthropic.RateLimitError, anthropic.APIStatusError) as e:
             last_err = e

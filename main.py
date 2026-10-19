@@ -2838,6 +2838,30 @@ def get_coach_enabled_public():
     """Unauthenticated: the assessment and results pages read this to decide whether Sarah and the games are on."""
     return {"enabled": _is_coach_enabled(), "games": _is_games_enabled()}
 
+def _alert_ai_cap_hit(spent: float, cap: float):
+    send_failure_alert("AI daily spend cap reached",
+                       RuntimeError(f"Estimated AI spend over the last 24h is ~${spent} (cap ${cap}). New AI generation is "
+                                    "paused until it drops below the cap. Raise it with POST /admin/ai-daily-cap if this is expected."),
+                       supabase=supabase)
+
+ai_usage.set_cap_alert(_alert_ai_cap_hit)
+
+class AiCapRequest(BaseModel):
+    usd: float
+
+@app.get("/admin/ai-daily-cap")
+def get_ai_daily_cap(_=Depends(require_admin)):
+    return ai_usage.budget_status(refresh=True)
+
+@app.post("/admin/ai-daily-cap")
+def set_ai_daily_cap(body: AiCapRequest, _=Depends(require_admin)):
+    """Daily AI spend cap in USD (rolling 24h, estimated). 0 or less = no cap. Takes effect immediately."""
+    supabase.table('app_settings').upsert({
+        'key': ai_usage.CAP_SETTING_KEY, 'value': body.usd,
+        'updated_at': datetime.now(timezone.utc).isoformat(),
+    }, on_conflict='key').execute()
+    return ai_usage.budget_status(refresh=True)
+
 @app.get("/admin/ai-usage")
 def get_ai_usage(days: int = 3, _=Depends(require_admin)):
     """Estimated Gemini / Claude spend for the last `days` days, with the biggest causes (see ai_usage.py)."""
@@ -3902,6 +3926,10 @@ def coach(payload: CoachRequest, user=Depends(get_current_user)):
             for c in country_matches
         )
 
+    try:
+        ai_usage.check_budget()
+    except ai_usage.DailyCapExceeded:
+        raise HTTPException(status_code=503, detail="AI Coach is temporarily unavailable, please try again later.")
     system_prompt = f"{WRITING_RULES}{METHODOLOGY_DOC}\n\n{CULTURAL_GUARDRAIL}\n\nRelevant past examples:\n{examples}{country_context}"
 
     try:

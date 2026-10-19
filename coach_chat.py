@@ -210,6 +210,7 @@ def _clean_history(history: list[dict]) -> list[dict]:
 def generate_reply(mode: str, message: str, history: list[dict], locale: str,
                    tier: str = "free", summary: dict | None = None, progress: tuple[int, int] | None = None,
                    question: dict | None = None) -> str:
+    ai_usage.check_budget()
     genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
     model = genai.GenerativeModel(
         COACH_MODEL,
