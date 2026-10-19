@@ -11,6 +11,10 @@ client = Anthropic()
 supabase = disable_http2(create_client(os.getenv("SUPABASE_URL"), os.getenv("SUPABASE_KEY")))
 
 def _gemini_embed(text: str, retries: int = 2) -> list[float]:
+    from ai_provider import is_gemini_enabled, GeminiSwitchedOff
+    if not is_gemini_enabled():
+        # Claude has no embedding model, so with Gemini switched off there is no embedding: callers carry on without it
+        raise GeminiSwitchedOff("Gemini is switched off (app_settings.gemini_enabled), so no embedding was made")
     api_key = os.getenv("GEMINI_API_KEY")
     # The key goes in a header, not the URL: requests puts the URL in its error messages, and those end up in logs,
     # alert emails and the bug_reports table (a 429 once stored the live key there).

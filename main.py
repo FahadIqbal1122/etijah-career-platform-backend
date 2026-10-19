@@ -25,7 +25,7 @@ from coaching_pipeline import chunk_transcript, embed_and_store_chunks, client, 
 from content_policy import free_snapshot_applies, drop_weak_matches, add_student_track_links, section_order, job_posted_date, is_job_fresh, job_requirements as parse_job_requirements, meets_requirements, MAX_EXPERIENCE_MONTHS_EARLY_CAREER, MAX_EXPERIENCE_MONTHS_INTERNSHIP, EDUCATION_RANK, clean_typed_text, clean_direction_label, direction_key, resolve_route, MAJORS_STAGES, CERTIFICATION_STAGES, NO_LISTINGS_STAGES, NO_COMPANIES_STAGES, is_appropriate, is_region_eligible, is_seniority_appropriate, STILL_ENROLLED_STAGES, ENTERING_MARKET_STAGES, PROFESSIONAL_STAGES, CULTURAL_GUARDRAIL
 import coach_chat as coach_chat_mod
 import receipt_generator
-from ai_provider import get_ai_provider, invalidate_ai_provider_cache, AI_PROVIDER_KEY, VALID_PROVIDERS
+from ai_provider import get_ai_provider, invalidate_ai_provider_cache, AI_PROVIDER_KEY, VALID_PROVIDERS, is_gemini_enabled, GeminiSwitchedOff, GEMINI_ENABLED_KEY, invalidate_gemini_cache
 
 load_dotenv()
 
@@ -2932,10 +2932,42 @@ def set_ai_provider(body: AiProviderRequest, _=Depends(require_admin)):
     invalidate_ai_provider_cache()
     return {"provider": body.provider}
 
+class GeminiEnabledRequest(BaseModel):
+    enabled: bool
+
+@app.get("/admin/gemini-enabled")
+def get_gemini_enabled_admin(_=Depends(require_admin)):
+    """Master switch for every Google Gemini call. Off = Claude does all text generation and translation (no Gemini
+    fallback) and the embedding lookups (coaching examples, semantic career matching) are skipped."""
+    return {"enabled": is_gemini_enabled()}
+
+@app.post("/admin/gemini-enabled")
+def set_gemini_enabled(body: GeminiEnabledRequest, _=Depends(require_admin)):
+    supabase.table('app_settings').upsert({
+        'key': GEMINI_ENABLED_KEY,
+        'value': body.enabled,
+        'updated_at': datetime.now(timezone.utc).isoformat(),
+    }, on_conflict='key').execute()
+    invalidate_gemini_cache()
+    invalidate_ai_provider_cache()
+    return {"enabled": body.enabled}
+
 @app.get("/admin/country-profiles")
 def get_country_profiles(_=Depends(require_admin)):
     data = supabase.table('country_profiles').select('*').order('country_name').execute()
     return data.data
+
+def _require_gemini_for_embeddings():
+    if not is_gemini_enabled():
+        raise HTTPException(status_code=503, detail="Gemini is switched off (app_settings.gemini_enabled), so embeddings cannot be built right now")
+
+def _sync_country_embedding_if_possible(country_code: str, profile: dict):
+    """The saved profile matters more than its embedding: with Gemini switched off the profile is kept and its embedding is
+    rebuilt later (admin 'embed all')."""
+    try:
+        sync_country_profile_embedding(country_code, profile)
+    except GeminiSwitchedOff as e:
+        print(f"country profile {country_code} saved without a fresh embedding: {e}")
 
 @app.post("/admin/country-profiles")
 def create_country_profile(body: dict, _=Depends(require_admin)):
@@ -2943,7 +2975,7 @@ def create_country_profile(body: dict, _=Depends(require_admin)):
     if not result.data:
         raise HTTPException(status_code=500, detail="Failed to create country profile")
     profile = result.data[0]
-    sync_country_profile_embedding(profile['country_code'], profile)
+    _sync_country_embedding_if_possible(profile['country_code'], profile)
     return profile
 
 @app.put("/admin/country-profiles/{country_code}")
@@ -2951,7 +2983,7 @@ def update_country_profile(country_code: str, body: dict, _=Depends(require_admi
     result = supabase.table('country_profiles').update(body).eq('country_code', country_code).execute()
     profile = result.data[0] if result.data else {}
     if profile:
-        sync_country_profile_embedding(country_code, profile)
+        _sync_country_embedding_if_possible(country_code, profile)
     return profile
 
 @app.delete("/admin/country-profiles/{country_code}")
@@ -2961,6 +2993,7 @@ def delete_country_profile(country_code: str, _=Depends(require_admin)):
 
 @app.post("/admin/country-profiles/embed-all")
 def embed_all_country_profiles(_=Depends(require_admin)):
+    _require_gemini_for_embeddings()
     profiles = supabase.table('country_profiles').select('*').execute().data or []
     for p in profiles:
         sync_country_profile_embedding(p['country_code'], p)
@@ -2968,6 +3001,7 @@ def embed_all_country_profiles(_=Depends(require_admin)):
 
 @app.post("/admin/careers/embed-all")
 def embed_all_careers(_=Depends(require_admin)):
+    _require_gemini_for_embeddings()
     careers = supabase.table('careers').select('*').execute().data or []
     for c in careers:
         sync_career_embedding(c['id'], c)
@@ -3818,6 +3852,7 @@ def create_coaching_session(
     payload: coachingSessionRequest,
     user=Depends(require_admin),
 ):
+    _require_gemini_for_embeddings()   # a transcript is stored as embedded chunks, so it cannot be saved while Gemini is off
     result = supabase.table("coaching_sessions").insert({
         "client_label": payload.client_label,
         "topic": payload.topic,
@@ -3835,17 +3870,21 @@ def create_coaching_session(
 def coach(payload: CoachRequest, user=Depends(get_current_user)):
     if get_effective_tier(user.id) == "free" and not _is_admin(user):
         raise HTTPException(status_code=403, detail="The AI coach is part of the paid plans")
-    query_embedding = _gemini_embed(payload.message)
-
-    matches = supabase.rpc("match_coaching_chunks", {
-        "query_embedding": query_embedding,
-        "match_count": 5,
-    }).execute().data
-
-    country_matches = supabase.rpc("match_country_profiles", {
-        "query_embedding": query_embedding,
-        "match_count": 2,
-    }).execute().data or []
+    # The coaching-library examples and country context come from an embedding of the question. They are an extra: if the
+    # embedding is unavailable (Gemini switched off, out of credit, or down) the coach still answers without them.
+    try:
+        query_embedding = _gemini_embed(payload.message)
+        matches = supabase.rpc("match_coaching_chunks", {
+            "query_embedding": query_embedding,
+            "match_count": 5,
+        }).execute().data or []
+        country_matches = supabase.rpc("match_country_profiles", {
+            "query_embedding": query_embedding,
+            "match_count": 2,
+        }).execute().data or []
+    except Exception as e:
+        print(f"coach: answering without library context ({type(e).__name__}): {str(e)[:120]}")
+        matches, country_matches = [], []
 
     examples = "\n\n".join(
         f"Situation: {m['situation']}\nCoach response: {m['coach_response']}"
@@ -3902,8 +3941,8 @@ class CoachChatRequest(BaseModel):
 def coach_chat(payload: CoachChatRequest, request: Request, user=Depends(get_optional_user)):
     """Two-way coach bubble (Gemini). See coach_chat.py: assessment mode gets no user data, results mode gets
     only the profile summary every tier already sees. Not the paid /coach (Claude + coaching library)."""
-    if not _is_coach_enabled():
-        return {"reply": None, "limited": True}   # coach switched off (admin Coach tab): no Gemini call from any page
+    if not _is_coach_enabled() or not is_gemini_enabled():
+        return {"reply": None, "limited": True}   # coach switched off (admin Coach tab), or Gemini is: no Gemini call from any page
     # Behind Traefik the LAST X-Forwarded-For entry is the one the proxy appended; earlier ones are client-supplied.
     ip = _client_ip(request)
     if not coach_chat_mod.check_rate_limit(f"ip:{ip}", coach_chat_mod.LIMIT_PER_IP):

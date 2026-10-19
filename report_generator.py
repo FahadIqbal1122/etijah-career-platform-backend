@@ -27,7 +27,7 @@ from scoring_engine import build_framework_output, score_careers, get_career_sem
 from coaching_pipeline import _gemini_embed, client as anthropic_client
 from scoring_engine import extract_specialisms, enrich_profile, recommend_courses
 from content_policy import free_snapshot_applies, drop_weak_matches, opportunity_link, major_link, resolve_route, section_order, should_show_entrepreneurship, is_appropriate, with_typed_other, stage_text, typed_goal, typed_other, EARLY_STAGES, CULTURAL_GUARDRAIL, STILL_ENROLLED_STAGES, ENTERING_MARKET_STAGES, PROFESSIONAL_STAGES, MAJORS_STAGES, CERTIFICATION_STAGES, NO_LISTINGS_STAGES, NO_COMPANIES_STAGES
-from ai_provider import get_ai_provider
+from ai_provider import get_ai_provider, is_gemini_enabled, GeminiSwitchedOff
 import ai_usage
 
 # Self-contained client (like ai_provider.py / smtp_service.py) purely for the
@@ -54,6 +54,8 @@ CLAUDE_TIMEOUT_S = 60
 CLAUDE_CONTENT_TIMEOUT_S = 150
 # Claude as the fallback provider (translation goes to Gemini first): one try this long, then give up.
 CLAUDE_FALLBACK_TIMEOUT_S = 90
+# Translation when Claude is the one translating (Gemini switched off): Arabic output is long and Claude is slower at it
+CLAUDE_TRANSLATION_TIMEOUT_S = 240
 CLAUDE_REPORT_MODEL = os.getenv("CLAUDE_REPORT_MODEL", "claude-sonnet-4-6")
 
 # The assessment response a generation/translation call is running for, so _generate_json
@@ -430,6 +432,8 @@ def _call_model(prompt: str, provider: str | None = None, timeout_s: float | Non
             raise ValueError(f"Claude response had no text block (stop_reason={response.stop_reason!r})")
         return text_block.text
 
+    if not is_gemini_enabled():
+        raise GeminiSwitchedOff("Gemini is switched off (app_settings.gemini_enabled)")
     try:
         response = _get_gemini_model().generate_content(prompt, request_options={"timeout": timeout_s or GEMINI_TIMEOUT_S})
     except Exception as e:
@@ -593,8 +597,12 @@ def _generate_json(prompt: str, retries: int = 1, timeout_s: float | None = None
     # Claude's Arabic translation reliably blows the 150s budget (3 SDK tries × 150s, twice
     # = ~15 min before falling back), so translation goes to Gemini first regardless of the
     # app_settings toggle; Claude is only the safety net if Gemini fails.
-    primary = "gemini" if is_translation else get_ai_provider()
-    fallback = "gemini" if primary == "claude" else "claude"
+    gemini_on = is_gemini_enabled()
+    primary = "gemini" if (is_translation and gemini_on) else get_ai_provider()
+    # With Gemini switched off there is no second provider to fall back to: a failure surfaces as one
+    fallback = ("gemini" if primary == "claude" else "claude") if gemini_on else None
+    if is_translation and primary == "claude":
+        timeout_s = max(timeout_s or 0, CLAUDE_TRANSLATION_TIMEOUT_S)   # Claude translating: give the long Arabic output room
 
     def _attempt(provider: str, catch_broadly: bool):
         last_err: Exception | None = None
@@ -655,6 +663,10 @@ def _generate_json(prompt: str, retries: int = 1, timeout_s: float | None = None
     result, primary_err = _attempt(primary, catch_broadly=True)
     if result is not None:
         return result
+
+    if fallback is None:
+        print(f"[AI call:{label or 'unlabeled'}] {primary} exhausted after {retries + 1} attempt(s); Gemini is switched off, so no fallback")
+        raise primary_err or ValueError(f"AI call failed: {label or 'unlabeled'}")
 
     print(f"[AI call:{label or 'unlabeled'}] {primary} exhausted after {retries + 1} attempt(s), falling back to {fallback}")
     result, fallback_err = _attempt(fallback, catch_broadly=False)
@@ -3509,6 +3521,21 @@ def generate_free_overview(user_data: dict, summary: dict, raw_scores: list, loc
     return result
 
 
+def _coaching_matches(supabase_client, query_text: str) -> list:
+    """The coaching-library examples that give the report text its coach-style context. They are an extra: if the embedding
+    behind them is unavailable (Gemini switched off, out of credit, or down) the report is still generated, just without
+    them, instead of failing."""
+    try:
+        query_embedding = _gemini_embed(query_text)
+        return _execute_with_retry(supabase_client.rpc("match_coaching_chunks", {
+            "query_embedding": query_embedding,
+            "match_count": 5,
+        })).data or []
+    except Exception as e:
+        print(f"coaching context unavailable, generating without it ({type(e).__name__}): {str(e)[:120]}")
+        return []
+
+
 def get_or_generate_ai_content(response_id: str, supabase_client, tier: str = "launchpad", locale: str = 'en') -> dict:
     """Returns the ai_content dict (career_recommendations + narrative fields) for the
     given locale, generating and caching it on first call. Mirrors the equivalent block
@@ -3571,11 +3598,7 @@ def get_or_generate_ai_content(response_id: str, supabase_client, tier: str = "l
         f"Sectors of interest: {', '.join(profile.data.get('sectors_of_interest', []))}. "
         f"Current stage: {profile.data.get('current_stage', '')}."
     )
-    query_embedding = _gemini_embed(query_text)
-    coaching_matches = _execute_with_retry(supabase_client.rpc("match_coaching_chunks", {
-        "query_embedding": query_embedding,
-        "match_count": 5,
-    })).data
+    coaching_matches = _coaching_matches(supabase_client, query_text)
 
     semantic_scores = _get_cached_semantic_scores(response_id, summary, profile.data, supabase_client)
     top_careers = score_careers(summary, profile.data, all_careers, semantic_scores)
@@ -3678,11 +3701,7 @@ def create_report(response_id: str, supabase_client, tier: str = "launchpad", lo
         f"Sectors of interest: {', '.join(profile.data.get('sectors_of_interest', []))}. "
         f"Current stage: {profile.data.get('current_stage', '')}."
     )
-    query_embedding = _gemini_embed(query_text)
-    coaching_matches = _execute_with_retry(supabase_client.rpc("match_coaching_chunks", {
-        "query_embedding": query_embedding,
-        "match_count": 5,
-    })).data
+    coaching_matches = _coaching_matches(supabase_client, query_text)
 
     semantic_scores = _get_cached_semantic_scores(response_id, summary, profile.data, supabase_client)
     top_careers = score_careers(summary, profile.data, all_careers, semantic_scores)
