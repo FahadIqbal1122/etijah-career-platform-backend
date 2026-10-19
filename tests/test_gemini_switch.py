@@ -94,7 +94,7 @@ class GenerateJsonRouting(unittest.TestCase):
         """replies: what _call_model returns/raises, in order. Returns (result or exception, providers called, timeouts)."""
         calls = []
 
-        def fake_call(prompt, provider=None, timeout_s=None, label=''):
+        def fake_call(prompt, provider=None, timeout_s=None, label='', **kw):
             calls.append((provider, timeout_s))
             r = replies[min(len(calls) - 1, len(replies) - 1)]
             if isinstance(r, Exception):

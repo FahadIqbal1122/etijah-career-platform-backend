@@ -57,6 +57,19 @@ CLAUDE_FALLBACK_TIMEOUT_S = 90
 # Translation when Claude is the one translating (Gemini switched off): Arabic output is long and Claude is slower at it
 CLAUDE_TRANSLATION_TIMEOUT_S = 240
 CLAUDE_REPORT_MODEL = os.getenv("CLAUDE_REPORT_MODEL", "claude-sonnet-4-6")
+# Arabic translation is most of the output, and a small model does it at about 1/30 of the cost (compared side by side with
+# Sonnet 4.6 on a real report, 2026-10-19: $0.0008 vs $0.0251, 7s vs 29s). The FIRST attempt of each translation call
+# uses it; a retry (after bad JSON or an error) uses CLAUDE_REPORT_MODEL, so a piece the small model gets wrong is
+# redone by the stronger one. Set CLAUDE_TRANSLATION_MODEL equal to CLAUDE_REPORT_MODEL to turn this off.
+CLAUDE_TRANSLATION_MODEL = os.getenv("CLAUDE_TRANSLATION_MODEL", "claude-haiku-5-5")
+
+
+def _claude_extra_body(model: str) -> dict:
+    """The 5.x models think by default (billed as output) and default to medium effort; for translation and other plain
+    text calls thinking is switched off and effort kept low. Sonnet 4.6 and older do not think unless asked."""
+    if model.startswith(("claude-haiku-5", "claude-sonnet-5")):
+        return {"thinking": {"type": "disabled"}, "output_config": {"effort": "low"}}
+    return {}
 
 # The assessment response a generation/translation call is running for, so _generate_json
 # can put it in the call label (log lines + provider-fallback alert emails, which otherwise
@@ -402,31 +415,35 @@ def _get_gemini_model():
         )
     return _gemini_model
 
-def _call_model(prompt: str, provider: str | None = None, timeout_s: float | None = None, label: str = "") -> str:
+def _call_model(prompt: str, provider: str | None = None, timeout_s: float | None = None, label: str = "",
+                model: str | None = None) -> str:
     """Dispatches to `provider`, or the app_settings.ai_provider toggle when not given,
     and returns raw text. `timeout_s` overrides the provider's default budget (see
     CLAUDE_CONTENT_TIMEOUT_S) for calls expected to return a much larger response.
     Both providers get the same "return only JSON" instructions in the prompt
     itself — downstream fence-stripping/brace-extraction in _generate_json is
-    provider-agnostic. `label` only names the call in the ai_usage spend log."""
+    provider-agnostic. `label` only names the call in the ai_usage spend log. `model` picks the Claude model for this
+    call (default CLAUDE_REPORT_MODEL)."""
     ai_usage.check_budget()   # raises DailyCapExceeded once the day's estimated AI spend reached the cap
     provider = provider or get_ai_provider()
     started = time.monotonic()
     if provider == "claude":
+        model = model or CLAUDE_REPORT_MODEL
         # max_retries=0: the SDK's own 2 retries made one slow call take 3 x the timeout (a 150s budget meant 7.5
         # minutes before _generate_json even saw the failure). _generate_json does the retrying and the fallback.
         try:
             response = anthropic_client.with_options(max_retries=0).messages.create(
-                model=CLAUDE_REPORT_MODEL,
+                model=model,
                 max_tokens=8000,
                 messages=[{"role": "user", "content": prompt}],
                 timeout=timeout_s or CLAUDE_TIMEOUT_S,
+                extra_body=_claude_extra_body(model),
             )
         except Exception as e:
-            ai_usage.record(provider="claude", model=CLAUDE_REPORT_MODEL, kind="report", label=label,
+            ai_usage.record(provider="claude", model=model, kind="report", label=label,
                             seconds=time.monotonic() - started, ok=False, error=type(e).__name__)
             raise
-        ai_usage.record(provider="claude", model=CLAUDE_REPORT_MODEL, kind="report", label=label,
+        ai_usage.record(provider="claude", model=model, kind="report", label=label,
                         seconds=time.monotonic() - started, **ai_usage.from_claude(getattr(response, "usage", None)))
         text_block = next((b for b in response.content if b.type == "text"), None)
         if text_block is None:
@@ -613,7 +630,12 @@ def _generate_json(prompt: str, retries: int = 1, timeout_s: float | None = None
         call_timeout = min(timeout_s or CLAUDE_TIMEOUT_S, CLAUDE_FALLBACK_TIMEOUT_S) if (provider == "claude" and not catch_broadly) else timeout_s
         for attempt in range(retries + 1):
             try:
-                text = _call_model(prompt, provider=provider, timeout_s=call_timeout, label=label)
+                if is_translation and provider == "claude" and CLAUDE_TRANSLATION_MODEL != CLAUDE_REPORT_MODEL:
+                    # cheap model first, the stronger one for a retry
+                    text = _call_model(prompt, provider=provider, timeout_s=call_timeout, label=label,
+                                       model=CLAUDE_TRANSLATION_MODEL if attempt == 0 else CLAUDE_REPORT_MODEL)
+                else:
+                    text = _call_model(prompt, provider=provider, timeout_s=call_timeout, label=label)
             except ai_usage.DailyCapExceeded:
                 raise   # not a provider failure: no retry, no fallback to the other provider
             except anthropic.APITimeoutError as e:
@@ -3234,6 +3256,8 @@ def translate_report_json(data: dict, target_locale: str = 'ar') -> dict:
         "Arabic (فصحى), in a register and word choice natural to a Saudi or Bahraini professional — "
         "the tone a Gulf-based coach or business report would use. No Levantine/Egyptian colloquialisms.\n"
         "Preserve the JSON structure and every key exactly as-is — translate only string values.\n"
+        "Use the official Arabic names: «رؤية المملكة 2030» for Saudi Vision 2030, «المملكة العربية السعودية» for Saudi Arabia, "
+        "«مملكة البحرين» for Bahrain, «الإمارات العربية المتحدة» for the UAE.\n"
         "Do NOT translate: numbers, ai_risk_level values (must stay exactly low/medium/high), "
         "match_score values, fit_tag values (must stay exactly strong_fit/worth_exploring), "
         "direction_tag values (must stay exactly builds_on_background/new_direction), "
