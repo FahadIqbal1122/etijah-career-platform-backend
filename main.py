@@ -1360,6 +1360,27 @@ def get_waitlist(_=Depends(require_admin)):
         .execute()
     return data.data or []
 
+def _abandoned_profile(answers) -> dict:
+    """Who a dropped-off person is, read from their autosaved answers (QD3 phone, QO1 country, QO2 nationality, QO3 age,
+    QO3B experience, QO4 stage). Anything they had not reached yet is None. Only these fields leave, never the answers."""
+    a = answers if isinstance(answers, dict) else {}
+
+    def text(key):
+        v = a.get(key)
+        return v.strip() if isinstance(v, str) and v.strip() else None
+
+    age = None
+    try:
+        n = int(float(str(a.get('QO3')).strip()))
+        age = n if 5 <= n <= 100 else None
+    except (TypeError, ValueError):
+        pass
+    return {
+        "phone": text('QD3'), "country": text('QO1'), "country_other": text('QO1_other'),
+        "nationality": text('QO2'), "nationality_other": text('QO2_other'), "age": age,
+        "experience_level": text('QO3B'), "current_stage": text('QO4'),
+    }
+
 @app.get("/admin/abandoned-assessments")
 def get_abandoned_assessments(_=Depends(require_admin)):
     """Everyone who gave an email and started the assessment but never completed it: autosaved drafts
@@ -1371,7 +1392,7 @@ def get_abandoned_assessments(_=Depends(require_admin)):
 
     try:
         drafts = _select_all(lambda: supabase.table('assessment_drafts')
-            .select('email, full_name, locale, current_index, total_questions, last_activity_at, reminder_sent_at')
+            .select('email, full_name, locale, current_index, total_questions, last_activity_at, reminder_sent_at, answers')
             .order('last_activity_at', desc=True))
     except Exception as e:   # drafts table not migrated yet: still list the incomplete responses below
         print(f"abandoned-assessments: drafts unavailable: {e}")
@@ -1386,10 +1407,11 @@ def get_abandoned_assessments(_=Depends(require_admin)):
             "source": "draft", "current_index": d.get('current_index'), "total_questions": total or None,
             "progress_pct": round(100 * (d.get('current_index') or 0) / total) if total else None,
             "last_activity_at": d.get('last_activity_at'), "reminder_sent_at": d.get('reminder_sent_at'),
+            **_abandoned_profile(d.get('answers')),
         }
 
     partial = _select_all(lambda: supabase.table('assessment_responses')
-        .select('email, full_name, locale, created_at')
+        .select('email, full_name, locale, created_at, phone, country, nationality, age, age_bracket, experience_level, current_stage')
         .eq('completed', False).not_.is_('email', 'null').order('id', desc=True))
     for r in partial:
         email = (r.get('email') or '').strip().lower()
@@ -1399,6 +1421,9 @@ def get_abandoned_assessments(_=Depends(require_admin)):
             "email": r['email'], "full_name": r.get('full_name'), "locale": r.get('locale'),
             "source": "response", "current_index": None, "total_questions": None, "progress_pct": None,
             "last_activity_at": r.get('created_at'), "reminder_sent_at": None,
+            "phone": r.get('phone'), "country": r.get('country'), "country_other": None,
+            "nationality": r.get('nationality'), "nationality_other": None, "age": r.get('age'), "age_bracket": r.get('age_bracket'),
+            "experience_level": r.get('experience_level'), "current_stage": r.get('current_stage'),
         }
 
     return sorted(people.values(), key=lambda p: p.get('last_activity_at') or '', reverse=True)
