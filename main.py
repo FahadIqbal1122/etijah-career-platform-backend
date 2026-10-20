@@ -1652,15 +1652,21 @@ def get_career_suggestions(response_id: str, user=Depends(get_optional_user)):
     _assert_can_view_shared(profile.data.get('user_id'), user)
 
     summary = build_framework_output(rows.data)
+    user_riasec = summary.get('riasec', {}).get('top_types', [])
+    _tier = get_effective_tier(profile.data.get('user_id'))
+    if _tier == "free" and not _is_admin(user):
+        # Career names are part of the full report: the free report shows none, so this does not hand out the top 3
+        # either (the dashboard used to show the first as "top match"). Nothing is scored for them. Admins (their own
+        # login travels through the admin page's proxy) still see the list.
+        return {"riasec_code": ''.join(t[0].upper() for t in user_riasec), "suggestions": []}
+
     careers = supabase.table('careers').select('*').eq('is_approved', True).execute().data or []
     semantic_scores = _get_semantic_scores(response_id, summary, profile.data or {})
     top10   = score_careers(summary, profile.data or {}, careers, semantic_scores)
-    _tier = get_effective_tier(profile.data.get('user_id'))
     top10 = _report_order(response_id, top10, _tier, generate=False)
-    if _tier == "free" and not _is_admin(user):
-        top10 = top10[:3]
+    # if _tier == "free" and not _is_admin(user):   # previous: free users got their top 3 here
+    #     top10 = top10[:3]
 
-    user_riasec = summary.get('riasec', {}).get('top_types', [])
     return {
         "riasec_code": ''.join(t[0].upper() for t in user_riasec),
         "suggestions": [                                                                                                                                                                                               {
@@ -1694,9 +1700,11 @@ def get_career_recommendations(response_id: str, locale: str | None = None, user
     action_plan = dict(ai_content.get("action_plan") or {})
     recs = drop_weak_matches(ai_content.get("career_recommendations") or [])
     if tier == "free" and not _is_admin(user):
-        # Free tier: no plan at all (not even the first step) and 3 suggested careers; both are part of the paid report.
+        # Free tier: no plan and no career names (the free report is the snapshot): both are part of the paid report.
+        # Older free reports still have a saved career list from before the snapshot, so it is dropped here too.
         action_plan = {}
-        recs = [{k: v for k, v in r.items() if k != "next_steps"} if isinstance(r, dict) else r for r in recs[:3]]
+        recs = []
+        # previous: recs = [{k: v for k, v in r.items() if k != "next_steps"} if isinstance(r, dict) else r for r in recs[:3]]
     # Short takeaways for the profile cards, the same words the PDF uses. Paid: the full set. Free: only the short
     # overview line per section (the free snapshot's "what this means"); the per-item notes and tips stay paid.
     profile_details = None
