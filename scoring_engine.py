@@ -357,7 +357,7 @@ def get_career_semantic_scores(supabase_client, summary: dict, user_data: dict) 
 # Analyst...), which makes results look alike. Each career loses POPULARITY_WEIGHT x (the share of past assessments that
 # had it in their top 8), so among similar matches the less common career wins. The shares are in career_popularity.py
 # (regenerate with scripts/compute_career_popularity.py). Set the weight to 0 to switch this off.
-POPULARITY_WEIGHT = 10.0
+POPULARITY_WEIGHT = 20.0   # was 10.0; tested 10-40 on 352 real assessments (21 Oct 2026): 20 is where the gain flattens
 
 def score_careers(summary: dict, user_data: dict, careers: list, semantic_scores: dict | None = None) -> list:
     """Returns top 10 careers using deterministic tag-overlap scoring blended
