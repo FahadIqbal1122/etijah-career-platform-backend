@@ -2804,7 +2804,7 @@ def save_org_domain(body: OrgDomainRequest, _=Depends(require_admin)):
     expires_at = None
     if body.expires_at:
         try:
-            expires_at = datetime.fromisoformat(body.expires_at.replace("Z", "+00:00")).isoformat()
+            expires_at = _parse_ts(body.expires_at).isoformat()
         except ValueError:
             raise HTTPException(status_code=400, detail="Invalid end date")
     supabase.table('org_domains').upsert({
@@ -4504,6 +4504,14 @@ def _prewarm_full_report(user_id: str):
     except Exception as e:
         send_failure_alert("Full report build after purchase", e, response_id=rid, supabase=supabase)
 
+def _parse_ts(value: str) -> datetime:
+    """Reads an ISO timestamp the way Postgres/PostgREST write it: 'Z' or '+00:00', with any number of fractional digits
+    (Python 3.10's fromisoformat only accepts 3 or 6)."""
+    v = value.strip().replace("Z", "+00:00")
+    v = re.sub(r"\.(\d+)", lambda m: "." + (m.group(1) + "000000")[:6], v)
+    dt = datetime.fromisoformat(v)
+    return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+
 # Active offer domains, cached for a minute: most users have no offer, and this keeps the extra checks (a plan lookup and a
 # seat-claim call) off every dashboard and results view for them. Saving a domain in the admin panel clears it.
 _org_domains_cache: dict = {"domains": set(), "at": None}
@@ -4532,7 +4540,7 @@ def _org_offer_for_email(email: str | None) -> dict | None:
         d = row[0] if row else None
         if not d or not d.get('active') or d['seats_used'] >= d['seat_limit']:
             return None
-        if d.get('expires_at') and datetime.fromisoformat(d['expires_at'].replace("Z", "+00:00")) <= datetime.now(timezone.utc):
+        if d.get('expires_at') and _parse_ts(d['expires_at']) <= datetime.now(timezone.utc):
             return None
         return {"org_name": d.get('org_name'), "domain": domain}
     except Exception as e:

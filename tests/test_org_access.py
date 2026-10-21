@@ -143,6 +143,15 @@ class OrgOfferTests(unittest.TestCase):
         self.assertIsNone(self.offer(None, self.row()))
 
 
+class TimestampTests(unittest.TestCase):
+    def test_reads_postgres_style_timestamps(self):
+        from datetime import timezone
+        for v in ("2026-10-30T23:59:59+00:00", "2026-10-30T23:59:59Z", "2026-10-30T23:59:59.5+00:00", "2026-10-30T23:59:59.123456789+00:00", "2026-10-30T23:59:59"):
+            dt = main._parse_ts(v)
+            self.assertEqual(dt.tzinfo, timezone.utc if dt.utcoffset().total_seconds() == 0 else dt.tzinfo)
+            self.assertEqual((dt.year, dt.month, dt.day, dt.hour), (2026, 10, 30, 23))
+
+
 class PublicDomainTests(unittest.TestCase):
     def test_free_mail_providers_are_rejected(self):
         from fastapi import HTTPException
