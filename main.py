@@ -1,6 +1,7 @@
 from http import HTTPStatus
 import os
 import re
+from uuid import UUID
 from threading import _profile_hook
 from fastapi import FastAPI, HTTPException, Depends, Security, BackgroundTasks
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
@@ -897,6 +898,7 @@ def submit_assessment(body: SubmitRequest, background_tasks: BackgroundTasks, us
         supabase.table('assessment_responses') \
             .update({'user_id': user.id}) \
             .eq('id', response_id).execute()
+        _apply_org_grant(user)   # free-seat offer for the user's email domain (best-effort, never blocks the submit)
 
     # Best-effort: link any telemetry events sent during the assessment (device
     # type, break-panel plays, per-question pacing) to this submission. Never
@@ -1088,7 +1090,7 @@ def get_recent_completions():
 
 
 @app.get("/assessment/{response_id}/results")
-def get_results(response_id: str, user=Depends(get_optional_user)):
+def get_results(response_id: str, background_tasks: BackgroundTasks, user=Depends(get_optional_user)):
     profile = _execute_with_retry(supabase.table('assessment_responses')
         .select('email, user_id, locale, current_stage, full_name, created_at')
         .eq('id', response_id).single())
@@ -1105,6 +1107,11 @@ def get_results(response_id: str, user=Depends(get_optional_user)):
     summary = build_framework_output(rows.data)
     tier = get_effective_tier(profile.data.get('user_id'))
     owner_id = profile.data.get('user_id')
+    # A free report opened by its own signed-in, verified owner: apply a company-domain free-seat offer now, so the report
+    # is full on this very view (covers people who confirmed their email without passing through the dashboard).
+    if tier == "free" and user and owner_id and user.id == owner_id:
+        if _apply_org_grant(user, background_tasks).get("org_granted"):
+            tier = get_effective_tier(owner_id)
     # Small extras the results page used to fetch with three separate requests (each one re-checked the login and
     # re-read the report). The old endpoints still exist; the page just no longer calls them.
     try:
@@ -2714,6 +2721,79 @@ def update_smtp_settings(body: SmtpSettingsRequest, _=Depends(require_admin)):
 class TestModeRequest(BaseModel):
     enabled: bool
 
+class OrgDomainRequest(BaseModel):
+    domain: str = Field(max_length=253)
+    org_name: str | None = Field(default=None, max_length=200)
+    plan_code: str = "pathfinder"
+    seat_limit: int = Field(ge=1, le=10000)
+    expires_at: str | None = None       # ISO date/time; null = no end date
+    active: bool = True
+
+# Free-mail providers can never be an organization: granting "gmail.com" would hand free reports to everyone.
+PUBLIC_EMAIL_DOMAINS = {
+    "gmail.com", "googlemail.com", "yahoo.com", "ymail.com", "outlook.com", "hotmail.com", "live.com", "msn.com",
+    "icloud.com", "me.com", "mac.com", "aol.com", "proton.me", "protonmail.com", "gmx.com", "mail.com",
+    "zoho.com", "yandex.com", "qq.com", "163.com",
+}
+ORG_PLAN_CODES = ("pathfinder", "launchpad_monthly")
+
+_ORG_DOMAIN_RE = re.compile(r'^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$')
+
+@app.get("/admin/org-domains")
+def list_org_domains(_=Depends(require_admin)):
+    domains = supabase.table('org_domain_usage').select('*').order('created_at', desc=True).execute().data or []
+    grants = supabase.table('org_domain_grants').select('*').order('granted_at').execute().data or []
+    by_domain: dict = {}
+    for g in grants:
+        by_domain.setdefault(g['domain_id'], []).append(g)
+    return [{**d, "grants": by_domain.get(d['id'], [])} for d in domains]
+
+@app.post("/admin/org-domains")
+def save_org_domain(body: OrgDomainRequest, _=Depends(require_admin)):
+    domain = body.domain.strip().lower().lstrip("@")
+    if not _ORG_DOMAIN_RE.match(domain):
+        raise HTTPException(status_code=400, detail="Enter a domain like company.com")
+    if domain in PUBLIC_EMAIL_DOMAINS:
+        raise HTTPException(status_code=400, detail=f"{domain} is a public email provider and can't be an organization")
+    if body.plan_code not in ORG_PLAN_CODES:
+        raise HTTPException(status_code=400, detail="plan_code must be pathfinder or launchpad_monthly")
+    expires_at = None
+    if body.expires_at:
+        try:
+            expires_at = datetime.fromisoformat(body.expires_at.replace("Z", "+00:00")).isoformat()
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid end date")
+    supabase.table('org_domains').upsert({
+        'domain': domain,
+        'org_name': (body.org_name or '').strip() or None,
+        'plan_code': body.plan_code,
+        'seat_limit': body.seat_limit,
+        'expires_at': expires_at,
+        'active': body.active,
+    }, on_conflict='domain').execute()
+    _org_domains_cache["at"] = None   # the change applies on the next check, not a minute later
+    return {"ok": True, "domain": domain}
+
+@app.delete("/admin/org-domains/{domain_id}/grants/{user_id}")
+def revoke_org_grant(domain_id: UUID, user_id: UUID, _=Depends(require_admin)):
+    """Takes back one free seat: the seat is free again, and that person cannot claim it a second time. Their paid
+    report locks again unless they have a paid purchase of their own, which is never touched."""
+    did, uid = str(domain_id), str(user_id)
+    done = supabase.table('org_domain_grants').update({'revoked_at': datetime.now(timezone.utc).isoformat()}) \
+        .eq('domain_id', did).eq('user_id', uid).is_('revoked_at', 'null').execute()
+    if not done.data:
+        raise HTTPException(status_code=404, detail="Grant not found")
+    paid = supabase.table('transactions').select('order_ref').eq('user_id', uid).eq('status', 'paid').limit(1).execute()
+    if paid.data:
+        return {"ok": True, "access_kept": True}   # they bought a plan themselves: only the free seat is taken back
+    supabase.table('user_plans').update({
+        'pathfinder_unlocked': False,
+        'subscription_current_period_end': None,
+        'subscription_status': None,
+    }).eq('user_id', uid).execute()
+    _invalidate_free_tier_report_cache(uid)
+    return {"ok": True, "access_kept": False}
+
 @app.get("/admin/test-mode")
 def get_test_mode(_=Depends(require_admin)):
     return {"enabled": _is_test_mode_enabled()}
@@ -4129,6 +4209,13 @@ def get_my_transaction(user=Depends(get_current_user)):
     return data.data or []
 
 
+@app.post("/billing/org-access")
+def check_org_access(background_tasks: BackgroundTasks, user=Depends(get_current_user)):
+    """Called by the dashboard after sign-in / email verification: applies a free-seat offer for the user's email domain
+    if one exists (covers people who took the assessment before signing up). Safe to call repeatedly."""
+    r = _apply_org_grant(user, background_tasks)
+    return {"status": r["status"], "org_granted": r["org_granted"], "org_name": r["org_name"]}
+
 @app.get("/billing/plan")
 def get_my_plan(user=Depends(get_current_user)):
     row = supabase.table('user_plans').select('*').eq('user_id', user.id).execute()
@@ -4357,6 +4444,68 @@ def _prewarm_full_report(user_id: str):
             send_email(to=row['email'], subject=subject, html_body=html_body, supabase=supabase, copy_internal=True)
     except Exception as e:
         send_failure_alert("Full report build after purchase", e, response_id=rid, supabase=supabase)
+
+# Active offer domains, cached for a minute: most users have no offer, and this keeps the extra checks (a plan lookup and a
+# seat-claim call) off every dashboard and results view for them. Saving a domain in the admin panel clears it.
+_org_domains_cache: dict = {"domains": set(), "at": None}
+
+def _org_offer_domains() -> set:
+    now = datetime.now(timezone.utc)
+    at = _org_domains_cache["at"]
+    if at is None or (now - at).total_seconds() > 60:
+        rows = supabase.table('org_domains').select('domain').eq('active', True).execute().data or []
+        _org_domains_cache["domains"] = {r['domain'] for r in rows}
+        _org_domains_cache["at"] = now
+    return _org_domains_cache["domains"]
+
+def _apply_org_grant(user, background_tasks: BackgroundTasks | None = None) -> dict:
+    """Unlocks the paid report for a verified user whose email domain has a free-seats offer (org_domains).
+    Idempotent and best-effort: it never raises, so it can sit inside submit/login flows. Returns
+    {'status': granted|already|revoked|duplicate|full|no_offer|owned|unverified|skipped|error, 'org_granted': bool, 'org_name': str|None}."""
+    out = {"status": "skipped", "org_granted": False, "org_name": None}
+    try:
+        email = (getattr(user, "email", None) or "").strip().lower()
+        if not user or email.count("@") != 1:
+            return out
+        # Only a confirmed address counts: otherwise anyone could type a ceo@bigcorp.com address and take a seat.
+        if not getattr(user, "email_confirmed_at", None):
+            return {**out, "status": "unverified"}
+        domain = email.rsplit("@", 1)[1]
+        if domain not in _org_offer_domains():
+            # Not an offer domain (or switched off): nothing to grant. An existing grant is still reported as org access below.
+            g = supabase.table('org_domain_grants').select('domain_id').eq('user_id', user.id).is_('revoked_at', 'null').limit(1).execute()
+            return {**out, "status": "no_offer", "org_granted": bool(g.data)}
+
+        # Someone who already has Pathfinder never uses a seat. Report whether that access came from an org.
+        if _owns_pathfinder(user.id):
+            g = supabase.table('org_domain_grants').select('domain_id').eq('user_id', user.id).is_('revoked_at', 'null').limit(1).execute()
+            return {**out, "status": "owned", "org_granted": bool(g.data)}
+
+        res = supabase.rpc('claim_org_seat', {'p_domain': domain, 'p_user_id': user.id, 'p_email': email}).execute()
+        row = (res.data or [None])[0]
+        if not row:
+            return {**out, "status": "no_offer"}
+        status = row.get("status")
+        out.update(status=status, org_name=row.get("org_name"))
+
+        if status == "granted":
+            try:
+                _activate_plan(user.id, row.get("plan_code") or "pathfinder")
+            except Exception:
+                # The unlock failed after the seat was taken: give the seat back so the next visit can try again,
+                # instead of leaving a seat used by someone who got nothing.
+                supabase.table('org_domain_grants').delete().eq('user_id', user.id).is_('revoked_at', 'null').execute()
+                raise
+            out["org_granted"] = True
+            if background_tasks is not None:
+                background_tasks.add_task(_prewarm_full_report, user.id)   # builds the full report + sends the "ready" email
+            print(f"Org access granted: {email} ({domain})")
+        elif status == "already":
+            out["org_granted"] = True
+        return out
+    except Exception as e:
+        print("Org grant check failed:", repr(e))
+        return {**out, "status": "error"}
 
 def _activate_plan(user_id: str, plan_code: str):
     """Applies a paid plan_code to user_plans. Pathfinder is a permanent, one-time
