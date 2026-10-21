@@ -164,6 +164,24 @@ def _owns_pathfinder(user_id: str) -> bool:
 _bearer = HTTPBearer()
 _bearer_optional = HTTPBearer(auto_error=False)
 
+def _assessment_slots_left(user) -> int | None:
+    """One full report per payment: an account that owns Pathfinder (bought or given by a company offer) may hold one
+    assessment, plus any the admin added (user_plans.extra_assessments). Returns how many more it may take or attach,
+    or None when no limit applies (free accounts, admins). Fails open: a lookup problem never blocks anybody."""
+    try:
+        if not user or (getattr(user, "app_metadata", None) or {}).get("role") == "admin":
+            return None
+        row = supabase.table('user_plans').select('*').eq('user_id', user.id).execute().data
+        if not row or not row[0].get('pathfinder_unlocked'):
+            return None
+        allowed = 1 + int(row[0].get('extra_assessments') or 0)
+        owned = supabase.table('assessment_responses').select('id', count='exact').eq('user_id', user.id) \
+            .or_('completed.is.null,completed.eq.true').execute().count or 0
+        return max(0, allowed - owned)
+    except Exception as e:
+        print("Assessment limit check failed (not blocking):", repr(e))
+        return None
+
 def get_current_user(credentials: HTTPAuthorizationCredentials = Security(_bearer)):
     try:
         response = supabase.auth.get_user(credentials.credentials)
@@ -763,6 +781,16 @@ def get_all_career_recommendations(_=Depends(require_admin)):
     ]
 
 
+@app.get("/assessment/allowance")
+def assessment_allowance(user=Depends(get_current_user)):
+    """Asked when the assessment page opens for a signed-in person, so a paid account whose one full report is used is told
+    at the start (and pointed to that report) instead of after answering every question."""
+    if _assessment_slots_left(user) != 0:
+        return {"blocked": False, "latest_response_id": None}
+    latest = supabase.table('assessment_responses').select('id').eq('user_id', user.id) \
+        .order('created_at', desc=True).limit(1).execute().data
+    return {"blocked": True, "latest_response_id": latest[0]['id'] if latest else None}
+
 @app.post("/assessment/check-existing")
 def check_existing(body: CheckExistingRequest, user=Depends(get_optional_user), _beta=Depends(require_beta_open)):
     result = supabase.rpc('check_existing_response', {
@@ -782,7 +810,8 @@ def check_existing(body: CheckExistingRequest, user=Depends(get_optional_user), 
     if owner_id and not (user and user.id == owner_id):
         return {"id": None, "claimed": True}
 
-    return {"id": result.data}
+    # A signed-in paid account that has used its one full report: the form hides "retake" (submit refuses it anyway).
+    return {"id": result.data, "retake_blocked": bool(user and owner_id == user.id and _assessment_slots_left(user) == 0)}
 
 
 DRAFT_MAX_AGE_DAYS = 30
@@ -847,6 +876,9 @@ MAX_RESULT_EMAILS_PER_ADDRESS_PER_DAY = 3
 
 @app.post("/assessment/submit")
 def submit_assessment(body: SubmitRequest, background_tasks: BackgroundTasks, user=Depends(get_optional_user), _beta=Depends(require_beta_open)):
+    # A paid account has used its one full report: no new assessment (a retake would build another full AI report).
+    if user and _assessment_slots_left(user) == 0:
+        raise HTTPException(status_code=409, detail="retake_not_included")
     # Score it first, before writing anything — a payload with no recognizable
     # question answers can't be scored, so reject cleanly instead of leaving
     # an orphaned response row with no results.
@@ -1109,14 +1141,17 @@ def get_results(response_id: str, background_tasks: BackgroundTasks, user=Depend
     owner_id = profile.data.get('user_id')
     # A free report opened by its own signed-in, verified owner: apply a company-domain free-seat offer now, so the report
     # is full on this very view (covers people who confirmed their email without passing through the dashboard).
+    grant_status = None
     if tier == "free" and user and owner_id and user.id == owner_id:
-        if _apply_org_grant(user, background_tasks).get("org_granted"):
+        grant = _apply_org_grant(user, background_tasks)
+        grant_status = grant.get("status")
+        if grant.get("org_granted"):
             tier = get_effective_tier(owner_id)
     # A free report whose email domain has a free-seat offer: the page tells the reader that signing up unlocks the full
     # report. Same visibility rule as the email below (the owner, or a report nobody has claimed yet), so a shared link
     # never reveals which company the owner works for.
     org_offer = _org_offer_for_email(profile.data.get('email')) \
-        if tier == "free" and (not owner_id or _is_owner_or_admin(owner_id, user)) else None
+        if tier == "free" and grant_status not in ("revoked", "duplicate") and (not owner_id or _is_owner_or_admin(owner_id, user)) else None
     # Small extras the results page used to fetch with three separate requests (each one re-checked the login and
     # re-read the report). The old endpoints still exist; the page just no longer calls them.
     try:
@@ -3927,6 +3962,8 @@ def _claim_response(user, response_id: str | None, token: str | None) -> int:
     expected = _claim_token(str(response_id)) if response_id else ""
     if not expected or not token or not hmac.compare_digest(expected, str(token)):
         return 0
+    if _assessment_slots_left(user) == 0:   # paid account already holds its one full report: this one stays unlinked (free view)
+        return 0
     result = supabase.table('assessment_responses').update({"user_id": user.id}) \
         .eq('id', str(response_id)).is_('user_id', 'null').execute()
     return len(result.data or [])
@@ -3947,12 +3984,23 @@ def link_by_email(user=Depends(get_current_user)):
     # this must stay case-insensitive (ilike, not eq) since assessment emails
     # aren't consistently lowercased at submit time.
     safe_email = (user.email or '').replace('\\', '\\\\').replace('%', '\\%').replace('_', '\\_')
-    result = supabase.table('assessment_responses') \
-        .update({"user_id": user.id}) \
-        .ilike('email', safe_email) \
-        .is_('user_id', 'null') \
-        .execute()
-    linked = len(result.data or [])
+    slots = _assessment_slots_left(user)
+    if slots is None:
+        result = supabase.table('assessment_responses') \
+            .update({"user_id": user.id}) \
+            .ilike('email', safe_email) \
+            .is_('user_id', 'null') \
+            .execute()
+        linked = len(result.data or [])
+    else:
+        # Paid account: only as many reports as it still has room for, newest first; the rest stay unlinked (free view).
+        linked = 0
+        if slots > 0:
+            ids = [r['id'] for r in (supabase.table('assessment_responses').select('id').ilike('email', safe_email)
+                   .is_('user_id', 'null').order('created_at', desc=True).limit(slots).execute().data or [])]
+            if ids:
+                linked = len(supabase.table('assessment_responses').update({"user_id": user.id}).in_('id', ids)
+                             .is_('user_id', 'null').execute().data or [])
     # A claim made at sign-up travels in the account's metadata, so it still works when the confirmation email is
     # opened in a different browser from the one that took the assessment.
     claim = (user.user_metadata or {}).get("claim") or {}
@@ -4237,6 +4285,8 @@ def get_my_plan(user=Depends(get_current_user)):
         "subscription_plan_code": plan.get('subscription_plan_code'),
         "subscription_status": "active" if tier == "launchpad" else ("expired" if plan.get('subscription_current_period_end') else None),
         "subscription_current_period_end": plan.get('subscription_current_period_end'),
+        # False when the plan's one full report is used: the dashboard then hides its "retake" link.
+        "can_retake": _assessment_slots_left(user) != 0,
         # Replaced by our own scheduling (the /coaching/* endpoints below); no longer a Calendly link.
         # "booking_url": _coaching_booking_url(user) if tier == "launchpad" else None,
     }
