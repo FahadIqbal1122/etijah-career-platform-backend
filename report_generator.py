@@ -3679,7 +3679,7 @@ def _create_free_snapshot_pdf(response_id: str, supabase_client, profile: dict, 
     first = ((profile.get('full_name') or '').strip().split(' ') or [''])[0] or None
     html = build_free_snapshot_html(
         profile, summary, scores, notes, locale, _format_date(locale),
-        # the results page sends a signed-in reader to the plans and a signed-out one to sign-up with this report attached
+        # this opens the results page; its buy buttons then send a signed-in reader to the plans and a signed-out one to sign-up with this report attached
         upgrade_url=f"https://myetijahi.com/{locale}/results/{response_id}", price="59 SAR" if locale == 'en' else "59 ريال",
         first_name=first)
     return generate_pdf(html)

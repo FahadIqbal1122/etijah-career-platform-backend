@@ -1112,6 +1112,11 @@ def get_results(response_id: str, background_tasks: BackgroundTasks, user=Depend
     if tier == "free" and user and owner_id and user.id == owner_id:
         if _apply_org_grant(user, background_tasks).get("org_granted"):
             tier = get_effective_tier(owner_id)
+    # A free report whose email domain has a free-seat offer: the page tells the reader that signing up unlocks the full
+    # report. Same visibility rule as the email below (the owner, or a report nobody has claimed yet), so a shared link
+    # never reveals which company the owner works for.
+    org_offer = _org_offer_for_email(profile.data.get('email')) \
+        if tier == "free" and (not owner_id or _is_owner_or_admin(owner_id, user)) else None
     # Small extras the results page used to fetch with three separate requests (each one re-checked the login and
     # re-read the report). The old endpoints still exist; the page just no longer calls them.
     try:
@@ -1143,6 +1148,7 @@ def get_results(response_id: str, background_tasks: BackgroundTasks, user=Depend
         'results': rows.data, 'summary': summary,
         'email': profile.data.get('email') if (not profile.data.get('user_id') or _is_owner_or_admin(profile.data.get('user_id'), user)) else None,
         'tier': tier, 'locale': profile.data.get('locale') or 'en',
+        'org_offer': org_offer,
         # Free reports made since the snapshot went live get the two-part snapshot; earlier ones keep their layout.
         'free_snapshot': free_snapshot_applies(profile.data.get('created_at')),
         # First name only, and only for the owner (or an anonymous report, like the email above)
@@ -2282,6 +2288,9 @@ def get_report(response_id: str, locale: str | None = None, template: str | None
 
     if locale not in (None, 'en', 'ar'):
         raise HTTPException(status_code=400, detail="locale must be 'en' or 'ar'")
+    # The free PDF is open to anyone holding the link and can make a small AI call on first use, so cap repeats per report.
+    if tier == "free" and not coach_chat_mod.check_rate_limit(f"pdf:{response_id}", (10, 3600)):
+        raise HTTPException(status_code=429, detail="Too many downloads of this report. Please try again in a little while.")
     # The PDF follows the live report template (Settings -> Report Templates). ?template= previews another one, as
     # on the results page; anything unknown is ignored.
     template_override = template if template in REPORT_TEMPLATE_IDS else None
@@ -4457,6 +4466,28 @@ def _org_offer_domains() -> set:
         _org_domains_cache["domains"] = {r['domain'] for r in rows}
         _org_domains_cache["at"] = now
     return _org_domains_cache["domains"]
+
+def _org_offer_for_email(email: str | None) -> dict | None:
+    """The free-report offer a person's email domain has right now, or None: only for a switched-on, unexpired domain that
+    still has a free seat. Used to tell people on the results page that signing up unlocks their report."""
+    try:
+        email = (email or "").strip().lower()
+        if email.count("@") != 1:
+            return None
+        domain = email.rsplit("@", 1)[1]
+        if domain not in _org_offer_domains():
+            return None
+        row = supabase.table('org_domain_usage').select('org_name,domain,seat_limit,seats_used,expires_at,active') \
+            .eq('domain', domain).limit(1).execute().data
+        d = row[0] if row else None
+        if not d or not d.get('active') or d['seats_used'] >= d['seat_limit']:
+            return None
+        if d.get('expires_at') and datetime.fromisoformat(d['expires_at'].replace("Z", "+00:00")) <= datetime.now(timezone.utc):
+            return None
+        return {"org_name": d.get('org_name'), "domain": domain}
+    except Exception as e:
+        print("Org offer lookup failed:", repr(e))
+        return None
 
 def _apply_org_grant(user, background_tasks: BackgroundTasks | None = None) -> dict:
     """Unlocks the paid report for a verified user whose email domain has a free-seats offer (org_domains).

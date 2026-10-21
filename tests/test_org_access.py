@@ -115,6 +115,34 @@ class ApplyOrgGrantTests(unittest.TestCase):
             self.assertEqual(main._apply_org_grant(user())["status"], "error")
 
 
+class OrgOfferTests(unittest.TestCase):
+    def offer(self, email, usage_rows, domains=frozenset({"etijahcoaching.com"})):
+        q = mock.MagicMock()
+        q.select.return_value = q
+        q.eq.return_value = q
+        q.limit.return_value = q
+        q.execute.return_value = types.SimpleNamespace(data=usage_rows)
+        fake = mock.MagicMock()
+        fake.table.return_value = q
+        with mock.patch.object(main, "supabase", fake), mock.patch.object(main, "_org_offer_domains", return_value=domains):
+            return main._org_offer_for_email(email)
+
+    def row(self, **kw):
+        base = {"org_name": "Etijah", "domain": "etijahcoaching.com", "seat_limit": 5, "seats_used": 2, "expires_at": None, "active": True}
+        return [{**base, **kw}]
+
+    def test_offer_shown_while_a_seat_is_free(self):
+        self.assertEqual(self.offer("a@etijahcoaching.com", self.row()), {"org_name": "Etijah", "domain": "etijahcoaching.com"})
+
+    def test_no_offer_when_full_expired_off_or_unknown(self):
+        self.assertIsNone(self.offer("a@etijahcoaching.com", self.row(seats_used=5)))
+        self.assertIsNone(self.offer("a@etijahcoaching.com", self.row(expires_at="2020-01-01T00:00:00+00:00")))
+        self.assertIsNone(self.offer("a@etijahcoaching.com", self.row(active=False)))
+        self.assertIsNone(self.offer("a@nowhere.io", self.row()))
+        self.assertIsNone(self.offer("not-an-email", self.row()))
+        self.assertIsNone(self.offer(None, self.row()))
+
+
 class PublicDomainTests(unittest.TestCase):
     def test_free_mail_providers_are_rejected(self):
         from fastapi import HTTPException
