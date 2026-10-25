@@ -107,6 +107,15 @@ class FreePdf(unittest.TestCase):
             self.assertNotIn(hidden, h)                   # the content and their notes do not
         self.assertIn('You enjoy organising ideas.', h)   # the interests note stays
 
+    def test_page_one_does_not_leak_the_locked_values_and_strength(self):
+        h = self.build()
+        page1 = h.split('class="page"')[1]
+        for leaked in ('Freedom', 'Relationships'):       # the top value and top strength are part of the full report
+            self.assertNotIn(leaked, page1)
+        self.assertEqual(page1.count('Included in your full report'), 2)
+        self.assertIn('Enterprising', page1)              # interests stay
+        self.assertNotIn('free profile', h.lower())       # the section is a preview, not "free"
+
     def test_the_observation_appears_only_when_a_rule_matches(self):
         self.assertNotIn('class="ins"', self.build())    # this sample is medium extraversion: no rule fires
         quiet = {**SUMMARY, 'big_five': {**SUMMARY['big_five'], 'extraversion': 'low'}}

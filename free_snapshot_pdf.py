@@ -35,8 +35,9 @@ _TXT = {
                   'explains the reasoning, and helps you understand what pursuing them could involve.',
         'buy': 'Unlock my career recommendations — {price}', 'buy_fine': 'One-time payment. Your assessment is already complete.',
         'buy_lead': 'You can see the patterns in your profile. Now discover the career paths they could connect to.',
-        'continue': 'Continue to your free profile on the next page',
-        'p_eyebrow': 'Your free profile', 'p_title': 'What your answers say about you',
+        'continue': 'Continue to your profile preview on the next page',
+        'locked_short': 'Included in your full report',
+        'p_eyebrow': 'Your profile preview', 'p_title': 'What your answers say about you',
         'c_interests': 'Your interests', 'c_interests_sub': 'The kinds of work you enjoy most',
         'c_values': 'What matters to you', 'c_values_sub': 'What you want from work and life',
         'c_strengths': 'What you are good at', 'c_strengths_sub': 'Your natural strengths',
@@ -74,8 +75,9 @@ _TXT = {
                   'ويساعدك على فهم ما قد يتطلبه السير فيها.',
         'buy': 'افتح توصياتي المهنية — {price}', 'buy_fine': 'دفعة واحدة. تقييمك مكتمل بالفعل.',
         'buy_lead': 'ترى الآن أنماط ملفك. اكتشف المسارات المهنية التي قد ترتبط بها.',
-        'continue': 'تابع إلى ملفك المجاني في الصفحة التالية',
-        'p_eyebrow': 'ملفك المجاني', 'p_title': 'ماذا تقول إجاباتك عنك',
+        'continue': 'تابع إلى معاينة ملفك في الصفحة التالية',
+        'locked_short': 'ضمن تقريرك الكامل',
+        'p_eyebrow': 'معاينة ملفك', 'p_title': 'ماذا تقول إجاباتك عنك',
         'c_interests': 'اهتماماتك', 'c_interests_sub': 'أنواع العمل التي تستمتع بها أكثر',
         'c_values': 'ما يهمك', 'c_values_sub': 'ما تريده من العمل والحياة',
         'c_strengths': 'ما تجيده', 'c_strengths_sub': 'نقاط قوتك الطبيعية',
@@ -208,6 +210,8 @@ def build_free_snapshot_html(user_data: dict, summary: dict, scores: dict, notes
     b = phr.get(top_types[1], phr['investigative']) if len(top_types) > 1 else phr['enterprising' if a == phr['investigative'] else 'investigative']
     headline = T['headline'].format(a=a, b=b)
     interests = T['and'].join(rname(k) for k in top_types[:2])
+    # page 1 no longer shows values_line / strength_line (they are part of the full report); the old cards were
+    # <div class="fc"><span class="k">{T['values']}</span><b>{_e(values_line)}</b></div> and the same with strength_line
     values_line = T['and'].join(vname(k) for k in top_values[:2])
     strength_line = sname(top_strengths[0]) if top_strengths else ''
     eyebrow = T['ready'] + (f' · {_e(first_name)}' if first_name else '')
@@ -274,6 +278,7 @@ h2 {{ font-size:15pt; font-weight:800; margin:0 0 2mm }}
 p {{ margin:0 0 2.5mm }} .lead {{ font-size:11.5pt; color:#3a4553 }}
 .find {{ display:table; width:calc(100% + 8mm); border-spacing:4mm 0; margin:2mm -4mm 0 }}
 .fc {{ display:table-cell; width:33%; vertical-align:top; border:1px solid #dbe7f3; border-radius:12px; padding:4.5mm; background:#fbfdff }}
+.lsh {{ display:block; margin-top:1.5mm; font-size:9.5pt; color:#6b7480 }}
 .fc b {{ display:block; font-size:12.5pt; line-height:1.35; margin-top:1.5mm }}
 .q {{ margin-top:9mm; background:#f2f8fd; border-radius:14px; padding:7mm }}
 .btn {{ background:#0770ba; color:#fff; text-align:center; font-weight:800; font-size:13pt; border-radius:10px; padding:11px; display:block; text-decoration:none }}
@@ -319,8 +324,8 @@ p {{ margin:0 0 2.5mm }} .lead {{ font-size:11.5pt; color:#3a4553 }}
 <p class="lead">{T['stood_out']}</p>
 <div class="find">
 <div class="fc"><span class="k">{T['interests']}</span><b>{_e(interests)}</b></div>
-<div class="fc"><span class="k">{T['values']}</span><b>{_e(values_line)}</b></div>
-<div class="fc"><span class="k">{T['strength']}</span><b>{_e(strength_line)}</b><span style="font-size:8pt;color:#6b7480">{T['self_reported']}</span></div></div>
+<div class="fc"><span class="k">{T['values']}</span><span class="lsh">{T['locked_short']}</span></div>
+<div class="fc"><span class="k">{T['strength']}</span><span class="lsh">{T['locked_short']}</span></div></div>
 <div class="q"><span class="k">{T['q_eyebrow']}</span>
 <h2 style="margin-top:2mm;font-size:18pt">{T['question']}</h2>
 <p>{T['q_body']}</p>
