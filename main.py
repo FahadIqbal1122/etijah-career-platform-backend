@@ -2,6 +2,7 @@ from http import HTTPStatus
 import os
 import re
 from uuid import UUID
+from decimal import Decimal, ROUND_HALF_UP
 from threading import _profile_hook
 from fastapi import FastAPI, HTTPException, Depends, Security, BackgroundTasks
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
@@ -77,6 +78,7 @@ class CatchAllMiddleware(BaseHTTPMiddleware):
 
 
 app.add_middleware(CatchAllMiddleware)
+import request_guard
 from request_guard import RequestGuardMiddleware, client_ip as _client_ip
 import ai_usage
 app.add_middleware(RequestGuardMiddleware)
@@ -692,6 +694,7 @@ class CheckoutRequest(BaseModel):
     fbc: str | None = Field(default=None, max_length=300)
     locale: str | None = Field(default=None, max_length=5)  # 'en' | 'ar': the page language the buyer paid from
     currency: str | None = Field(default=None, max_length=3)  # display currency the buyer saw; only used while multi-currency is on
+    discount_code: str | None = Field(default=None, max_length=40)
 
 class HubTransactionBody(BaseModel):
     external_user_id: str
@@ -2838,6 +2841,81 @@ def revoke_org_grant(domain_id: UUID, user_id: UUID, _=Depends(require_admin)):
     _invalidate_free_tier_report_cache(uid)
     return {"ok": True, "access_kept": False}
 
+class DiscountCodeRequest(BaseModel):
+    id: UUID | None = None                      # present = edit, absent = create
+    code: str = Field(max_length=32)
+    description: str | None = Field(default=None, max_length=200)
+    discount_type: Literal['percent', 'fixed']
+    percent_off: float | None = Field(default=None, gt=0, le=95)
+    fixed_off_sar: float | None = Field(default=None, gt=0, le=10000)
+    plan_codes: list[str] | None = None         # null/empty = every plan
+    max_redemptions: int | None = Field(default=None, ge=1, le=1_000_000)
+    max_per_user: int = Field(default=1, ge=1, le=100)
+    starts_at: str | None = None
+    expires_at: str | None = None
+    active: bool = True
+
+@app.get("/admin/discount-codes")
+def list_discount_codes(_=Depends(require_admin)):
+    return supabase.table('discount_code_usage').select('*').order('created_at', desc=True).execute().data or []
+
+@app.post("/admin/discount-codes")
+def save_discount_code(body: DiscountCodeRequest, _=Depends(require_admin)):
+    code = body.code.strip().upper()
+    if not DISCOUNT_CODE_RE.match(code):
+        raise HTTPException(status_code=400, detail="Code must be 3-32 letters, numbers, - or _")
+    if body.discount_type == 'percent' and body.percent_off is None:
+        raise HTTPException(status_code=400, detail="Enter the percentage off")
+    if body.discount_type == 'fixed' and body.fixed_off_sar is None:
+        raise HTTPException(status_code=400, detail="Enter the amount off (SAR)")
+    plans = list(body.plan_codes or [])
+    if any(p not in PLAN_CATALOG for p in plans):
+        raise HTTPException(status_code=400, detail="Unknown plan")
+    try:
+        starts = _parse_ts(body.starts_at).isoformat() if body.starts_at else None
+        expires = _parse_ts(body.expires_at).isoformat() if body.expires_at else None
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid date")
+    if starts and expires and _parse_ts(starts) >= _parse_ts(expires):
+        raise HTTPException(status_code=400, detail="The end date must be after the start date")
+    row = {
+        'code': code, 'description': (body.description or '').strip() or None, 'discount_type': body.discount_type,
+        'percent_off': body.percent_off if body.discount_type == 'percent' else None,
+        'fixed_off_sar': body.fixed_off_sar if body.discount_type == 'fixed' else None,
+        'plan_codes': plans or None, 'max_redemptions': body.max_redemptions, 'max_per_user': body.max_per_user,
+        'starts_at': starts, 'expires_at': expires, 'active': body.active,
+        'updated_at': datetime.now(timezone.utc).isoformat(),
+    }
+    try:
+        if body.id:
+            used = supabase.table('discount_code_usage').select('redeemed_count').eq('id', str(body.id)).execute().data
+            if used and body.max_redemptions is not None and body.max_redemptions < used[0]['redeemed_count']:
+                raise HTTPException(status_code=400, detail=f"{used[0]['redeemed_count']} uses are already redeemed: the limit can't be lower")
+            supabase.table('discount_codes').update(row).eq('id', str(body.id)).execute()
+        else:
+            supabase.table('discount_codes').insert(row).execute()
+    except HTTPException:
+        raise
+    except Exception as e:
+        if 'duplicate' in str(e).lower() or '23505' in str(e):
+            raise HTTPException(status_code=409, detail="That code already exists")
+        print("save_discount_code failed:", repr(e))
+        raise HTTPException(status_code=500, detail="Could not save the code")
+    return {"ok": True, "code": code}
+
+@app.get("/admin/discount-codes/{code_id}/redemptions")
+def discount_redemptions(code_id: UUID, _=Depends(require_admin)):
+    return supabase.table('discount_redemptions').select('email,plan_code,currency,original_amount,discount_amount,final_amount,status,created_at,redeemed_at') \
+        .eq('code_id', str(code_id)).neq('status', 'released').order('created_at', desc=True).limit(200).execute().data or []
+
+@app.delete("/admin/discount-codes/{code_id}")
+def delete_discount_code(code_id: UUID, _=Depends(require_admin)):
+    """Only a code nobody ever tried to use; otherwise switch it off so the history stays."""
+    if supabase.table('discount_redemptions').select('id').eq('code_id', str(code_id)).limit(1).execute().data:
+        raise HTTPException(status_code=409, detail="This code has been used. Switch it off instead of deleting it.")
+    supabase.table('discount_codes').delete().eq('id', str(code_id)).execute()
+    return {"ok": True}
+
 @app.get("/admin/test-mode")
 def get_test_mode(_=Depends(require_admin)):
     return {"enabled": _is_test_mode_enabled()}
@@ -4188,6 +4266,113 @@ def coach_chat(payload: CoachChatRequest, request: Request, user=Depends(get_opt
     return {"reply": reply, "limited": False}
 
 
+# ── Discount codes ─────────────────────────────────────────────────────────────
+DISCOUNT_CODE_RE = re.compile(r'^[A-Z0-9_-]{3,32}$')
+DISCOUNT_HOLD_MINUTES = 45   # keep in step with the 45 minutes in discount_code_usage (migrations/discount_codes.sql)
+_THREE_DECIMALS = {"BHD", "KWD", "OMR"}
+
+def _resolve_price(user_id: str, plan_code: str, plan: dict, wanted_currency: str | None):
+    """The amount and currency a buyer is charged before any discount: SAR unless the admin multi-currency switch is on
+    and the buyer asked for a currency we have a price for. PATHFINDER_TEST_AMOUNT (payment testing) always wins, so test
+    charges never change currency. Adding Launchpad on top of an existing Pathfinder purchase costs the upgrade price."""
+    charge_amount, charge_currency = plan["amount"], plan["currency"]
+    upgrade = plan_code == "launchpad_monthly" and not _test_amount and _owns_pathfinder(user_id)
+    if upgrade:
+        charge_amount = LAUNCHPAD_UPGRADE_SAR
+    wanted = (wanted_currency or "").upper()
+    if not _test_amount and wanted != charge_currency and _is_multi_currency_enabled():
+        local = (LAUNCHPAD_UPGRADE_LOCAL if upgrade else LOCAL_PRICES.get(plan_code, {})).get(wanted)
+        if local is not None:
+            charge_amount, charge_currency = local, wanted
+    return charge_amount, charge_currency
+
+def _reserve_discount(user, plan_code: str, code: str, dry_run: bool = False) -> dict:
+    """Checks the code and takes one use for this buyer (dry_run: check only). Error details are codes the frontend translates."""
+    code = (code or "").strip().upper()
+    if not DISCOUNT_CODE_RE.match(code):
+        raise HTTPException(status_code=400, detail="discount_invalid")
+    if not request_guard.allow(f"discount|{user.id}", (20, 3600)):   # stops scripted guessing of codes
+        raise HTTPException(status_code=429, detail="discount_rate_limited")
+    try:
+        res = supabase.rpc('reserve_discount_code', {
+            'p_code': code, 'p_user_id': user.id, 'p_email': user.email, 'p_plan_code': plan_code,
+            'p_dry_run': dry_run, 'p_hold_minutes': DISCOUNT_HOLD_MINUTES,
+        }).execute().data
+    except Exception as e:
+        print("reserve_discount_code failed:", repr(e))
+        raise HTTPException(status_code=502, detail="discount_unavailable")   # never silently charge full price
+    if not res or not res.get("ok"):
+        raise HTTPException(status_code=400, detail=f"discount_{(res or {}).get('error', 'invalid')}")
+    return res
+
+def _discounted(res: dict, plan_code: str, amount, currency: str) -> tuple[float, float]:
+    """(final price, discount) for a successful reservation. Fixed discounts are SAR off the plan's SAR price, applied as the
+    same proportion in other currencies. Decimal throughout, rounded to the currency's decimals."""
+    amt = Decimal(str(amount))
+    if res["discount_type"] == "percent":
+        fraction = Decimal(str(res["percent_off"])) / 100
+    else:
+        fraction = min(Decimal(str(res["fixed_off_sar"])) / Decimal(str(PLAN_CATALOG[plan_code]["amount"])), Decimal("0.95"))
+    places = Decimal("0.001") if currency in _THREE_DECIMALS else Decimal("0.01")
+    final = (amt - amt * fraction).quantize(places, ROUND_HALF_UP)
+    if final <= 0:
+        raise HTTPException(status_code=400, detail="discount_invalid")
+    return float(final), float(amt - final)
+
+def _release_discount(res: dict | None):
+    if not res or not res.get("redemption_id"):
+        return
+    try:
+        supabase.table('discount_redemptions').update({'status': 'released'}).eq('id', res["redemption_id"]).eq('status', 'reserved').execute()
+    except Exception as e:
+        print("discount release failed (the hold expires by itself):", repr(e))
+
+def _attach_discount_order(res: dict, order_ref: str | None, original, final, discount, currency: str):
+    for attempt in range(2):
+        try:
+            supabase.table('discount_redemptions').update({
+                'order_ref': order_ref, 'currency': currency, 'original_amount': original,
+                'final_amount': final, 'discount_amount': discount,
+            }).eq('id', res["redemption_id"]).execute()
+            return
+        except Exception as e:
+            print(f"discount attach failed (attempt {attempt + 1}):", repr(e))
+
+def _settle_discount(user_id: str, order_ref: str, plan_code: str, amount: float):
+    """Payment confirmed: the use becomes permanent. Matched by order_ref; if that link was never saved, falls back to this
+    buyer's latest unlinked hold for the same plan and exact amount. A paid order always counts, even if its hold had lapsed."""
+    try:
+        now = datetime.now(timezone.utc)
+        done = supabase.table('discount_redemptions').update({'status': 'redeemed', 'redeemed_at': now.isoformat()}) \
+            .eq('order_ref', order_ref).execute()
+        if done.data:
+            return
+        rows = supabase.table('discount_redemptions').select('id').eq('user_id', user_id).eq('plan_code', plan_code) \
+            .eq('status', 'reserved').is_('order_ref', 'null').eq('final_amount', amount) \
+            .gte('created_at', (now - timedelta(hours=24)).isoformat()).order('created_at', desc=True).limit(1).execute().data
+        if rows:
+            supabase.table('discount_redemptions').update({'status': 'redeemed', 'redeemed_at': now.isoformat(), 'order_ref': order_ref}) \
+                .eq('id', rows[0]['id']).execute()
+    except Exception as e:
+        print(f"discount settle failed for order_ref={order_ref}:", repr(e))
+
+class DiscountPreviewRequest(BaseModel):
+    plan_code: str
+    code: str = Field(max_length=40)
+    currency: str | None = Field(default=None, max_length=3)
+
+@app.post("/billing/discount/preview")
+def preview_discount(body: DiscountPreviewRequest, user=Depends(get_current_user)):
+    """What the buyer would pay with this code. Reserves nothing."""
+    plan = PLAN_CATALOG.get(body.plan_code)
+    if not plan or not plan.get("available", True):
+        raise HTTPException(status_code=400, detail=f"Unknown plan_code: {body.plan_code}")
+    amount, currency = _resolve_price(user.id, body.plan_code, plan, body.currency)
+    res = _reserve_discount(user, body.plan_code, body.code, dry_run=True)
+    final, discount = _discounted(res, body.plan_code, amount, currency)
+    return {"original": amount, "discount": discount, "final": final, "currency": currency}
+
+
 @app.post("/billing/checkout")
 def create_checkout(body: CheckoutRequest, request: Request, user=Depends(get_current_user)):
     _save_checkout_context(user.id, request, body.fbp, body.fbc)
@@ -4208,18 +4393,17 @@ def create_checkout(body: CheckoutRequest, request: Request, user=Depends(get_cu
     full_name = (user.user_metadata or {}).get("full_name", "") or ""
     first_name, _, last_name = full_name.strip().partition(" ")
 
-    # SAR unless the admin multi-currency switch is on and the buyer asked for a currency we have a price for.
-    # PATHFINDER_TEST_AMOUNT (payment testing) always wins, so test charges never change currency.
-    charge_amount, charge_currency = plan["amount"], plan["currency"]
-    # Adding Launchpad on top of an existing Pathfinder purchase costs the upgrade price, not the package price.
-    upgrade = body.plan_code == "launchpad_monthly" and not _test_amount and _owns_pathfinder(user.id)
-    if upgrade:
-        charge_amount = LAUNCHPAD_UPGRADE_SAR
-    wanted = (body.currency or "").upper()
-    if not _test_amount and wanted != charge_currency and _is_multi_currency_enabled():
-        local = (LAUNCHPAD_UPGRADE_LOCAL if upgrade else LOCAL_PRICES.get(body.plan_code, {})).get(wanted)
-        if local is not None:
-            charge_amount, charge_currency = local, wanted
+    charge_amount, charge_currency = _resolve_price(user.id, body.plan_code, plan, body.currency)
+    original_amount = charge_amount
+
+    reservation, discount_amount = None, 0.0
+    if body.discount_code and body.discount_code.strip():
+        reservation = _reserve_discount(user, body.plan_code, body.discount_code)
+        try:
+            charge_amount, discount_amount = _discounted(reservation, body.plan_code, charge_amount, charge_currency)
+        except Exception:
+            _release_discount(reservation)
+            raise
 
     payload = {
         "external_user_id": user.id,
@@ -4243,15 +4427,21 @@ def create_checkout(body: CheckoutRequest, request: Request, user=Depends(get_cu
         )
         resp.raise_for_status()
     except httpx.HTTPStatusError as e:
+        _release_discount(reservation)
         print("Shop rejected the order:", e.response.status_code, e.response.text[:500])   # details stay in the logs, not the response
         raise HTTPException(status_code=502, detail="The payment page could not be created. Please try again.")
     except httpx.RequestError as e:
+        _release_discount(reservation)
         print("Could not reach Shop:", e)
         raise HTTPException(status_code=502, detail="The payment page could not be created. Please try again.")
 
-    checkout_url = resp.json().get("checkout_url")
+    data = resp.json()
+    checkout_url = data.get("checkout_url")
     if not checkout_url:
+        _release_discount(reservation)
         raise HTTPException(status_code=502, detail="Shop response did not include a checkout_url")
+    if reservation:
+        _attach_discount_order(reservation, data.get("order_ref"), original_amount, charge_amount, discount_amount, charge_currency)
 
     return {"checkout_url": checkout_url}
 
@@ -4776,6 +4966,7 @@ async def receive_hub_transaction(request: Request, background_tasks: Background
         raise HTTPException(status_code=500, detail="Failed to record transaction")
 
     if result.data:
+        _settle_discount(body.external_user_id, body.order_ref, body.plan_code, body.amount)
         # Meta first: it's best-effort and never raises, so a failure in the plan
         # write below can't stop the Purchase event from being sent.
         _send_meta_purchase_event(body.external_user_id, body.order_ref, body.amount, body.currency, body.tap_charge_id)
