@@ -157,20 +157,22 @@ def _radar(items: list[tuple[str, float]], top_label: str) -> str:
     does not shape Arabic inside SVG text (the letters would come out unjoined)."""
     cx = cy = 95
     R = 58
-    VB_X, VB_Y, VB_W, VB_H = -62, 5, 314, 180
+    # previous: VB_X, VB_Y, VB_W, VB_H = -62, 5, 314, 180  (svg was squeezed into 100% x 112px, so the drawing and the labels drifted apart)
+    # the box below is drawn at an exact 247 x 112 px (same ratio as the viewBox), so labels sit where they are computed
+    VB_X, VB_Y, VB_W, VB_H = -75, 18, 340, 154
     pts, labels = [], ''
     for i, (label, v) in enumerate(items):
         a = math.radians(-90 + 60 * i)
         v = max(4.0, min(100.0, float(v)))
         pts.append((cx + R * v / 100 * math.cos(a), cy + R * v / 100 * math.sin(a)))
-        lx, ly = cx + (R + 14) * math.cos(a), cy + (R + 14) * math.sin(a)
+        lx, ly = cx + (R + 17) * math.cos(a), cy + (R + 17) * math.sin(a)
         tx = '0' if math.cos(a) > .3 else ('-100%' if math.cos(a) < -.3 else '-50%')
         style = (f'left:{(lx - VB_X) / VB_W * 100:.2f}%;top:{(ly - VB_Y) / VB_H * 100:.2f}%;transform:translate({tx},-50%);'
                  + ('font-weight:800;color:#075288;' if label == top_label else 'color:#3a4553;'))
         labels += f'<span class="rl" style="{style}">{_e(label)} {int(round(v))}</span>'
     hexa = ' '.join(f'{cx + R * math.cos(math.radians(-90 + 60 * i)):.1f},{cy + R * math.sin(math.radians(-90 + 60 * i)):.1f}' for i in range(6))
     poly = ' '.join(f'{x:.1f},{y:.1f}' for x, y in pts)
-    return (f'<div class="radar"><svg viewBox="{VB_X} {VB_Y} {VB_W} {VB_H}" width="100%" height="112"><polygon points="{hexa}" fill="#f2f8fd" stroke="#cfe0ef"/>'
+    return (f'<div class="radar"><svg viewBox="{VB_X} {VB_Y} {VB_W} {VB_H}" width="247" height="112"><polygon points="{hexa}" fill="#f2f8fd" stroke="#cfe0ef"/>'
             f'<polygon points="{poly}" fill="#0770ba33" stroke="#0770ba" stroke-width="1.4"/></svg>{labels}</div>')
 
 
@@ -311,7 +313,7 @@ p {{ margin:0 0 2.5mm }} .lead {{ font-size:11.5pt; color:#3a4553 }}
 .gt b {{ color:#075288 }} .gt .wide {{ width:100%; background:#f2f8fd }}
 .cta {{ padding:2.5mm 7mm !important; bottom:21mm !important }} .cta .btn {{ padding:7px !important; font-size:12pt !important }} .cta .fine {{ margin-top:1mm }}
 .cont {{ margin-top:0 !important; font-size:9pt !important }} .q {{ margin-top:4mm !important; padding:5.5mm 7mm !important }}
-.radar {{ position:relative }}
+.radar {{ position:relative; width:247px; margin:0 auto }}
 .col .card {{ margin-bottom:0 }}
 /* both sides are the same fixed height: the interests card, and the three locked cards stacked with 2.5mm between them */
 .big {{ height:117mm }} .lk {{ height:37.3mm; margin-bottom:2.5mm !important }} .lk.last {{ margin-bottom:0 !important }}
