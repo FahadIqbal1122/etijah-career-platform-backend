@@ -2790,10 +2790,23 @@ _ORG_DOMAIN_RE = re.compile(r'^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-
 def list_org_domains(_=Depends(require_admin)):
     domains = supabase.table('org_domain_usage').select('*').order('created_at', desc=True).execute().data or []
     grants = supabase.table('org_domain_grants').select('*').order('granted_at').execute().data or []
+    # Which seat holders have finished an assessment (they have used the licence, not only claimed it). Best effort:
+    # if this lookup fails the list still loads, with no completion counts.
+    done_users: set = set()
+    try:
+        ids = list({g['user_id'] for g in grants if not g.get('revoked_at')})
+        for i in range(0, len(ids), 100):
+            rows = supabase.table('assessment_responses').select('user_id').eq('completed', True) \
+                .in_('user_id', ids[i:i + 100]).execute().data or []
+            done_users.update(r['user_id'] for r in rows if r.get('user_id'))
+    except Exception as e:
+        print("org-domains completion lookup failed:", repr(e))
     by_domain: dict = {}
     for g in grants:
-        by_domain.setdefault(g['domain_id'], []).append(g)
-    return [{**d, "grants": by_domain.get(d['id'], [])} for d in domains]
+        by_domain.setdefault(g['domain_id'], []).append({**g, 'completed': g['user_id'] in done_users})
+    return [{**d, "grants": by_domain.get(d['id'], []),
+             "seats_completed": sum(1 for g in by_domain.get(d['id'], []) if not g.get('revoked_at') and g['completed'])}
+            for d in domains]
 
 @app.post("/admin/org-domains")
 def save_org_domain(body: OrgDomainRequest, _=Depends(require_admin)):

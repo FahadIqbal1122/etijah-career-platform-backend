@@ -171,3 +171,37 @@ class PublicDomainTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ListOrgDomainsTests(unittest.TestCase):
+    """GET /admin/org-domains: each seat says whether its holder finished an assessment, and each company counts them."""
+
+    def run_list(self, completed_rows, fail_lookup=False):
+        domains = [{"id": "d1", "domain": "a.com", "seat_limit": 5, "seats_used": 2}]
+        grants = [{"domain_id": "d1", "user_id": "u1", "email": "x@a.com", "revoked_at": None},
+                  {"domain_id": "d1", "user_id": "u2", "email": "y@a.com", "revoked_at": None},
+                  {"domain_id": "d1", "user_id": "u3", "email": "z@a.com", "revoked_at": "2026-10-02T00:00:00Z"}]
+
+        def table(name):
+            q = mock.MagicMock()
+            for m in ("select", "order", "eq", "in_"):
+                getattr(q, m).return_value = q
+            if name == "assessment_responses" and fail_lookup:
+                q.execute.side_effect = RuntimeError("db down")
+            else:
+                data = {"org_domain_usage": domains, "org_domain_grants": grants, "assessment_responses": completed_rows}[name]
+                q.execute.return_value = types.SimpleNamespace(data=data)
+            return q
+
+        with mock.patch.object(main, "supabase", types.SimpleNamespace(table=table)):
+            return main.list_org_domains(None)[0]
+
+    def test_counts_only_active_seats_that_finished(self):
+        out = self.run_list([{"user_id": "u1"}, {"user_id": "u3"}])     # u3's seat was taken back: not counted
+        self.assertEqual(out["seats_completed"], 1)
+        self.assertEqual([g["completed"] for g in out["grants"]], [True, False, True])
+
+    def test_the_list_still_loads_when_the_completion_lookup_fails(self):
+        out = self.run_list([], fail_lookup=True)
+        self.assertEqual(out["seats_completed"], 0)
+        self.assertEqual(len(out["grants"]), 3)
