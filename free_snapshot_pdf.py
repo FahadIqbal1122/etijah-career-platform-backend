@@ -45,7 +45,9 @@ _TXT = {
         'includes': 'Your full report adds: suggested careers and why they fit · qualification gaps and learning · AI implications · a personalised 90-day plan.',
         'disclaimer': 'This profile reflects self-reported preferences, not a test of ability or a guarantee of career fit.',
         'confidential': 'Etijahi Report · Confidential', 'levels': {'low': 'Low', 'medium': 'Medium', 'high': 'High'},
-        'found': 'We found <b>8 ranked career matches</b> for this profile, across these fields:',
+        # 'found': 'We found <b>8 ranked career matches</b> for this profile, across these fields:',
+        'found': 'We found <b>8 ranked career matches</b> for this profile. Unlock your full report to see them.',
+        'locked_section': 'Unlock your full report to see this part of your profile.',
         'locked_title': 'Your full report includes', 'locked': 'Locked',
         'locked_items': ['Your career matches', 'Why each career fits you', 'Your career in the age of AI',
                          'Your personal career action plan', 'Compare your career options'],
@@ -82,7 +84,9 @@ _TXT = {
         'includes': 'يضيف تقريرك الكامل: المسارات المهنية المقترحة وسبب ملاءمتها · فجوات المؤهلات والتعلّم · أثر الذكاء الاصطناعي · خطة شخصية لمدة 90 يومًا.',
         'disclaimer': 'يعكس هذا الملف تفضيلاتك كما ذكرتها، وليس اختبارًا للقدرات ولا ضمانًا لملاءمة مسار مهني.',
         'confidential': 'تقرير إتجاهي · سرّي', 'levels': {'low': 'منخفض', 'medium': 'متوسط', 'high': 'مرتفع'},
-        'found': 'وجدنا <b>8 مسارات مهنية مرتبة</b> تناسب ملفك، في المجالات التالية:',
+        # 'found': 'وجدنا <b>8 مسارات مهنية مرتبة</b> تناسب ملفك، في المجالات التالية:',
+        'found': 'وجدنا <b>8 مسارات مهنية مرتبة</b> تناسب ملفك. افتح تقريرك الكامل لتراها.',
+        'locked_section': 'افتح تقريرك الكامل لترى هذا الجزء من ملفك.',
         'locked_title': 'يتضمن تقريرك الكامل', 'locked': 'مقفل',
         'locked_items': ['مساراتك المهنية المقترحة', 'لماذا يناسبك كل مسار', 'مسيرتك المهنية في عصر الذكاء الاصطناعي',
                          'خطتك المهنية الشخصية', 'قارن بين خياراتك المهنية'],
@@ -210,6 +214,8 @@ def build_free_snapshot_html(user_data: dict, summary: dict, scores: dict, notes
     buy = T['buy'].format(price=price)
     fa = _FIELDS[L].get(top_types[0] if top_types else 'enterprising', _FIELDS[L]['enterprising'])
     fb = _FIELDS[L].get(top_types[1], []) if len(top_types) > 1 and top_types[1] != (top_types[0] if top_types else None) else []
+    # fields_html is no longer shown (the field pills were removed from the free report); the template line was
+    # <div class="fl">{fields_html}</div>, directly under the 'found' sentence
     fields_html = ''.join(f'<span>{_e(x)}</span>' for x in (fa + fb[:1])[:3])
     locked_html = ''.join(f'<div><b>{_e(x)}</b><u>{T["locked"]}</u></div>' for x in T['locked_items'])
     tk = _tension_key(top_types, big_five)
@@ -233,11 +239,21 @@ def build_free_snapshot_html(user_data: dict, summary: dict, scores: dict, notes
         n = f'<div class="mean"><b>{T["means"]}</b> {_e(note)}</div>' if note else ''
         return f'<div class="card"><h3>{_e(title)}</h3><div class="s">{_e(sub)}</div>{body}{n}</div>'
 
-    # Two balanced columns (interests + personality | values + strengths), so even four long notes stay clear of the buy box
-    left = (card(T['c_interests'], T['c_interests_sub'], _radar(radar_items, top_label) + interest_bars, notes.get('riasec'))
-            + card(T['c_personality'], T['c_personality_sub'], f'<div class="pills">{bf_pills}</div>', notes.get('big_five')))
-    right = (card(T['c_values'], T['c_values_sub'], value_bars, notes.get('values'))
-             + card(T['c_strengths'], T['c_strengths_sub'], strength_bars, notes.get('strengths')))
+    # Interests on the left; what matters to you, what you are good at and how you think and act keep their headings but are
+    # locked on the right, stacked to the same height as the interests card
+    def locked_card(title, sub, last=False):
+        return (f'<div class="card lk{" last" if last else ""}"><h3>{_e(title)}</h3><div class="s">{_e(sub)}</div>'
+                f'<div class="lkb">{_e(T["locked_section"])}</div></div>')
+
+    left = card(T['c_interests'], T['c_interests_sub'], _radar(radar_items, top_label) + interest_bars, notes.get('riasec')).replace('class="card"', 'class="card big"', 1)
+    right = (locked_card(T['c_values'], T['c_values_sub'])
+             + locked_card(T['c_strengths'], T['c_strengths_sub'])
+             + locked_card(T['c_personality'], T['c_personality_sub'], last=True))
+    # previous layout (interests + personality | values + strengths), kept for reference:
+    # left = (card(T['c_interests'], T['c_interests_sub'], _radar(radar_items, top_label) + interest_bars, notes.get('riasec'))
+    #         + card(T['c_personality'], T['c_personality_sub'], f'<div class="pills">{bf_pills}</div>', notes.get('big_five')))
+    # right = (card(T['c_values'], T['c_values_sub'], value_bars, notes.get('values'))
+    #          + card(T['c_strengths'], T['c_strengths_sub'], strength_bars, notes.get('strengths')))
 
     return f"""<!DOCTYPE html>
 <html lang="{L}" dir="{'rtl' if ar else 'ltr'}"><head><meta charset="UTF-8"><style>
@@ -291,6 +307,10 @@ p {{ margin:0 0 2.5mm }} .lead {{ font-size:11.5pt; color:#3a4553 }}
 .cta {{ padding:2.5mm 7mm !important; bottom:21mm !important }} .cta .btn {{ padding:7px !important; font-size:12pt !important }} .cta .fine {{ margin-top:1mm }}
 .cont {{ margin-top:0 !important; font-size:9pt !important }} .q {{ margin-top:4mm !important; padding:5.5mm 7mm !important }}
 .radar {{ position:relative }}
+.col .card {{ margin-bottom:0 }}
+/* both sides are the same fixed height: the interests card, and the three locked cards stacked with 2.5mm between them */
+.big {{ height:117mm }} .lk {{ height:37.3mm; margin-bottom:2.5mm !important }} .lk.last {{ margin-bottom:0 !important }}
+.lkb {{ height:18mm; display:flex; align-items:center; justify-content:center; margin-top:1mm; border:1px dashed #b9c6d6; border-radius:8px; background:#f2f8fd; color:#3a4553; font-size:9pt; text-align:center; padding:0 4mm }}
 </style></head><body>
 <div class="page"><div class="top"></div>
 <div class="hdr"><span class="brand">{'إتجاهي' if ar else 'ETIJAHI'}</span><span class="sub">{T['brand_sub']}</span></div>
@@ -305,7 +325,6 @@ p {{ margin:0 0 2.5mm }} .lead {{ font-size:11.5pt; color:#3a4553 }}
 <h2 style="margin-top:2mm;font-size:18pt">{T['question']}</h2>
 <p>{T['q_body']}</p>
 <div class="nw"><p style="margin:1mm 0 2mm">{T['found']}</p>
-<div class="fl">{fields_html}</div>
 <div class="lst"><div class="lh">{T['locked_title']}</div>{locked_html}</div>
 {tension_html}</div>
 <a class="btn" style="margin-top:5mm" href="{_html.escape(upgrade_url, quote=True)}">{_e(buy)}</a>

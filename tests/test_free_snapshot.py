@@ -86,14 +86,26 @@ class FreePdf(unittest.TestCase):
         for withheld in ('match', 'Economist', 'gap', '90-day plan</b>'):
             self.assertNotIn(f'>{withheld}', h)
 
-    def test_teasers_name_fields_not_careers_and_list_the_locked_sections(self):
+    def test_teasers_name_no_fields_or_careers_and_list_the_locked_sections(self):
         h = self.build()
         self.assertIn('8 ranked career matches', h)
-        self.assertIn('Business leadership', h)          # fields for the top interest types, never career titles
+        self.assertIn('Unlock your full report to see them.', h)
+        self.assertNotIn('Business leadership', h)       # the field pills are hidden: neither fields nor career titles are named
+        self.assertNotIn('class="fl"', h)
         self.assertEqual(h.count('class="lst"'), 1)
         for title in ('Your career matches', 'Why each career fits you', 'Your career in the age of AI',
                       'Your personal career action plan', 'Compare your career options'):
             self.assertGreaterEqual(h.count(title), 2)    # once as a locked line, once in "what else you get"
+
+    def test_only_the_interests_card_shows_content_the_other_three_are_locked(self):
+        h = self.build()
+        self.assertEqual(h.count('class="card lk'), 3)
+        self.assertEqual(h.count('Unlock your full report to see this part of your profile.'), 3)
+        for heading in ('What matters to you', 'What you are good at', 'How you think and act'):
+            self.assertIn(heading, h)                     # headings stay
+        for hidden in ('Freedom and family together.', 'You build relationships.', 'Organised and open.', 'Openness'):
+            self.assertNotIn(hidden, h)                   # the content and their notes do not
+        self.assertIn('You enjoy organising ideas.', h)   # the interests note stays
 
     def test_the_observation_appears_only_when_a_rule_matches(self):
         self.assertNotIn('class="ins"', self.build())    # this sample is medium extraversion: no rule fires
@@ -105,6 +117,7 @@ class FreePdf(unittest.TestCase):
         h = self.build('ar')
         self.assertIn('8 مسارات مهنية مرتبة', h)
         self.assertIn('مقفل', h)
+        self.assertEqual(h.count('افتح تقريرك الكامل لترى هذا الجزء من ملفك.'), 3)
 
     def test_headline_never_repeats_the_same_phrase(self):
         one = {**SUMMARY, 'riasec': {'top_types': ['investigative']}}
@@ -112,11 +125,10 @@ class FreePdf(unittest.TestCase):
         self.assertEqual(h.count('understanding how things work'), 1)
         self.assertIn('influencing what happens next', h)
 
-    def test_notes_show_under_each_section_and_are_escaped(self):
+    def test_the_interests_note_shows_and_is_escaped(self):
         h = self.build(notes={**NOTES, 'riasec': '<script>x</script>'})
         self.assertIn('What this means:', h)
         self.assertNotIn('<script>x</script>', h)
-        self.assertIn('Freedom and family together.', h)
 
     def test_a_runaway_note_cannot_break_the_two_page_layout(self):
         h = self.build(notes={k: 'word ' * 400 for k in NOTES})
@@ -126,11 +138,13 @@ class FreePdf(unittest.TestCase):
     def test_missing_notes_leave_no_empty_label(self):
         self.assertNotIn('What this means:', self.build(notes={}))
 
-    def test_a_trait_with_no_score_is_left_out_not_shown_as_medium(self):
-        summary = {**SUMMARY, 'big_five': {'openness': 'high'}}
-        h = build_free_snapshot_html({}, summary, SCORES, NOTES, 'en', 'October 18, 2026', upgrade_url='u', price='59 SAR')
-        self.assertIn('Openness to Experience: <b>High</b>', h)
-        self.assertNotIn('Extraversion', h)
+    # The personality traits are now locked in the free PDF (the section keeps its heading only), so the old check that a
+    # trait with no score is left out rather than shown as medium no longer applies:
+    # def test_a_trait_with_no_score_is_left_out_not_shown_as_medium(self):
+    #     summary = {**SUMMARY, 'big_five': {'openness': 'high'}}
+    #     h = build_free_snapshot_html({}, summary, SCORES, NOTES, 'en', 'October 18, 2026', upgrade_url='u', price='59 SAR')
+    #     self.assertIn('Openness to Experience: <b>High</b>', h)
+    #     self.assertNotIn('Extraversion', h)
 
     def test_arabic_is_right_to_left_with_arabic_labels(self):
         h = self.build('ar')
