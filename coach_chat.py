@@ -1,5 +1,5 @@
 """
-Two-way "coach" chat bubble (Gemini). Two modes:
+Two-way "coach" chat bubble (Claude Haiku). Two modes:
 
 - "assessment": no saved response exists yet, so the model gets NO user data at all. It can
   only explain how the assessment works and must redirect any career question to
@@ -16,11 +16,12 @@ import time
 import threading
 from collections import defaultdict, deque
 
-import google.generativeai as genai
+import anthropic
 
 import ai_usage
 
-COACH_MODEL = "gemini-2.5-flash"
+# Claude, not Gemini: Gemini is switched off in production (app_settings.gemini_enabled), and the coach must work without it.
+COACH_MODEL = "claude-haiku-5-5"
 COACH_TIMEOUT_S = 20
 MAX_MESSAGE_CHARS = 500
 MAX_HISTORY_TURNS = 6
@@ -207,28 +208,44 @@ def _clean_history(history: list[dict]) -> list[dict]:
     return out
 
 
+_client = None
+
+
+def _get_client():
+    global _client
+    if _client is None:
+        _client = anthropic.Anthropic()
+    return _client
+
+
 def generate_reply(mode: str, message: str, history: list[dict], locale: str,
                    tier: str = "free", summary: dict | None = None, progress: tuple[int, int] | None = None,
                    question: dict | None = None) -> str:
     ai_usage.check_budget()
-    genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
-    model = genai.GenerativeModel(
-        COACH_MODEL,
-        system_instruction=build_system_prompt(mode, locale, tier, summary, progress, question),
-        # 2.5-flash spends part of this budget on internal thinking, so keep headroom above the ~120 words we want.
-        generation_config={"max_output_tokens": 900, "temperature": 0.6},
-    )
-    contents = _clean_history(history) + [{"role": "user", "parts": [message.strip()[:MAX_MESSAGE_CHARS]]}]
+    # _clean_history keeps Gemini's user/model roles; Claude calls the coach's side "assistant".
+    messages = [{"role": "user" if t["role"] == "user" else "assistant", "content": t["parts"][0]}
+                for t in _clean_history(history)]
+    messages.append({"role": "user", "content": message.strip()[:MAX_MESSAGE_CHARS]})
     started = time.monotonic()
     try:
-        response = model.generate_content(contents, request_options={"timeout": COACH_TIMEOUT_S})
+        response = _get_client().with_options(max_retries=0).messages.create(
+            model=COACH_MODEL,
+            max_tokens=600,
+            temperature=0.6,
+            system=build_system_prompt(mode, locale, tier, summary, progress, question),
+            messages=messages,
+            timeout=COACH_TIMEOUT_S,
+            # the 5.x models think by default (billed as output); a short chat reply needs none
+            extra_body={"thinking": {"type": "disabled"}, "output_config": {"effort": "low"}},
+        )
     except Exception as e:
-        ai_usage.record(provider="gemini", model=COACH_MODEL, kind="coach_chat", label=f"coach:{mode}",
+        ai_usage.record(provider="claude", model=COACH_MODEL, kind="coach_chat", label=f"coach:{mode}",
                         seconds=time.monotonic() - started, ok=False, error=type(e).__name__)
         raise
-    ai_usage.record(provider="gemini", model=COACH_MODEL, kind="coach_chat", label=f"coach:{mode}",
-                    seconds=time.monotonic() - started, **ai_usage.from_gemini(getattr(response, "usage_metadata", None)))
-    text = (response.text or "").strip()   # raises ValueError when the response was blocked/empty
+    ai_usage.record(provider="claude", model=COACH_MODEL, kind="coach_chat", label=f"coach:{mode}",
+                    seconds=time.monotonic() - started, **ai_usage.from_claude(getattr(response, "usage", None)))
+    block = next((b for b in response.content if b.type == "text"), None)
+    text = (block.text if block else "").strip()
     if not text:
         raise ValueError("empty coach reply")
     return text[:1200]
