@@ -448,7 +448,7 @@ class OnetLinkRequest(BaseModel):
 
 class CheckExistingRequest(BaseModel):
     email: str
-    phone: str
+    phone: str = ''   # the form no longer asks for a phone number
 
 class DraftSaveRequest(BaseModel):
     resume_token: str | None = Field(default=None, max_length=100)
@@ -470,7 +470,7 @@ WHY_HERE_VALUES = {"choosing_study", "first_job", "career_change", "curious", "r
 class SubmitRequest(BaseModel):
     full_name: str = Field(max_length=200)
     email: EmailStr
-    phone: str = Field(max_length=40)
+    phone: str = Field(default='', max_length=40)   # no longer asked on the form
     country: str = Field(max_length=100)
     nationality: str = Field(max_length=100)
     age: int = Field(ge=10, le=100)
@@ -798,7 +798,8 @@ def assessment_allowance(user=Depends(get_current_user)):
 def check_existing(body: CheckExistingRequest, user=Depends(get_optional_user), _beta=Depends(require_beta_open)):
     result = supabase.rpc('check_existing_response', {
         'p_email': body.email,
-        'p_phone': body.phone,
+        # No phone given -> NULL, which never equals a stored phone. An empty string would match every phone-less row.
+        'p_phone': (body.phone or '').strip() or None,
     }).execute()
 
     if not result.data:
