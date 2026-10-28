@@ -1248,6 +1248,37 @@ def delete_onet_link(onet_id: str, _=Depends(require_admin)):
     return {"deleted": onet_id}
 
 
+_ASSESSMENT_TOTAL_TTL = timedelta(hours=1)
+_assessment_total_cache: dict = {"value": 0, "checked_at": None}
+
+def _count_people_assessed() -> int:
+    """Distinct people (by email) with a finished assessment. Unfinished rows (the pay-to-continue partial copy) are not counted."""
+    emails: set[str] = set()
+    start, page = 0, 1000
+    while start < 50000:   # a hard stop so a runaway table can never loop forever
+        rows = supabase.table('assessment_responses').select('email').or_('completed.is.null,completed.eq.true') \
+            .order('created_at').range(start, start + page - 1).execute().data or []
+        emails.update((r.get('email') or '').strip().lower() for r in rows if r.get('email'))
+        if len(rows) < page:
+            break
+        start += page
+    return len(emails)
+
+@app.get("/stats/assessment-total")
+def get_assessment_total():
+    """Public: how many people have taken the assessment, for the landing page. Cached for an hour; on a lookup failure the
+    last known number is served (0 before the first success, and the page shows nothing for 0)."""
+    now = datetime.now(timezone.utc)
+    checked = _assessment_total_cache["checked_at"]
+    if checked is None or now - checked > _ASSESSMENT_TOTAL_TTL:
+        try:
+            _assessment_total_cache.update(value=_count_people_assessed(), checked_at=now)
+        except Exception as e:
+            print("assessment total lookup failed:", repr(e))
+            _assessment_total_cache["checked_at"] = now - _ASSESSMENT_TOTAL_TTL + timedelta(minutes=2)   # retry in 2 minutes
+    return {"count": int(_assessment_total_cache["value"])}
+
+
 @app.get("/stats/recent-completions")
 def get_recent_completions():
     one_hour_ago = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()

@@ -205,5 +205,38 @@ class PrewarmTests(unittest.TestCase):
         send.assert_called_once()
 
 
+class AssessmentTotalTests(unittest.TestCase):
+    def setUp(self):
+        main._assessment_total_cache.update(value=0, checked_at=None)
+
+    def db(self, rows):
+        db = mock.MagicMock()
+        q = db.table.return_value
+        for m in ("select", "or_", "order", "range"):
+            getattr(q, m).return_value = q
+        q.execute.return_value = types.SimpleNamespace(data=rows)
+        return db, q
+
+    def test_counts_distinct_people_by_email_ignoring_case_and_blanks(self):
+        db, q = self.db([{"email": "A@b.com"}, {"email": "a@b.com "}, {"email": "c@d.com"}, {"email": None}])
+        with mock.patch.object(main, "supabase", db):
+            self.assertEqual(main.get_assessment_total(), {"count": 2})
+        q.or_.assert_called_once_with('completed.is.null,completed.eq.true')   # unfinished rows are not people who took it
+
+    def test_the_number_is_cached(self):
+        db, _ = self.db([{"email": "a@b.com"}])
+        with mock.patch.object(main, "supabase", db):
+            main.get_assessment_total()
+            main.get_assessment_total()
+        self.assertEqual(db.table.call_count, 1)
+
+    def test_a_failure_serves_the_last_number_and_never_raises(self):
+        main._assessment_total_cache.update(value=7, checked_at=None)
+        db = mock.MagicMock()
+        db.table.side_effect = RuntimeError("db down")
+        with mock.patch.object(main, "supabase", db):
+            self.assertEqual(main.get_assessment_total(), {"count": 7})
+
+
 if __name__ == "__main__":
     unittest.main()
