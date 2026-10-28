@@ -450,6 +450,22 @@ class CheckExistingRequest(BaseModel):
     email: str
     phone: str = ''   # the form no longer asks for a phone number
 
+class PartialSaveRequest(BaseModel):
+    """The first part of an assessment, saved to the signed-in account at the pay-to-continue step (the paid report is built
+    from a saved assessment, so checkout needs one). Every field is optional because the rest is asked after payment."""
+    full_name: str | None = Field(default=None, max_length=200)
+    email: EmailStr
+    country: str | None = Field(default=None, max_length=100)
+    nationality: str | None = Field(default=None, max_length=100)
+    age: int | None = Field(default=None, ge=10, le=100)
+    current_stage: Literal["high_school", "university", "recent_graduate",
+        "working_exploring", "career_changer", "returning", "between_roles", "other"] | None = None
+    answers: dict[str, Any]
+    locale: str | None = Field(default='en', max_length=5)
+
+class PaywallPercentRequest(BaseModel):
+    percent: int = Field(ge=0, le=100)
+
 class DraftSaveRequest(BaseModel):
     resume_token: str | None = Field(default=None, max_length=100)
     email: EmailStr
@@ -695,6 +711,8 @@ class CheckoutRequest(BaseModel):
     locale: str | None = Field(default=None, max_length=5)  # 'en' | 'ar': the page language the buyer paid from
     currency: str | None = Field(default=None, max_length=3)  # display currency the buyer saw; only used while multi-currency is on
     discount_code: str | None = Field(default=None, max_length=40)
+    # 'assessment': the buyer paid from inside the assessment, so the shop sends them back there to carry on
+    return_to: Literal['assessment'] | None = None
 
 class HubTransactionBody(BaseModel):
     external_user_id: str
@@ -794,6 +812,109 @@ def assessment_allowance(user=Depends(get_current_user)):
         .order('created_at', desc=True).limit(1).execute().data
     return {"blocked": True, "latest_response_id": latest[0]['id'] if latest else None}
 
+# ── Pay-to-continue inside the assessment ─────────────────────────────────────
+# After the Interests & Personality chapter new people create an account and pay before the rest. app_settings.paywall_percent
+# (0-100) is how many starters see that step: 0 = nobody (the old free flow), 100 = everybody (and /assessment/submit then
+# refuses anyone without paid access). In between, the browser keeps a random bucket and compares it with this number.
+PAYWALL_PERCENT_KEY = "paywall_percent"
+_paywall_cache: dict[str, Any] = {"value": 0, "checked_at": None}
+
+def _paywall_percent() -> int:
+    now = datetime.now(timezone.utc)
+    if _paywall_cache["checked_at"] and now - _paywall_cache["checked_at"] < _COACH_SWITCH_CACHE_TTL:
+        return _paywall_cache["value"]
+    try:
+        row = supabase.table('app_settings').select('value').eq('key', PAYWALL_PERCENT_KEY).execute()
+        raw = row.data[0]['value'] if row.data else 0
+        value = max(0, min(100, int(raw))) if isinstance(raw, (int, float)) and not isinstance(raw, bool) else 0
+    except Exception as e:
+        print("Paywall percent lookup failed, defaulting to off:", repr(e))
+        value = 0
+    _paywall_cache.update(value=value, checked_at=now)
+    return value
+
+def _has_paid_access(user) -> bool:
+    """Admins, and anyone whose effective tier is not free (bought Pathfinder or Launchpad, a company seat, or the admin
+    test mode that unlocks everything)."""
+    if not user:
+        return False
+    if (getattr(user, "app_metadata", None) or {}).get("role") == "admin":
+        return True
+    return get_effective_tier(user.id) != "free"
+
+@app.get("/paywall-config")
+def get_paywall_config():
+    """Unauthenticated: the assessment page reads this to decide whether this visitor is asked to pay mid-way."""
+    return {"percent": _paywall_percent()}
+
+@app.get("/admin/paywall-percent")
+def get_paywall_percent_admin(_=Depends(require_admin)):
+    return {"percent": _paywall_percent()}
+
+@app.post("/admin/paywall-percent")
+def set_paywall_percent(body: PaywallPercentRequest, _=Depends(require_admin)):
+    supabase.table('app_settings').upsert({
+        'key': PAYWALL_PERCENT_KEY, 'value': body.percent,
+        'updated_at': datetime.now(timezone.utc).isoformat(),
+    }, on_conflict='key').execute()
+    _paywall_cache.update(value=body.percent, checked_at=datetime.now(timezone.utc))
+    return {"percent": body.percent}
+
+def _latest_completed_id(user_id: str) -> str | None:
+    rows = supabase.table('assessment_responses').select('id').eq('user_id', user_id).eq('completed', True) \
+        .order('created_at', desc=True).limit(1).execute().data
+    return rows[0]['id'] if rows else None
+
+@app.post("/assessment/partial")
+def save_partial_assessment(body: PartialSaveRequest, user=Depends(get_current_user), _beta=Depends(require_beta_open)):
+    """Saves the answers so far to the signed-in account as an unfinished assessment (completed=false), so checkout has an
+    assessment to point at and the person can carry on after paying. Calling it again updates the same row. The final
+    /assessment/submit replaces it with the finished one."""
+    if _assessment_slots_left(user) == 0:
+        raise HTTPException(status_code=409, detail="retake_not_included")
+    if len(json.dumps(body.answers, default=str)) > DRAFT_MAX_ANSWERS_BYTES:
+        raise HTTPException(status_code=413, detail="Too large")
+    # An account that already has a finished (free) result unlocks that one by paying. A paid account holds one full report,
+    # so paying here and then finishing a second assessment would be refused at the end: do not take the money for it.
+    if not _has_paid_access(user) and _latest_completed_id(user.id):
+        raise HTTPException(status_code=409, detail="already_has_assessment")
+    fields = {
+        'full_name': body.full_name, 'email': body.email.strip().lower(), 'country': body.country,
+        'nationality': body.nationality, 'age': body.age, 'current_stage': body.current_stage,
+        'answers': body.answers, 'locale': body.locale if body.locale in ('en', 'ar') else 'en',
+        'completed': False, 'user_id': user.id,
+    }
+    existing = supabase.table('assessment_responses').select('id').eq('user_id', user.id).eq('completed', False) \
+        .order('created_at', desc=True).limit(1).execute().data
+    if existing:
+        response_id = existing[0]['id']
+        supabase.table('assessment_responses').update(fields).eq('id', response_id).execute()
+    else:
+        inserted = supabase.table('assessment_responses').insert(fields).execute().data
+        if not inserted:
+            raise HTTPException(status_code=500, detail="Failed to save")
+        response_id = inserted[0]['id']
+    return {"response_id": response_id, "has_access": _has_paid_access(user)}
+
+@app.get("/assessment/gate")
+def assessment_gate(background_tasks: BackgroundTasks, user=Depends(get_current_user)):
+    """Asked at the pay-to-continue step and again after returning from the shop: can this person go on without paying
+    (already paid, company seat, admin)? Also hands back their saved partial assessment, if any, so the form can pick up
+    from it on another device."""
+    grant = _apply_org_grant(user, background_tasks)   # a company seat unlocks the report, so no payment is asked
+    partial = supabase.table('assessment_responses').select('id, answers, locale').eq('user_id', user.id).eq('completed', False) \
+        .order('created_at', desc=True).limit(1).execute().data
+    return {
+        "has_access": _has_paid_access(user),
+        "org_granted": bool(grant.get("org_granted")),
+        "org_status": grant.get("status"),
+        "response_id": partial[0]['id'] if partial else None,
+        "answers": partial[0]['answers'] if partial else None,
+        "slots_left": _assessment_slots_left(user),
+        # A finished result the account already owns: paying unlocks that one, so the gate points there instead.
+        "latest_completed_id": _latest_completed_id(user.id),
+    }
+
 @app.post("/assessment/check-existing")
 def check_existing(body: CheckExistingRequest, user=Depends(get_optional_user), _beta=Depends(require_beta_open)):
     result = supabase.rpc('check_existing_response', {
@@ -805,7 +926,10 @@ def check_existing(body: CheckExistingRequest, user=Depends(get_optional_user), 
     if not result.data:
         return None
 
-    row = supabase.table('assessment_responses').select('user_id').eq('id', result.data).single().execute()
+    row = supabase.table('assessment_responses').select('user_id, completed').eq('id', result.data).single().execute()
+    # An unfinished assessment saved at the pay-to-continue step has no results to show: it is not "a previous result".
+    if row.data and row.data.get('completed') is False:
+        return None
     owner_id = row.data.get('user_id') if row.data else None
     # Only tell the caller "this email already has an account, log in" when
     # it's actually someone else's account — otherwise a logged-in user
@@ -883,6 +1007,10 @@ def submit_assessment(body: SubmitRequest, background_tasks: BackgroundTasks, us
     # A paid account has used its one full report: no new assessment (a retake would build another full AI report).
     if user and _assessment_slots_left(user) == 0:
         raise HTTPException(status_code=409, detail="retake_not_included")
+    # Pay-to-continue is on for everybody (paywall_percent = 100): only accounts with paid access can finish. Below 100 it
+    # is an A/B test decided in the browser, so the old free path stays open for the other group.
+    if _paywall_percent() >= 100 and not _has_paid_access(user):
+        raise HTTPException(status_code=402, detail="payment_required")
     # Score it first, before writing anything — a payload with no recognizable
     # question answers can't be scored, so reject cleanly instead of leaving
     # an orphaned response row with no results.
@@ -935,6 +1063,12 @@ def submit_assessment(body: SubmitRequest, background_tasks: BackgroundTasks, us
             .update({'user_id': user.id}) \
             .eq('id', response_id).execute()
         _apply_org_grant(user)   # free-seat offer for the user's email domain (best-effort, never blocks the submit)
+        # The unfinished copy saved at the pay-to-continue step is replaced by this finished one.
+        try:
+            supabase.table('assessment_responses').delete().eq('user_id', user.id).eq('completed', False) \
+                .neq('id', response_id).execute()
+        except Exception as e:
+            print("Failed to remove the partial assessment:", repr(e))
 
     # Best-effort: link any telemetry events sent during the assessment (device
     # type, break-panel plays, per-question pacing) to this submission. Never
@@ -4431,8 +4565,10 @@ def create_checkout(body: CheckoutRequest, request: Request, user=Depends(get_cu
         # Back to the page language the buyer was using (the frontend sends /<locale>/account/billing on to the dashboard)
         "return_url": BILLING_RETURN_URL.replace("/account/billing", f"/{body.locale if body.locale in ('en', 'ar') else 'en'}/account/billing"),
     }
+    if body.return_to == 'assessment':
+        payload["return_url"] = BILLING_RETURN_URL.replace("/account/billing", f"/{body.locale if body.locale in ('en', 'ar') else 'en'}/assessment?paid=1")
 
-    try: 
+    try:
         resp = httpx.post(
             f"{SHOP_BASE_URL}/api/hub/orders",
             json=payload,
@@ -4789,8 +4925,10 @@ def _prewarm_full_report(user_id: str):
     Best-effort: a failure alerts the admin and the report is simply built the first time it is opened."""
     rid = None
     try:
+        # Only a finished assessment: someone who pays inside the assessment has just an unfinished one saved so far, and
+        # there is nothing to build a report from (or email a link to) until they finish it.
         rows = supabase.table('assessment_responses').select('id,locale,email,full_name') \
-            .eq('user_id', user_id).order('created_at', desc=True).limit(1).execute()
+            .eq('user_id', user_id).or_('completed.is.null,completed.eq.true').order('created_at', desc=True).limit(1).execute()
         if not rows.data:
             return
         row = rows.data[0]
