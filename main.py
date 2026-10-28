@@ -4460,6 +4460,108 @@ def create_checkout(body: CheckoutRequest, request: Request, user=Depends(get_cu
     return {"checkout_url": checkout_url}
 
 
+# ── Parent payment links (under-18 buyers) ─────────────────────────────────────
+PARENT_LINK_DAYS = 7
+PARENT_LINK_BASE = "https://myetijahi.com"
+
+def _child_profile(user_id: str) -> dict | None:
+    rows = supabase.table('assessment_responses').select('full_name, email, age') \
+        .eq('user_id', user_id).order('created_at', desc=True).limit(1).execute().data
+    return rows[0] if rows else None
+
+def _is_under_18(profile: dict | None) -> bool:
+    age = (profile or {}).get('age')
+    return isinstance(age, int) and age < 18
+
+def _load_parent_link(token: str) -> dict:
+    rows = supabase.table('parent_payment_links').select('*').eq('token', token).limit(1).execute().data
+    if not rows:
+        raise HTTPException(status_code=404, detail="link_invalid")
+    row = rows[0]
+    if row.get('paid_at'):
+        raise HTTPException(status_code=410, detail="link_used")
+    # Postgres trims trailing zeros off the fraction (".12345"), which Python 3.10's fromisoformat rejects: pad it to 6 digits
+    stamp = re.sub(r'\.(\d+)', lambda m: '.' + (m.group(1) + '000000')[:6], row['expires_at'].replace('Z', '+00:00'))
+    if datetime.fromisoformat(stamp) < datetime.now(timezone.utc):
+        raise HTTPException(status_code=410, detail="link_expired")
+    if row['plan_code'] == 'pathfinder' and _owns_pathfinder(row['user_id']):   # already unlocked: never charge a second time
+        raise HTTPException(status_code=410, detail="link_used")
+    return row
+
+class ParentLinkRequest(BaseModel):
+    plan_code: str
+    locale: str | None = Field(default=None, max_length=5)
+    currency: str | None = Field(default=None, max_length=3)
+
+@app.get("/billing/parent-link/eligible")
+def parent_link_eligible(user=Depends(get_current_user)):
+    return {"eligible": _is_under_18(_child_profile(user.id))}
+
+@app.post("/billing/parent-link")
+def create_parent_link(body: ParentLinkRequest, user=Depends(get_current_user)):
+    plan = PLAN_CATALOG.get(body.plan_code)
+    if not plan or not plan.get("available", True):
+        raise HTTPException(status_code=400, detail=f"Unknown plan_code: {body.plan_code}")
+    if not _is_under_18(_child_profile(user.id)):
+        raise HTTPException(status_code=403, detail="parent_link_under_18_only")
+    if not request_guard.allow(f"parentlink|{user.id}", (10, 3600)):
+        raise HTTPException(status_code=429, detail="rate_limited")
+    locale = body.locale if body.locale in ('en', 'ar') else 'en'
+    token = secrets.token_urlsafe(24)
+    supabase.table('parent_payment_links').insert({
+        'token': token, 'user_id': user.id, 'plan_code': body.plan_code, 'locale': locale,
+        'currency': (body.currency or '').upper() or None,
+        'expires_at': (datetime.now(timezone.utc) + timedelta(days=PARENT_LINK_DAYS)).isoformat(),
+    }).execute()
+    return {"url": f"{PARENT_LINK_BASE}/{locale}/pay-for/{token}", "expires_in_days": PARENT_LINK_DAYS}
+
+@app.get("/billing/parent-link/{token}")
+def get_parent_link(token: str):
+    """Public. Shows the parent what they are paying for: the child's first name only, never answers or results."""
+    row = _load_parent_link(token)
+    plan = PLAN_CATALOG[row['plan_code']]
+    amount, currency = _resolve_price(row['user_id'], row['plan_code'], plan, row.get('currency'))
+    child = _child_profile(row['user_id']) or {}
+    return {"plan_name": plan["name"], "amount": amount, "currency": currency,
+            "child_first_name": (child.get('full_name') or '').strip().split(' ')[0],
+            "locale": row.get('locale') or 'en'}
+
+@app.post("/billing/parent-link/{token}/checkout")
+def parent_link_checkout(token: str):
+    row = _load_parent_link(token)
+    if not request_guard.allow(f"parentpay|{token}", (10, 3600)):
+        raise HTTPException(status_code=429, detail="rate_limited")
+    plan = PLAN_CATALOG[row['plan_code']]
+    amount, currency = _resolve_price(row['user_id'], row['plan_code'], plan, row.get('currency'))
+    child = _child_profile(row['user_id']) or {}
+    first, _, last = (child.get('full_name') or '').strip().partition(" ")
+    locale = row.get('locale') or 'en'
+    payload = {
+        "external_user_id": row['user_id'], "first_name": first or "Customer", "last_name": last or "Account",
+        "email": child.get('email'), "plan_code": row['plan_code'], "plan_name": plan["name"],
+        "amount": amount, "currency": currency,
+        "return_url": f"{PARENT_LINK_BASE}/{locale}/pay-for/{token}",
+    }
+    try:
+        resp = httpx.post(f"{SHOP_BASE_URL}/api/hub/orders", json=payload,
+                          headers={"Authorization": f"Bearer {HUB_API_KEY}"}, timeout=15.0)
+        resp.raise_for_status()
+    except (httpx.HTTPStatusError, httpx.RequestError) as e:
+        print("Parent link: shop order failed:", repr(e))
+        raise HTTPException(status_code=502, detail="The payment page could not be created. Please try again.")
+    checkout_url = resp.json().get("checkout_url")
+    if not checkout_url:
+        raise HTTPException(status_code=502, detail="Shop response did not include a checkout_url")
+    return {"checkout_url": checkout_url}
+
+def _close_parent_links(user_id: str, plan_code: str):
+    try:
+        supabase.table('parent_payment_links').update({'paid_at': datetime.now(timezone.utc).isoformat()}) \
+            .eq('user_id', user_id).eq('plan_code', plan_code).is_('paid_at', 'null').execute()
+    except Exception as e:
+        print("parent link close failed:", repr(e))
+
+
 @app.get("/billing/transaction")
 def get_my_transaction(user=Depends(get_current_user)):
     data = supabase.table('transactions') \
@@ -4981,6 +5083,7 @@ async def receive_hub_transaction(request: Request, background_tasks: Background
 
     if result.data:
         _settle_discount(body.external_user_id, body.order_ref, body.plan_code, body.amount)
+        _close_parent_links(body.external_user_id, body.plan_code)
         # Meta first: it's best-effort and never raises, so a failure in the plan
         # write below can't stop the Purchase event from being sent.
         _send_meta_purchase_event(body.external_user_id, body.order_ref, body.amount, body.currency, body.tap_charge_id)
