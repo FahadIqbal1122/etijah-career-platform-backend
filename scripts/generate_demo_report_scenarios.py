@@ -37,6 +37,7 @@ from report_generator import (
     build_html_report, generate_pdf,
 )
 from content_policy import NO_LISTINGS_STAGES
+from ai_provider import GeminiSwitchedOff
 
 RESPONSE_ID = "b34c4635-d375-481d-8f83-e427286cdc3b"  # demo.tester@myetijahi.com, complete
 DEMO_NAME_EN = "John Doe"
@@ -73,6 +74,9 @@ def build_scenario_pdfs(supabase, key: str) -> dict:
         raise ValueError(f"No assessment found for {RESPONSE_ID}")
     profile.update(overrides)
     profile['email'] = DEMO_EMAIL
+    # The AI writes the closing message ("<name>, your ...") from this name, so it must be the demo persona,
+    # not the test row's real name; render() only swaps the name on the cover and footers.
+    profile['full_name'] = DEMO_NAME_EN
 
     raw_scores = rg._execute_with_retry(supabase.table('assessment_results')
         .select('*').eq('response_id', RESPONSE_ID)).data
@@ -107,9 +111,14 @@ def build_scenario_pdfs(supabase, key: str) -> dict:
         f"Sectors of interest: {', '.join(profile.get('sectors_of_interest') or [])}. "
         f"Current stage: {profile.get('current_stage', '')}."
     )
-    coaching_matches = rg._execute_with_retry(supabase.rpc("match_coaching_chunks", {
-        "query_embedding": rg._gemini_embed(query_text), "match_count": 5,
-    })).data
+    # Claude cannot embed; with Gemini switched off the live pipeline also skips the coaching examples, so do the same.
+    try:
+        coaching_matches = rg._execute_with_retry(supabase.rpc("match_coaching_chunks", {
+            "query_embedding": rg._gemini_embed(query_text), "match_count": 5,
+        })).data
+    except GeminiSwitchedOff as e:
+        print("  coaching lookup skipped (continuing without):", e)
+        coaching_matches = []
 
     stage = profile['current_stage']
     ai_impact = generate_ai_impact(profile, summary, top_careers[:5], 'en', career_count=5)
@@ -171,7 +180,12 @@ def build_scenario_pdfs(supabase, key: str) -> dict:
         f_trk = pool.submit(rg._translate_piece_with_retry, student_track, 'ar') if student_track else None
         f_crt = pool.submit(rg._translate_piece_with_retry, certifications, 'ar') if certifications else None
         f_pth = pool.submit(rg._translate_piece_with_retry, career_path, 'ar') if career_path else None
-        out["ar"] = render('ar', f_imp.result(), f_con.result(),
+        content_ar = f_con.result()
+        # The translator transliterates the English first name; the Arabic persona is male, so use his name.
+        cm = content_ar.get('closing_message') or ''
+        if '،' in cm:
+            content_ar['closing_message'] = DEMO_NAME_AR.split()[0] + cm[cm.index('،'):]
+        out["ar"] = render('ar', f_imp.result(), content_ar,
                            f_trk.result() if f_trk else None,
                            f_crt.result() if f_crt else None,
                            f_pth.result() if f_pth else None, courses_ar)
