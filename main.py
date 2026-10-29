@@ -664,7 +664,7 @@ class FeaturedCourseEventRequest(BaseModel):
     tier: str | None = None
     locale: str | None = None
 
-TELEMETRY_EVENT_TYPES = {"session_start", "question_view", "break_open", "break_activity", "gate_reached", "gate_pay_click"}
+TELEMETRY_EVENT_TYPES = {"session_start", "question_view", "break_open", "break_activity", "gate_reached", "gate_pay_click", "gate_passed"}
 # Generous but bounded — these are always short, code-generated values (a
 # question id, an activity name), never free user input. Caps exist purely so
 # an unauthenticated caller can't stuff arbitrarily large strings/JSON into
@@ -1819,6 +1819,31 @@ def get_paygate_stats(since: str | None = None, until: str | None = None, _=Depe
         "reached": _safe_stat("paygate.reached", lambda: _distinct_sessions('gate_reached', since, until), 0),
         "pay_clicked": _safe_stat("paygate.pay_clicked", lambda: _distinct_sessions('gate_pay_click', since, until), 0),
     }
+
+@app.get("/admin/paygate-events")
+def get_paygate_events(since: str | None = None, until: str | None = None, _=Depends(require_admin)):
+    """First occurrence of each funnel event per browser session (started, reached the gate, clicked pay, passed the gate),
+    so the dashboard can bucket them by local day/hour. Volumes are small: one row per session per event type."""
+    types = ['session_start', 'gate_reached', 'gate_pay_click', 'gate_passed']
+    seen: dict[tuple[str, str], str] = {}
+    start = 0
+    try:
+        while True:
+            q = supabase.table('assessment_telemetry_events').select('event_type, session_id, created_at') \
+                .in_('event_type', types).order('created_at')
+            if since:
+                q = q.gte('created_at', since)
+            if until:
+                q = q.lt('created_at', until)
+            rows = q.range(start, start + 999).execute().data or []
+            for r in rows:
+                seen.setdefault((r['event_type'], r['session_id']), r['created_at'])
+            if len(rows) < 1000:
+                break
+            start += 1000
+    except Exception as e:
+        print(f"paygate-events failed: {type(e).__name__}: {e}")
+    return {"events": [{"event_type": t, "session_id": s, "created_at": c} for (t, s), c in seen.items()]}
 
 @app.get("/admin/dashboard-stats")
 def get_dashboard_stats(_=Depends(require_admin)):
