@@ -664,7 +664,7 @@ class FeaturedCourseEventRequest(BaseModel):
     tier: str | None = None
     locale: str | None = None
 
-TELEMETRY_EVENT_TYPES = {"session_start", "question_view", "break_open", "break_activity"}
+TELEMETRY_EVENT_TYPES = {"session_start", "question_view", "break_open", "break_activity", "gate_reached", "gate_pay_click"}
 # Generous but bounded — these are always short, code-generated values (a
 # question id, an activity name), never free user input. Caps exist purely so
 # an unauthenticated caller can't stuff arbitrarily large strings/JSON into
@@ -1795,6 +1795,25 @@ def _compute_dashboard_stats() -> dict:
         "waitlist_page": _safe_stat("waitlist_page", _get_waitlist_page_stats, {"page_views": 0, "clicks": 0, "top_clicks": []}),
         "waitlist_age_breakdown": _safe_stat("waitlist_age_breakdown", lambda: _get_waitlist_breakdown('age'), []),
         "waitlist_country_breakdown": _safe_stat("waitlist_country_breakdown", lambda: _get_waitlist_breakdown('country'), []),
+    }
+
+def _distinct_sessions(event_type: str) -> int:
+    seen: set[str] = set()
+    start = 0
+    while True:
+        rows = supabase.table('assessment_telemetry_events').select('session_id') \
+            .eq('event_type', event_type).range(start, start + 999).execute().data or []
+        seen.update(r['session_id'] for r in rows)
+        if len(rows) < 1000:
+            return len(seen)
+        start += 1000
+
+@app.get("/admin/paygate-stats")
+def get_paygate_stats(_=Depends(require_admin)):
+    return {
+        "started": _safe_stat("paygate.started", lambda: _distinct_sessions('session_start'), 0),
+        "reached": _safe_stat("paygate.reached", lambda: _distinct_sessions('gate_reached'), 0),
+        "pay_clicked": _safe_stat("paygate.pay_clicked", lambda: _distinct_sessions('gate_pay_click'), 0),
     }
 
 @app.get("/admin/dashboard-stats")
