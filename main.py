@@ -1797,23 +1797,27 @@ def _compute_dashboard_stats() -> dict:
         "waitlist_country_breakdown": _safe_stat("waitlist_country_breakdown", lambda: _get_waitlist_breakdown('country'), []),
     }
 
-def _distinct_sessions(event_type: str) -> int:
+def _distinct_sessions(event_type: str, since: str | None = None, until: str | None = None) -> int:
     seen: set[str] = set()
     start = 0
     while True:
-        rows = supabase.table('assessment_telemetry_events').select('session_id') \
-            .eq('event_type', event_type).range(start, start + 999).execute().data or []
+        q = supabase.table('assessment_telemetry_events').select('session_id').eq('event_type', event_type)
+        if since:
+            q = q.gte('created_at', since)
+        if until:
+            q = q.lt('created_at', until)
+        rows = q.range(start, start + 999).execute().data or []
         seen.update(r['session_id'] for r in rows)
         if len(rows) < 1000:
             return len(seen)
         start += 1000
 
 @app.get("/admin/paygate-stats")
-def get_paygate_stats(_=Depends(require_admin)):
+def get_paygate_stats(since: str | None = None, until: str | None = None, _=Depends(require_admin)):
     return {
-        "started": _safe_stat("paygate.started", lambda: _distinct_sessions('session_start'), 0),
-        "reached": _safe_stat("paygate.reached", lambda: _distinct_sessions('gate_reached'), 0),
-        "pay_clicked": _safe_stat("paygate.pay_clicked", lambda: _distinct_sessions('gate_pay_click'), 0),
+        "started": _safe_stat("paygate.started", lambda: _distinct_sessions('session_start', since, until), 0),
+        "reached": _safe_stat("paygate.reached", lambda: _distinct_sessions('gate_reached', since, until), 0),
+        "pay_clicked": _safe_stat("paygate.pay_clicked", lambda: _distinct_sessions('gate_pay_click', since, until), 0),
     }
 
 @app.get("/admin/dashboard-stats")
