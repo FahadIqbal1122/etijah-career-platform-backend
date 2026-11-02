@@ -749,12 +749,15 @@ def export_assessment_details(body: ExportDetailsRequest, _=Depends(require_admi
     ids = list(dict.fromkeys(i for i in body.ids if i))
     answers: dict[str, dict] = {}
     scores: dict[str, list[dict]] = {}
+    accounts: dict[str, str] = {}  # response id -> account (user) id, to match purchases exactly instead of by email
     CHUNK = 100  # keeps the PostgREST `in` filter URL short
     for start in range(0, len(ids), CHUNK):
         chunk = ids[start:start + CHUNK]
-        rows = _select_all(lambda c=chunk: supabase.table('assessment_responses').select('id, answers, locale').in_('id', c))
+        rows = _select_all(lambda c=chunk: supabase.table('assessment_responses').select('id, answers, locale, user_id').in_('id', c))
         for r in rows:
             answers[r['id']] = {"answers": r.get('answers') or {}, "locale": r.get('locale')}
+            if r.get('user_id'):
+                accounts[r['id']] = r['user_id']
         res = _select_all(lambda c=chunk: supabase.table('assessment_results')
                           .select('response_id, framework, dimension, raw_score, normalized_score')
                           .in_('response_id', c).order('response_id'))
@@ -776,7 +779,31 @@ def export_assessment_details(body: ExportDetailsRequest, _=Depends(require_admi
             }
         except Exception:
             top[rid] = {}
-    return {"answers": answers, "scores": scores, "top": top}
+    # Discount codes used on orders by these accounts, keyed by order_ref. Best effort: the export still works without it.
+    discounts: dict[str, dict] = {}
+    try:
+        uids = list(dict.fromkeys(accounts.values()))
+        for start in range(0, len(uids), CHUNK):
+            chunk = uids[start:start + CHUNK]
+            reds = _select_all(lambda c=chunk: supabase.table('discount_redemptions')
+                               .select('order_ref, code_id, status, original_amount, discount_amount, final_amount, currency')
+                               .in_('user_id', c))
+            code_ids = list({r['code_id'] for r in reds if r.get('code_id')})
+            codes: dict[str, str] = {}
+            for cs in range(0, len(code_ids), CHUNK):
+                cc = code_ids[cs:cs + CHUNK]
+                for row in _select_all(lambda cc=cc: supabase.table('discount_codes').select('id, code').in_('id', cc)):
+                    codes[row['id']] = row.get('code')
+            for r in reds:
+                if r.get('order_ref'):
+                    discounts[r['order_ref']] = {
+                        "code": codes.get(r.get('code_id')), "status": r.get('status'), "currency": r.get('currency'),
+                        "original_amount": r.get('original_amount'), "discount_amount": r.get('discount_amount'),
+                        "final_amount": r.get('final_amount'),
+                    }
+    except Exception as e:
+        print(f"export: discount lookup skipped: {e}")
+    return {"answers": answers, "scores": scores, "top": top, "accounts": accounts, "discounts": discounts}
 
 
 @app.get("/admin/career-recommendations")
