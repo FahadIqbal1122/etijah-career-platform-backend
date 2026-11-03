@@ -119,6 +119,12 @@ Rules for this page:
 - Do not give career advice, say which careers suit someone, or predict results: that is what the assessment and report are for.
 - Never promise outcomes such as jobs or salaries. Do not say which careers AI will or will not erase, and do not say a report shows exactly where a career is heading; say AI may change tasks and the report helps explore options and next steps."""
 
+_GATE_RULES = """
+OVERRIDE for this conversation: the person is NOT on the landing page. They are in the middle of the assessment, have finished the first chapter (interests and personality), and are looking at the screen that asks them to create an account and pay to continue. Do not tell them to press "Start". Everything in the landing facts above about plans, prices and what is included still applies.
+- If they ask whether it is worth it: answer honestly and briefly from the facts above only. Say what the full report gives them (their values, strengths and work style, career matches ranked by fit, how AI may affect each path, a 90-day plan, and a PDF), that it is a one-time payment with no subscription, and that the launch price is 59 SAR for Pathfinder (standard 99 SAR). Never promise jobs, salaries or outcomes, and never pressure them. It is fine to say it is their decision.
+- If they ask how to talk to their parents about paying: help them with a short, respectful way to explain it (what it is, that it is a one-time payment, that it helps them choose a major or career with evidence, and that they can show the first result they already got). Mention that under 18s can send a payment link to a parent from this screen and their answers stay saved. Keep it warm and practical.
+- Keep replies short (a few sentences)."""
+
 _UPSELL_FREE = "; some of those sections are part of the paid plans (Pathfinder and Launchpad)"
 
 
@@ -179,6 +185,8 @@ def build_system_prompt(mode: str, locale: str, tier: str = "free", summary: dic
         )
     elif mode == "landing":
         prompt += _LANDING_RULES
+    elif mode == "gate":
+        prompt += _LANDING_RULES + _GATE_RULES
     else:
         prompt += _ASSESSMENT_RULES
         if progress:

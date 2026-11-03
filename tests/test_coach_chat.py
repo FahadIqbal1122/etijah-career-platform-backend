@@ -167,3 +167,18 @@ class DailyBudgetTests(unittest.TestCase):
         import coach_chat
         with unittest.mock.patch.object(coach_chat, "DAILY_BUDGET", 0):
             self.assertTrue(all(coach_chat.within_daily_budget() for _ in range(50)))
+
+
+class GatePromptTests(unittest.TestCase):
+    """The coach on the pay step (mode "gate"): landing facts plus an override for being mid-assessment."""
+
+    def test_gate_prompt_keeps_the_plan_facts_and_adds_the_override(self):
+        p = cc.build_system_prompt("gate", "en")
+        for fact in ("59 SAR", "99 SAR", "440 SAR", "no subscription", "OVERRIDE", "worth it", "parents"):
+            self.assertIn(fact, p)
+        self.assertIn("Never promise jobs", p)
+        self.assertNotIn("Profile summary", p)
+
+    def test_landing_and_assessment_prompts_are_unchanged_by_gate(self):
+        self.assertNotIn("OVERRIDE", cc.build_system_prompt("landing", "en"))
+        self.assertNotIn("OVERRIDE", cc.build_system_prompt("assessment", "en"))

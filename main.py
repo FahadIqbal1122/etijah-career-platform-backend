@@ -664,12 +664,13 @@ class FeaturedCourseEventRequest(BaseModel):
     tier: str | None = None
     locale: str | None = None
 
-TELEMETRY_EVENT_TYPES = {"session_start", "question_view", "break_open", "break_activity", "gate_reached", "gate_pay_click", "gate_passed"}
+TELEMETRY_EVENT_TYPES = {"session_start", "question_view", "break_open", "break_activity", "gate_reached", "gate_pay_click", "gate_passed", "gate_exit_reason"}
 # Generous but bounded — these are always short, code-generated values (a
 # question id, an activity name), never free user input. Caps exist purely so
 # an unauthenticated caller can't stuff arbitrarily large strings/JSON into
 # the table (this endpoint takes no auth, matching /waitlist/events).
 TELEMETRY_MAX_FIELD_LEN = 100
+GATE_EXIT_REASONS = {"too_expensive", "need_parents", "not_sure_useful", "later"}
 TELEMETRY_MAX_PAYLOAD_JSON_LEN = 2000
 
 class TelemetryEventIn(BaseModel):
@@ -1839,12 +1840,37 @@ def _distinct_sessions(event_type: str, since: str | None = None, until: str | N
             return len(seen)
         start += 1000
 
+def _gate_exit_reasons(since: str | None = None, until: str | None = None) -> dict[str, int]:
+    """The one-tap "why not now?" answers from the gate. One answer per browser session (the latest one counts)."""
+    latest: dict[str, str] = {}
+    start = 0
+    while True:
+        q = supabase.table('assessment_telemetry_events').select('session_id, payload, created_at') \
+            .eq('event_type', 'gate_exit_reason').order('created_at')
+        if since:
+            q = q.gte('created_at', since)
+        if until:
+            q = q.lt('created_at', until)
+        rows = q.range(start, start + 999).execute().data or []
+        for r in rows:
+            reason = (r.get('payload') or {}).get('reason')
+            if isinstance(reason, str) and reason in GATE_EXIT_REASONS:
+                latest[r['session_id']] = reason
+        if len(rows) < 1000:
+            break
+        start += 1000
+    counts: dict[str, int] = {}
+    for reason in latest.values():
+        counts[reason] = counts.get(reason, 0) + 1
+    return counts
+
 @app.get("/admin/paygate-stats")
 def get_paygate_stats(since: str | None = None, until: str | None = None, _=Depends(require_admin)):
     return {
         "started": _safe_stat("paygate.started", lambda: _distinct_sessions('session_start', since, until), 0),
         "reached": _safe_stat("paygate.reached", lambda: _distinct_sessions('gate_reached', since, until), 0),
         "pay_clicked": _safe_stat("paygate.pay_clicked", lambda: _distinct_sessions('gate_pay_click', since, until), 0),
+        "exit_reasons": _safe_stat("paygate.exit_reasons", lambda: _gate_exit_reasons(since, until), {}),
     }
 
 @app.get("/admin/paygate-events")
@@ -4453,7 +4479,7 @@ def coach(payload: CoachRequest, user=Depends(get_current_user)):
 
 
 class CoachChatRequest(BaseModel):
-    mode: Literal["assessment", "results", "landing"]
+    mode: Literal["assessment", "results", "landing", "gate"]
     message: str = Field(min_length=1, max_length=500)
     history: list[dict] = Field(default_factory=list, max_length=12)
     locale: Literal["en", "ar"] = "en"
@@ -4497,10 +4523,10 @@ def coach_chat(payload: CoachChatRequest, request: Request, user=Depends(get_opt
             raise HTTPException(status_code=404, detail="No results found for this response")
         summary = build_framework_output(rows.data)
         tier = "launchpad" if _is_admin(user) else get_effective_tier(profile.data.get('user_id'))
-    elif payload.mode == "landing":
+    elif payload.mode in ("landing", "gate"):
         if not payload.session_id:
-            raise HTTPException(status_code=400, detail="session_id is required in landing mode")
-        if not coach_chat_mod.check_rate_limit(f"land:{payload.session_id}", coach_chat_mod.LIMIT_LANDING_SESSION):
+            raise HTTPException(status_code=400, detail=f"session_id is required in {payload.mode} mode")
+        if not coach_chat_mod.check_rate_limit(f"{'land' if payload.mode == 'landing' else 'gate'}:{payload.session_id}", coach_chat_mod.LIMIT_LANDING_SESSION):
             return {"reply": None, "limited": True}
     else:
         if not payload.session_id:

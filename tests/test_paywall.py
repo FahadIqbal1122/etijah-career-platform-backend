@@ -240,3 +240,30 @@ class AssessmentTotalTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class GateExitReasonTests(unittest.TestCase):
+    """The one-tap "why not now?" answers from the gate: only known reasons count, one per browser session, latest wins."""
+
+    def _db(self, rows):
+        db = mock.MagicMock()
+        q = db.table.return_value.select.return_value.eq.return_value.order.return_value
+        q.range.return_value.execute.return_value.data = rows
+        return db
+
+    def test_event_type_is_accepted_by_the_telemetry_endpoint(self):
+        self.assertIn("gate_exit_reason", main.TELEMETRY_EVENT_TYPES)
+
+    def test_counts_latest_known_reason_per_session(self):
+        rows = [
+            {"session_id": "a", "payload": {"reason": "too_expensive"}, "created_at": "1"},
+            {"session_id": "a", "payload": {"reason": "later"}, "created_at": "2"},
+            {"session_id": "b", "payload": {"reason": "need_parents"}, "created_at": "3"},
+            {"session_id": "c", "payload": {"reason": "made_up"}, "created_at": "4"},
+            {"session_id": "d", "payload": None, "created_at": "5"},
+        ]
+        with mock.patch.object(main, "supabase", self._db(rows)):
+            self.assertEqual(main._gate_exit_reasons(), {"later": 1, "need_parents": 1})
+
+    def test_coach_chat_request_accepts_gate_mode(self):
+        self.assertEqual(main.CoachChatRequest(mode="gate", message="hi", session_id="s").mode, "gate")
