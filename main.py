@@ -875,6 +875,11 @@ def get_paywall_config():
     """Unauthenticated: the assessment page reads this to decide whether this visitor is asked to pay mid-way."""
     return {"percent": _paywall_percent()}
 
+@app.get("/org-offer-check")
+def org_offer_check(email: str = ""):
+    """Does this email's domain have an open free-seat offer? Boolean only, so it never reveals the company."""
+    return {"offer": _org_offer_for_email(email) is not None}
+
 @app.get("/admin/paywall-percent")
 def get_paywall_percent_admin(_=Depends(require_admin)):
     return {"percent": _paywall_percent()}
@@ -1037,8 +1042,13 @@ def submit_assessment(body: SubmitRequest, background_tasks: BackgroundTasks, us
         raise HTTPException(status_code=409, detail="retake_not_included")
     # Pay-to-continue is on for everybody (paywall_percent = 100): only accounts with paid access can finish. Below 100 it
     # is an A/B test decided in the browser, so the old free path stays open for the other group.
+    # A typed email whose domain has an open company free-seat offer is let through: the full report still needs a
+    # confirmed email and a free seat (claimed on the results page), so this only opens the free snapshot.
     if _paywall_percent() >= 100 and not _has_paid_access(user):
-        raise HTTPException(status_code=402, detail="payment_required")
+        # Either the account's email or the one typed in the form (the browser skipped the gate on the typed one).
+        emails = [getattr(user, "email", None), body.answers.get('QD2')]
+        if not any(isinstance(e, str) and _org_offer_for_email(e) for e in emails):
+            raise HTTPException(status_code=402, detail="payment_required")
     # Score it first, before writing anything — a payload with no recognizable
     # question answers can't be scored, so reject cleanly instead of leaving
     # an orphaned response row with no results.

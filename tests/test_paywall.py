@@ -77,10 +77,11 @@ class PaidAccessTests(unittest.TestCase):
 
 class SubmitRefusalTests(unittest.TestCase):
     """Only the refusal is tested here: the rest of submit is covered elsewhere and needs a full payload."""
-    def submit(self, percent, paid):
+    def submit(self, percent, paid, offer=None):
         body = mock.MagicMock()
         with mock.patch.object(main, "_paywall_percent", return_value=percent), \
              mock.patch.object(main, "_has_paid_access", return_value=paid), \
+             mock.patch.object(main, "_org_offer_for_email", return_value=offer), \
              mock.patch.object(main, "_assessment_slots_left", return_value=None), \
              mock.patch.object(main, "clean_direction_label", side_effect=RuntimeError("reached the scoring step")):
             return main.submit_assessment(body, mock.MagicMock(), user=user(), _beta=None)
@@ -97,6 +98,35 @@ class SubmitRefusalTests(unittest.TestCase):
     def test_the_free_path_stays_open_below_100(self):
         with self.assertRaises(RuntimeError):
             self.submit(50, False)
+
+    def test_a_company_offer_domain_is_not_refused(self):
+        with self.assertRaises(RuntimeError):   # got past the check and into the scoring step
+            self.submit(100, False, offer={"org_name": "Acme", "domain": "acme.com"})
+
+    def test_the_typed_email_counts_too(self):
+        # Signed-in account on a public address, but the form email (which skipped the gate in the browser) is a company one.
+        def offer(email):
+            return {"domain": "acme.com"} if email == "x@acme.com" else None
+        body = mock.MagicMock()
+        body.answers = {"QD2": "x@acme.com"}
+        with mock.patch.object(main, "_paywall_percent", return_value=100), \
+             mock.patch.object(main, "_has_paid_access", return_value=False), \
+             mock.patch.object(main, "_org_offer_for_email", side_effect=offer), \
+             mock.patch.object(main, "_assessment_slots_left", return_value=None), \
+             mock.patch.object(main, "clean_direction_label", side_effect=RuntimeError("reached the scoring step")):
+            with self.assertRaises(RuntimeError):
+                main.submit_assessment(body, mock.MagicMock(), user=user(), _beta=None)
+            body.answers = {"QD2": "x@other.com"}
+            with self.assertRaises(HTTPException):
+                main.submit_assessment(body, mock.MagicMock(), user=user(), _beta=None)
+
+
+class OrgOfferCheckTests(unittest.TestCase):
+    def test_returns_only_a_boolean(self):
+        with mock.patch.object(main, "_org_offer_for_email", return_value={"org_name": "Acme", "domain": "acme.com"}):
+            self.assertEqual(main.org_offer_check("a@acme.com"), {"offer": True})
+        with mock.patch.object(main, "_org_offer_for_email", return_value=None):
+            self.assertEqual(main.org_offer_check("a@gmail.com"), {"offer": False})
 
 
 class PartialSaveTests(unittest.TestCase):
