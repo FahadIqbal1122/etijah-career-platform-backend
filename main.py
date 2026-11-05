@@ -1331,11 +1331,15 @@ def get_recent_completions():
 @app.get("/assessment/{response_id}/results")
 def get_results(response_id: str, background_tasks: BackgroundTasks, user=Depends(get_optional_user)):
     profile = _execute_with_retry(supabase.table('assessment_responses')
-        .select('email, user_id, locale, current_stage, full_name, created_at')
+        .select('email, user_id, locale, current_stage, full_name, created_at, completed')
         .eq('id', response_id).single())
     if not profile.data:
         raise HTTPException(status_code=404, detail="No results found for this response")
     _assert_can_view_shared(profile.data.get('user_id'), user)
+    # An unfinished assessment (saved at the pay-to-continue step) has no scores, so it has no results page: the page sends
+    # the person back to the assessment to carry on.
+    if profile.data.get('completed') is False:
+        raise HTTPException(status_code=409, detail="assessment_incomplete")
 
     rows = _execute_with_retry(supabase.table('assessment_results')
         .select('*')
@@ -2033,11 +2037,13 @@ def get_career_suggestions(response_id: str, user=Depends(get_optional_user)):
 
 @app.get("/assessment/{response_id}/career-recommendations")
 def get_career_recommendations(response_id: str, locale: str | None = None, user=Depends(get_optional_user)):
-    owner_row = supabase.table('assessment_responses').select('user_id,career_direction').eq('id', response_id).single().execute()
+    owner_row = supabase.table('assessment_responses').select('user_id,career_direction,completed').eq('id', response_id).single().execute()
     if not owner_row.data:
         raise HTTPException(status_code=404, detail="No results found for this response")
     owner_user_id = owner_row.data.get('user_id')
     _assert_can_view_shared(owner_user_id, user)
+    if owner_row.data.get('completed') is False:   # unfinished: nothing to generate from, and not worth an admin alert
+        raise HTTPException(status_code=409, detail="assessment_incomplete")
     tier = get_effective_tier(owner_user_id)
 
     from report_generator import get_or_generate_ai_content
