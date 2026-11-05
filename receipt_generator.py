@@ -198,8 +198,19 @@ h1 {{ font-size:22pt; margin:18px 0 4px; color:#0770ba; }}
     return HTML(string=page).write_pdf()
 
 
-def receipt_email(buyer_name, tx, locale="en"):
-    """(subject, html) for the email that carries the invoice PDF."""
+# Added to the invoice email when the buyer has paid but has no finished assessment yet (they paid inside the assessment):
+# the one thing they must do next, with a button back to it.
+_RESUME = {
+    "en": ("One more step: your payment is confirmed, but your assessment is not finished yet. Your answers are saved. "
+           "Finish it to get your results and your full report.", "Continue my assessment"),
+    "ar": ("خطوة أخيرة: تم تأكيد دفعك، لكن تقييمك لم يكتمل بعد. إجاباتك محفوظة. أكمل التقييم لتحصل على نتائجك وتقريرك الكامل.",
+           "أكمل تقييمي"),
+}
+
+
+def receipt_email(buyer_name, tx, locale="en", resume_url=None):
+    """(subject, html) for the email that carries the invoice PDF. With resume_url, it also tells the buyer to finish their
+    assessment and carries a button to it."""
     loc = _loc(locale)
     t = _T[loc]
     first = _html.escape((buyer_name or "").strip().split(" ")[0] or ("عميلنا" if loc == "ar" else "there"))
@@ -217,7 +228,10 @@ def receipt_email(buyer_name, tx, locale="en"):
             f"{_html.escape(t['paid'])}: <b>{_html.escape(_money(gross, currency, places))}</b><br>"
             f"{_html.escape(t['vat_total'].format(pct=_pct(loc)))}: {_html.escape(_money(vat, currency, places))}<br>"
             f"{_html.escape(t['number'])}: {_html.escape(receipt_number(tx))}",
+            *([_html.escape(_RESUME[loc][0])] if resume_url else []),
             t['cta'],
         ],
+        cta_label=_RESUME[loc][1] if resume_url else None,
+        cta_url=resume_url or None,
     )
     return (t["subject"] if vat_no else t["subject_plain"]).format(number=receipt_number(tx)), body

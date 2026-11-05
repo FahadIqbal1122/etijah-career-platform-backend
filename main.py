@@ -5034,7 +5034,15 @@ def _send_payment_receipt(user_id: str, order_ref: str):
         if not email:
             return
         pdf = receipt_generator.receipt_pdf(tx, name, email, locale)
-        subject, html_body = receipt_generator.receipt_email(name, tx, locale)
+        # Paid inside the assessment and not finished yet: the invoice email also says so and links back to it (through the
+        # login page, which passes a signed-in person straight on), because no "report ready" email is sent until they finish.
+        resume_url = None
+        try:
+            if not _latest_completed_id(user_id):
+                resume_url = f"{(os.getenv('FRONTEND_URL') or 'https://myetijahi.com').rstrip('/')}/{locale}/login?next=/assessment"
+        except Exception as e:
+            print("receipt resume link check failed (sending without it):", e)
+        subject, html_body = receipt_generator.receipt_email(name, tx, locale, resume_url=resume_url)
         send_email(to=email, subject=subject, html_body=html_body,
                    attachments=[(f"{receipt_generator.receipt_number(tx)}.pdf", pdf, "application/pdf")], supabase=supabase,
                    copy_internal=True)
