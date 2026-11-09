@@ -1328,6 +1328,14 @@ def get_recent_completions():
     return {"count": result.count or 0}
 
 
+PAY_GATE_LIVE_AT = '2026-10-28T10:26'   # UTC; the pay-to-continue step went live then
+
+def _stage1_required(user, owner_id, created_at) -> bool:
+    """The pre-result questions are compulsory for the person's own report, for assessments started since the pay gate
+    went live. Admins previewing a report, other viewers, anonymous reports and earlier reports are not held back."""
+    return bool(user and owner_id and user.id == owner_id and not _is_admin(user)
+                and (created_at or '') >= PAY_GATE_LIVE_AT)
+
 @app.get("/assessment/{response_id}/results")
 def get_results(response_id: str, background_tasks: BackgroundTasks, user=Depends(get_optional_user)):
     profile = _execute_with_retry(supabase.table('assessment_responses')
@@ -1388,6 +1396,9 @@ def get_results(response_id: str, background_tasks: BackgroundTasks, user=Depend
         'feedback_status': {
             'stage1_completed': bool(fb_row and fb_row.get('stage1_completed_at')),
             'result_stage_completed': bool(fb_row and fb_row.get('result_stage_completed_at')),
+            # The pre-result questions are compulsory for the person's own report, for assessments finished since the pay
+            # gate went live (28 Oct 2026, 10:26 UTC). Admins previewing a report and earlier reports are not held back.
+            'stage1_required': _stage1_required(user, owner_id, profile.data.get('created_at')),
         },
         'recommendation_feedback': rec_items,
         'recent_completions': recent,
