@@ -50,6 +50,32 @@ def is_gemini_enabled() -> bool:
 
 def invalidate_gemini_cache():
     _gemini_cache["checked_at"] = None
+    _embed_cache["checked_at"] = None
+
+
+GEMINI_EMBED_KEY = "gemini_embeddings_enabled"
+_embed_cache = {"value": True, "checked_at": None}
+
+
+def is_gemini_embedding_enabled() -> bool:
+    """Switch for the Gemini embedding calls only (app_settings.gemini_embeddings_enabled). Claude cannot embed, so this lets
+    embeddings run while gemini_enabled stays false and Claude keeps all text generation and translation. An explicit true/false
+    in the row wins; with no row (or a failed lookup) embeddings simply follow gemini_enabled, as they did before this switch."""
+    now = datetime.now(timezone.utc)
+    if _embed_cache["checked_at"] and now - _embed_cache["checked_at"] < _GEMINI_CACHE_TTL:
+        return _embed_cache["value"]
+    enabled = None
+    try:
+        row = _supabase.table("app_settings").select("value").eq("key", GEMINI_EMBED_KEY).execute()
+        if row.data and isinstance(row.data[0]["value"], bool):
+            enabled = row.data[0]["value"]
+    except Exception as e:
+        print("Gemini embedding switch lookup failed, following gemini_enabled:", e)
+    if enabled is None:
+        enabled = is_gemini_enabled()
+    _embed_cache["value"] = enabled
+    _embed_cache["checked_at"] = now
+    return enabled
 
 
 def get_ai_provider() -> str:

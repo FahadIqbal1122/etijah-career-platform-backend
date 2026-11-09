@@ -67,9 +67,55 @@ class SwitchReading(unittest.TestCase):
             self.assertEqual(ai_provider.get_ai_provider(), 'gemini')   # switch on: the old behaviour is untouched
 
 
+class EmbeddingsOnlySwitch(unittest.TestCase):
+    """gemini_embeddings_enabled lets Gemini embed while gemini_enabled stays off and Claude keeps all text."""
+    def setUp(self):
+        ai_provider.invalidate_gemini_cache(); ai_provider.invalidate_ai_provider_cache()
+
+    tearDown = setUp
+
+    def embed_with(self, **kw):
+        with mock.patch.object(ai_provider, '_supabase', FakeSettings(**kw)):
+            ai_provider.invalidate_gemini_cache()
+            return ai_provider.is_gemini_embedding_enabled()
+
+    def test_embeddings_follow_the_master_switch_when_there_is_no_embedding_row(self):
+        self.assertFalse(self.embed_with(rows={'gemini_enabled': False}))
+        self.assertTrue(self.embed_with(rows={'gemini_enabled': True}))
+        self.assertTrue(self.embed_with(rows={}))   # nothing set at all = old default, on
+
+    def test_an_explicit_embedding_row_wins_over_the_master_switch(self):
+        self.assertTrue(self.embed_with(rows={'gemini_enabled': False, 'gemini_embeddings_enabled': True}))
+        self.assertFalse(self.embed_with(rows={'gemini_enabled': True, 'gemini_embeddings_enabled': False}))
+
+    def test_a_failed_lookup_follows_the_master_switch(self):
+        self.assertTrue(self.embed_with(fail=True))   # master lookup also fails -> existing 'leave on' behaviour
+
+    def test_embeddings_on_does_not_turn_gemini_on_for_text(self):
+        rows = {'gemini_enabled': False, 'gemini_embeddings_enabled': True, 'ai_provider': 'gemini'}
+        with mock.patch.object(ai_provider, '_supabase', FakeSettings(rows=rows)):
+            ai_provider.invalidate_gemini_cache(); ai_provider.invalidate_ai_provider_cache()
+            self.assertTrue(ai_provider.is_gemini_embedding_enabled())
+            self.assertFalse(ai_provider.is_gemini_enabled())
+            self.assertEqual(ai_provider.get_ai_provider(), 'claude')
+
+    def test_text_and_translation_still_refuse_gemini_while_only_embeddings_are_on(self):
+        with mock.patch.object(rg, 'is_gemini_enabled', return_value=False), \
+             mock.patch.object(ai_provider, 'is_gemini_embedding_enabled', return_value=True):
+            with self.assertRaises(ai_provider.GeminiSwitchedOff):
+                rg._call_model('hi', provider='gemini')
+
+    def test_the_embedding_call_goes_out_when_only_embeddings_are_on(self):
+        resp = mock.Mock(); resp.json.return_value = {'embedding': {'values': [0.1] * 768}}
+        with mock.patch.object(ai_provider, 'is_gemini_embedding_enabled', return_value=True), \
+             mock.patch.object(coaching_pipeline.requests, 'post', return_value=resp) as post:
+            self.assertEqual(len(coaching_pipeline._gemini_embed('x')), 768)
+        post.assert_called_once()
+
+
 class NoGeminiCallsWhenOff(unittest.TestCase):
     def test_embedding_is_skipped_without_any_network_call(self):
-        with mock.patch.object(ai_provider, 'is_gemini_enabled', return_value=False), \
+        with mock.patch.object(ai_provider, 'is_gemini_embedding_enabled', return_value=False), \
              mock.patch.object(coaching_pipeline.requests, 'post') as post:
             with self.assertRaises(ai_provider.GeminiSwitchedOff):
                 coaching_pipeline._gemini_embed('anything')

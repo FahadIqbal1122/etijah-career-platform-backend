@@ -27,7 +27,7 @@ from coaching_pipeline import chunk_transcript, embed_and_store_chunks, client, 
 from content_policy import free_snapshot_applies, drop_weak_matches, add_student_track_links, section_order, job_posted_date, is_job_fresh, job_requirements as parse_job_requirements, meets_requirements, MAX_EXPERIENCE_MONTHS_EARLY_CAREER, MAX_EXPERIENCE_MONTHS_INTERNSHIP, EDUCATION_RANK, clean_typed_text, clean_direction_label, direction_key, resolve_route, MAJORS_STAGES, CERTIFICATION_STAGES, NO_LISTINGS_STAGES, NO_COMPANIES_STAGES, is_appropriate, is_region_eligible, is_seniority_appropriate, STILL_ENROLLED_STAGES, ENTERING_MARKET_STAGES, PROFESSIONAL_STAGES, CULTURAL_GUARDRAIL
 import coach_chat as coach_chat_mod
 import receipt_generator
-from ai_provider import get_ai_provider, invalidate_ai_provider_cache, AI_PROVIDER_KEY, VALID_PROVIDERS, is_gemini_enabled, GeminiSwitchedOff, GEMINI_ENABLED_KEY, invalidate_gemini_cache
+from ai_provider import get_ai_provider, invalidate_ai_provider_cache, AI_PROVIDER_KEY, VALID_PROVIDERS, is_gemini_enabled, GeminiSwitchedOff, GEMINI_ENABLED_KEY, invalidate_gemini_cache, is_gemini_embedding_enabled, GEMINI_EMBED_KEY
 
 load_dotenv()
 
@@ -3507,14 +3507,30 @@ def set_gemini_enabled(body: GeminiEnabledRequest, _=Depends(require_admin)):
     invalidate_ai_provider_cache()
     return {"enabled": body.enabled}
 
+@app.get("/admin/gemini-embeddings-enabled")
+def get_gemini_embeddings_enabled_admin(_=Depends(require_admin)):
+    """Embeddings-only switch: Gemini embeds (career matching, coaching examples) while gemini_enabled can stay off so Claude
+    keeps all text generation and translation."""
+    return {"enabled": is_gemini_embedding_enabled()}
+
+@app.post("/admin/gemini-embeddings-enabled")
+def set_gemini_embeddings_enabled(body: GeminiEnabledRequest, _=Depends(require_admin)):
+    supabase.table('app_settings').upsert({
+        'key': GEMINI_EMBED_KEY,
+        'value': body.enabled,
+        'updated_at': datetime.now(timezone.utc).isoformat(),
+    }, on_conflict='key').execute()
+    invalidate_gemini_cache()
+    return {"enabled": body.enabled}
+
 @app.get("/admin/country-profiles")
 def get_country_profiles(_=Depends(require_admin)):
     data = supabase.table('country_profiles').select('*').order('country_name').execute()
     return data.data
 
 def _require_gemini_for_embeddings():
-    if not is_gemini_enabled():
-        raise HTTPException(status_code=503, detail="Gemini is switched off (app_settings.gemini_enabled), so embeddings cannot be built right now")
+    if not is_gemini_embedding_enabled():
+        raise HTTPException(status_code=503, detail="Gemini embeddings are switched off (app_settings.gemini_embeddings_enabled), so embeddings cannot be built right now")
 
 def _sync_country_embedding_if_possible(country_code: str, profile: dict):
     """The saved profile matters more than its embedding: with Gemini switched off the profile is kept and its embedding is
