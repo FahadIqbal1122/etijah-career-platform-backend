@@ -33,8 +33,8 @@ LIMIT_RESULTS_RESPONSE = (40, 3600)
 LIMIT_LANDING_SESSION = (20, 6 * 3600)      # anonymous visitors on the landing page
 LIMIT_GATE_HINTS = (3, 24 * 3600)           # free questions to Sarah at the pay gate (hint mode), per browser session
 GATE_HINTS_USED = {
-    "en": "You've used your 3 free questions. Unlock your full report to see your ranked majors and careers, and to keep asking Sarah about your results.",
-    "ar": "لقد استخدمت أسئلتك الثلاثة المجانية. افتح تقريرك الكامل لترى تخصصاتك ومساراتك المهنية مرتبةً، ولتواصل سؤال سارة عن نتائجك.",
+    "en": "You've used your 3 questions. Unlock your full report to see your ranked majors and careers, and to keep asking Sarah about your results.",
+    "ar": "لقد استخدمت أسئلتك الثلاثة. افتح تقريرك الكامل لترى تخصصاتك ومساراتك المهنية مرتبةً، ولتواصل سؤال سارة عن نتائجك.",
 }
 
 # Overall spend cap: per-visitor limits do not stop many visitors from running up the Gemini bill, so the coach
