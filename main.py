@@ -457,7 +457,7 @@ class PartialSaveRequest(BaseModel):
     email: EmailStr
     country: str | None = Field(default=None, max_length=100)
     nationality: str | None = Field(default=None, max_length=100)
-    age: int | None = Field(default=None, ge=10, le=100)
+    age: int | None = Field(default=None, ge=16, le=80)
     current_stage: Literal["high_school", "university", "recent_graduate",
         "working_exploring", "career_changer", "returning", "between_roles", "other"] | None = None
     answers: dict[str, Any]
@@ -489,7 +489,7 @@ class SubmitRequest(BaseModel):
     phone: str = Field(default='', max_length=40)   # no longer asked on the form
     country: str = Field(max_length=100)
     nationality: str = Field(max_length=100)
-    age: int = Field(ge=10, le=100)
+    age: int = Field(ge=16, le=80)
     experience_level: str = Field(max_length=50)
     # Constrained to QO4's exact option set: content_policy.py's stage-set
     # gating (STILL_ENROLLED_STAGES/ENTERING_MARKET_STAGES/PROFESSIONAL_STAGES)
