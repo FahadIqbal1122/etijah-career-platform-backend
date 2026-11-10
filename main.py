@@ -893,6 +893,52 @@ def set_paywall_percent(body: PaywallPercentRequest, _=Depends(require_admin)):
     _paywall_cache.update(value=body.percent, checked_at=datetime.now(timezone.utc))
     return {"percent": body.percent}
 
+# ── Launch price end date (shown on the pay gate) ─────────────────────────────
+# app_settings.launch_price_ends_at = ISO date string. Missing/null = no deadline is shown anywhere.
+LAUNCH_ENDS_KEY = "launch_price_ends_at"
+_launch_cache: dict[str, Any] = {"value": None, "checked_at": None}
+
+def _launch_price_ends_at() -> str | None:
+    now = datetime.now(timezone.utc)
+    if _launch_cache["checked_at"] and now - _launch_cache["checked_at"] < _COACH_SWITCH_CACHE_TTL:
+        return _launch_cache["value"]
+    try:
+        row = supabase.table('app_settings').select('value').eq('key', LAUNCH_ENDS_KEY).execute()
+        raw = row.data[0]['value'] if row.data else None
+        value = raw if isinstance(raw, str) and raw.strip() else None
+    except Exception as e:
+        print("Launch price date lookup failed, defaulting to hidden:", repr(e))
+        value = None
+    _launch_cache.update(value=value, checked_at=now)
+    return value
+
+class LaunchOfferRequest(BaseModel):
+    ends_at: str | None = Field(default=None, max_length=40)   # ISO date, or null to hide
+
+@app.get("/launch-offer-config")
+def get_launch_offer_config():
+    """Unauthenticated: the pay gate reads this. null = no deadline shown."""
+    return {"ends_at": _launch_price_ends_at()}
+
+@app.get("/admin/launch-offer")
+def get_launch_offer_admin(_=Depends(require_admin)):
+    return {"ends_at": _launch_price_ends_at()}
+
+@app.post("/admin/launch-offer")
+def set_launch_offer(body: LaunchOfferRequest, _=Depends(require_admin)):
+    value = None
+    if body.ends_at:
+        try:
+            value = datetime.fromisoformat(body.ends_at.replace('Z', '+00:00')).isoformat()
+        except ValueError:
+            raise HTTPException(status_code=422, detail="Invalid date")
+    supabase.table('app_settings').upsert({
+        'key': LAUNCH_ENDS_KEY, 'value': value,
+        'updated_at': datetime.now(timezone.utc).isoformat(),
+    }, on_conflict='key').execute()
+    _launch_cache.update(value=value, checked_at=datetime.now(timezone.utc))
+    return {"ends_at": value}
+
 def _latest_completed_id(user_id: str) -> str | None:
     rows = supabase.table('assessment_responses').select('id').eq('user_id', user_id).eq('completed', True) \
         .order('created_at', desc=True).limit(1).execute().data
@@ -4535,6 +4581,10 @@ class CoachChatRequest(BaseModel):
     question_text: str | None = Field(default=None, max_length=600)
     question_type: str | None = Field(default=None, max_length=30)
     question_options: list[str] | None = Field(default=None, max_length=10)
+    # gate mode (hint mode): the top interest types / personality traits the pay screen already shows for free
+    profile: dict | None = None
+    # assessment mode: the person chose "career changer" as their stage (QO4)
+    career_changer: bool = False
 
 @app.post("/coach/chat")
 def coach_chat(payload: CoachChatRequest, request: Request, user=Depends(get_optional_user)):
@@ -4571,6 +4621,9 @@ def coach_chat(payload: CoachChatRequest, request: Request, user=Depends(get_opt
             raise HTTPException(status_code=400, detail=f"session_id is required in {payload.mode} mode")
         if not coach_chat_mod.check_rate_limit(f"{'land' if payload.mode == 'landing' else 'gate'}:{payload.session_id}", coach_chat_mod.LIMIT_LANDING_SESSION):
             return {"reply": None, "limited": True}
+        # Pay-gate hint mode: only LIMIT_GATE_HINTS (3) free questions per session, then a fixed message and no AI call.
+        if payload.mode == "gate" and not coach_chat_mod.check_rate_limit(f"gatehint:{payload.session_id}", coach_chat_mod.LIMIT_GATE_HINTS):
+            return {"reply": coach_chat_mod.GATE_HINTS_USED[payload.locale], "limited": False, "hints_left": 0}
     else:
         if not payload.session_id:
             raise HTTPException(status_code=400, detail="session_id is required in assessment mode")
@@ -4582,7 +4635,9 @@ def coach_chat(payload: CoachChatRequest, request: Request, user=Depends(get_opt
         reply = coach_chat_mod.generate_reply(payload.mode, payload.message, payload.history, payload.locale, tier, summary,
                                               (payload.question_index, payload.question_total) if payload.question_index and payload.question_total else None,
                                               {"text": payload.question_text, "type": payload.question_type, "options": payload.question_options}
-                                              if payload.mode == "assessment" and payload.question_text else None)
+                                              if payload.mode == "assessment" and payload.question_text else None,
+                                              payload.profile if payload.mode == "gate" else None,
+                                              payload.career_changer and payload.mode == "assessment")
     except Exception as e:
         print("Coach chat failed:", repr(e))
         raise HTTPException(status_code=503, detail="The coach is unavailable right now.")

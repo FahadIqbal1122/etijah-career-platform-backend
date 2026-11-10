@@ -31,6 +31,11 @@ LIMIT_PER_IP = (30, 3600)
 LIMIT_ASSESSMENT_SESSION = (10, 6 * 3600)   # total messages per assessment session
 LIMIT_RESULTS_RESPONSE = (40, 3600)
 LIMIT_LANDING_SESSION = (20, 6 * 3600)      # anonymous visitors on the landing page
+LIMIT_GATE_HINTS = (3, 24 * 3600)           # free questions to Sarah at the pay gate (hint mode), per browser session
+GATE_HINTS_USED = {
+    "en": "You've used your 3 free questions. Unlock your full report to see your ranked majors and careers, and to keep asking Sarah about your results.",
+    "ar": "لقد استخدمت أسئلتك الثلاثة المجانية. افتح تقريرك الكامل لترى تخصصاتك ومساراتك المهنية مرتبةً، ولتواصل سؤال سارة عن نتائجك.",
+}
 
 # Overall spend cap: per-visitor limits do not stop many visitors from running up the Gemini bill, so the coach
 # also stops answering after this many replies in a rolling day (COACH_DAILY_BUDGET overrides; 0 turns the cap off).
@@ -53,7 +58,7 @@ def check_rate_limit(key: str, limit: tuple[int, int]) -> bool:
     now = time.monotonic()
     with _lock:
         if len(_hits) > 5000:   # bounded memory: forget keys idle for longer than the longest window
-            cutoff = now - max(LIMIT_PER_IP[1], LIMIT_ASSESSMENT_SESSION[1], LIMIT_RESULTS_RESPONSE[1], LIMIT_LANDING_SESSION[1])
+            cutoff = now - max(LIMIT_PER_IP[1], LIMIT_ASSESSMENT_SESSION[1], LIMIT_RESULTS_RESPONSE[1], LIMIT_LANDING_SESSION[1], LIMIT_GATE_HINTS[1])
             for k in [k for k, d in _hits.items() if not d or d[-1] < cutoff]:
                 del _hits[k]
         q = _hits[key]
@@ -125,6 +130,36 @@ OVERRIDE for this conversation: the person is NOT on the landing page. They are 
 - If they ask how to talk to their parents about paying: help them with a short, respectful way to explain it (what it is, that it is a one-time payment, that it helps them choose a major or career with evidence, and that they can show the first result they already got). Mention that under 18s can send a payment link to a parent from this screen and their answers stay saved. Keep it warm and practical.
 - Keep replies short (a few sentences)."""
 
+_RIASEC_DIMS = {"realistic", "investigative", "artistic", "social", "enterprising", "conventional"}
+_TRAIT_DIMS = {"openness", "conscientiousness", "extraversion", "agreeableness", "stability"}
+
+# Hint mode (pay gate): the only personal data she sees is what the gate already shows for free.
+_HINT_RULES = """
+HINT MODE: this person has finished chapters 1 and 2 and can ask you up to 3 free questions about their own results. You may use ONLY the free profile below, which is exactly what the pay screen already shows them.
+Free profile (their top interest types and personality traits, strongest first):
+{profile}
+- Answer questions about their results with a short, TRUE hint built only from that profile: what the types and traits mean and what kind of work or study environments they usually point towards, in general terms.
+- You do NOT have their majors, careers, AI-impact analysis, strengths, values, scores or 90-day plan. Never name, rank, confirm or rule out a specific university major or job. If asked "is X one of my top majors?" or "what should I study?", say honestly that their ranked majors and careers are in the full report, then give one true hint from the profile that relates to the question.
+- Never invent a score, percentage, ranking or fact about them. Never tease something that is not in the report.
+- Every hint is also a reason the full report adds more, but keep it natural: at most one short mention per reply, never pushy.
+- If they ask about the report, price or their parents, use the facts above as usual."""
+
+
+def _free_profile_text(profile: dict | None) -> str:
+    """Whitelisted dimension names only (the browser sends them), so nothing else can be injected into the prompt."""
+    def pick(v, allowed, n):
+        return [d for d in (v if isinstance(v, list) else []) if isinstance(d, str) and d in allowed][:n]
+    types = pick((profile or {}).get("riasec"), _RIASEC_DIMS, 3)
+    traits = pick((profile or {}).get("big_five"), _TRAIT_DIMS, 2)
+    lines = []
+    if types: lines.append("Top interest types (RIASEC): " + ", ".join(types))
+    if traits: lines.append("Top personality traits: " + ", ".join(traits))
+    return "\n".join(lines)
+
+
+_CAREER_CHANGER_RULES = """
+This person told us they want to change careers. Be warm and empathetic: changing careers can be hard, especially after feeling unfulfilled in a previous role. Acknowledge that briefly, and where it fits, invite them to think about what matters most to them and what they would like to be different in their next career. Do not assume why they want to change, and do not ask for personal or contact details. All the rules above still apply."""
+
 _UPSELL_FREE = "; some of those sections are part of the paid plans (Pathfinder and Launchpad)"
 
 
@@ -174,7 +209,8 @@ def _question_block(question: dict | None) -> str:
 
 
 def build_system_prompt(mode: str, locale: str, tier: str = "free", summary: dict | None = None,
-                        progress: tuple[int, int] | None = None, question: dict | None = None) -> str:
+                        progress: tuple[int, int] | None = None, question: dict | None = None,
+                        free_profile: dict | None = None, career_changer: bool = False) -> str:
     lang_name = "Arabic" if locale == "ar" else "English"
     prompt = _SHARED_RULES.format(lang_name=lang_name)
     if mode == "results":
@@ -187,6 +223,9 @@ def build_system_prompt(mode: str, locale: str, tier: str = "free", summary: dic
         prompt += _LANDING_RULES
     elif mode == "gate":
         prompt += _LANDING_RULES + _GATE_RULES
+        hint_profile = _free_profile_text(free_profile)
+        if hint_profile:
+            prompt += _HINT_RULES.format(profile=hint_profile)
     else:
         prompt += _ASSESSMENT_RULES
         if progress:
@@ -196,6 +235,8 @@ def build_system_prompt(mode: str, locale: str, tier: str = "free", summary: dic
                        "questions they have answered, how many are left, or how many there are in total; you may say "
                        "they are making good progress.")
         prompt += _question_block(question)
+        if career_changer:
+            prompt += _CAREER_CHANGER_RULES
     return prompt
 
 
@@ -228,7 +269,8 @@ def _get_client():
 
 def generate_reply(mode: str, message: str, history: list[dict], locale: str,
                    tier: str = "free", summary: dict | None = None, progress: tuple[int, int] | None = None,
-                   question: dict | None = None) -> str:
+                   question: dict | None = None, free_profile: dict | None = None,
+                   career_changer: bool = False) -> str:
     ai_usage.check_budget()
     # _clean_history keeps Gemini's user/model roles; Claude calls the coach's side "assistant".
     messages = [{"role": "user" if t["role"] == "user" else "assistant", "content": t["parts"][0]}
@@ -240,7 +282,7 @@ def generate_reply(mode: str, message: str, history: list[dict], locale: str,
             model=COACH_MODEL,
             max_tokens=600,
             temperature=0.6,
-            system=build_system_prompt(mode, locale, tier, summary, progress, question),
+            system=build_system_prompt(mode, locale, tier, summary, progress, question, free_profile, career_changer),
             messages=messages,
             timeout=COACH_TIMEOUT_S,
             # the 5.x models think by default (billed as output); a short chat reply needs none
