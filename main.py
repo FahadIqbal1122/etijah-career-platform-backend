@@ -873,7 +873,8 @@ def _has_paid_access(user) -> bool:
 @app.get("/paywall-config")
 def get_paywall_config():
     """Unauthenticated: the assessment page reads this to decide whether this visitor is asked to pay mid-way."""
-    return {"percent": _paywall_percent()}
+    # reminder_email: whether the automatic "continue where you left off" email is on, so the coach only promises it when true
+    return {"percent": _paywall_percent(), "reminder_email": _is_auto_abandoned_reminder_enabled()}
 
 @app.get("/org-offer-check")
 def org_offer_check(email: str = ""):
