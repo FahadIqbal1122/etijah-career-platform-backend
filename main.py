@@ -4748,12 +4748,12 @@ def _resolve_price(user_id: str, plan_code: str, plan: dict, wanted_currency: st
             charge_amount, charge_currency = local, wanted
     return charge_amount, charge_currency
 
-def _reserve_discount(user, plan_code: str, code: str, dry_run: bool = False) -> dict:
+def _reserve_discount(user, plan_code: str, code: str, dry_run: bool = False, guard_key: str | None = None) -> dict:
     """Checks the code and takes one use for this buyer (dry_run: check only). Error details are codes the frontend translates."""
     code = (code or "").strip().upper()
     if not DISCOUNT_CODE_RE.match(code):
         raise HTTPException(status_code=400, detail="discount_invalid")
-    if not request_guard.allow(f"discount|{user.id}", (20, 3600)):   # stops scripted guessing of codes
+    if not request_guard.allow(f"discount|{guard_key or user.id}", (20, 3600)):   # stops scripted guessing of codes
         raise HTTPException(status_code=429, detail="discount_rate_limited")
     try:
         res = supabase.rpc('reserve_discount_code', {
@@ -5026,6 +5026,7 @@ class ParentPurchaseRequest(BaseModel):
     locale: str | None = Field(default=None, max_length=5)
     currency: str | None = Field(default=None, max_length=3)
     consent: bool = False
+    discount_code: str | None = Field(default=None, max_length=40)
     fbp: str | None = Field(default=None, max_length=200)
     fbc: str | None = Field(default=None, max_length=300)
 
@@ -5083,7 +5084,18 @@ def create_parent_purchase(body: ParentPurchaseRequest, request: Request):
     amount, currency = _resolve_price(_NO_OWNER, body.plan_code, plan, body.currency)
     holder_id = _parent_holder_user(email)
     _save_checkout_context(holder_id, request, body.fbp, body.fbc)
+    # A discount code: the parent's holder account stands in for the buyer, so "one use per person" works per parent email.
+    original_amount, reservation, discount_amount = amount, None, 0.0
+    if body.discount_code and body.discount_code.strip():
+        from types import SimpleNamespace
+        reservation = _reserve_discount(SimpleNamespace(id=holder_id, email=email), body.plan_code, body.discount_code, guard_key=f"ip|{_client_ip(request)}")
+        try:
+            amount, discount_amount = _discounted(reservation, body.plan_code, amount, currency)
+        except Exception:
+            _release_discount(reservation)
+            raise
     child_name = (body.child_first_name or '').strip().split(' ')[0] or None
+
     token, parent_token = secrets.token_urlsafe(24), secrets.token_urlsafe(24)
     payload = {
         "external_user_id": holder_id, "first_name": "Parent", "last_name": child_name or "Account", "email": email,
@@ -5095,18 +5107,39 @@ def create_parent_purchase(body: ParentPurchaseRequest, request: Request):
                           headers={"Authorization": f"Bearer {HUB_API_KEY}"}, timeout=15.0)
         resp.raise_for_status()
     except (httpx.HTTPStatusError, httpx.RequestError) as e:
+        _release_discount(reservation)
         print("Parent purchase: shop order failed:", repr(e))
         raise HTTPException(status_code=502, detail="The payment page could not be created. Please try again.")
     data = resp.json()
     checkout_url, order_ref = data.get("checkout_url"), data.get("order_ref")
     if not checkout_url or not order_ref:
+        _release_discount(reservation)
         raise HTTPException(status_code=502, detail="Shop response did not include a checkout_url")
     supabase.table('parent_purchases').insert({
         'token': token, 'parent_token': parent_token, 'parent_email': email, 'child_first_name': child_name,
         'plan_code': body.plan_code, 'currency': currency, 'locale': locale, 'holder_user_id': holder_id,
         'order_ref': order_ref, 'parent_consent_at': datetime.now(timezone.utc).isoformat(),
     }).execute()
+    if reservation:
+        _attach_discount_order(reservation, order_ref, original_amount, amount, discount_amount, currency)
     return {"checkout_url": checkout_url}
+
+class ParentDiscountPreviewRequest(BaseModel):
+    plan_code: str = "pathfinder"
+    code: str = Field(max_length=40)
+    currency: str | None = Field(default=None, max_length=3)
+
+@app.post("/parent/discount/preview")
+def parent_discount_preview(body: ParentDiscountPreviewRequest, request: Request):
+    """Public. What a parent would pay with this code. Reserves nothing (the one-use-per-parent check happens at purchase)."""
+    from types import SimpleNamespace
+    plan = PLAN_CATALOG.get(body.plan_code)
+    if not plan or not plan.get("available", True):
+        raise HTTPException(status_code=400, detail=f"Unknown plan_code: {body.plan_code}")
+    amount, currency = _resolve_price(_NO_OWNER, body.plan_code, plan, body.currency)
+    res = _reserve_discount(SimpleNamespace(id=_NO_OWNER, email=None), body.plan_code, body.code, dry_run=True, guard_key=f"ip|{_client_ip(request)}")
+    final, discount = _discounted(res, body.plan_code, amount, currency)
+    return {"original": amount, "discount": discount, "final": final, "currency": currency}
 
 def _parent_paid_email(row: dict) -> tuple[str, str]:
     import html as _h
@@ -5769,6 +5802,7 @@ async def receive_hub_transaction(request: Request, background_tasks: Background
     # Checked on every paid delivery, not only the first, so a retry can finish a purchase whose first attempt failed.
     if str(body.status).lower() == 'paid' and _fulfil_parent_purchase(body.order_ref, background_tasks):
         if result.data:
+            _settle_discount(body.external_user_id, body.order_ref, body.plan_code, body.amount)
             _send_meta_purchase_event(body.external_user_id, body.order_ref, body.amount, body.currency, body.tap_charge_id)
         return {"received": True}
 
