@@ -940,6 +940,77 @@ def set_launch_offer(body: LaunchOfferRequest, _=Depends(require_admin)):
     _launch_cache.update(value=value, checked_at=datetime.now(timezone.utc))
     return {"ends_at": value}
 
+
+# ── Coach messages editable in Admin ───────────────────────────────────────────
+# The frontend keeps the default wording of every coach line (keyed by the brief's message IDs). Whatever is saved here
+# replaces a line's English and/or Arabic text, so content can change without a release. Also holds the two work-style
+# thresholds the personal hints use. Copy rules from the brief are enforced on save: no "free" / مجاناً, no em dashes.
+COACH_SCRIPT_KEY = "coach_script_overrides"
+_coach_script_cache: dict[str, Any] = {"value": None, "checked_at": None}
+_SCRIPT_ID = re.compile(r'^[A-Za-z0-9._-]{1,48}$')
+_SCRIPT_BANNED = re.compile(r'\bfree\b|مجان|\u2014', re.IGNORECASE)
+DEFAULT_COACH_SCRIPT = {"messages": {}, "trait_high": 4.5, "trait_low": 2.5}
+
+def _coach_script_settings() -> dict:
+    now = datetime.now(timezone.utc)
+    if _coach_script_cache["checked_at"] and now - _coach_script_cache["checked_at"] < _COACH_SWITCH_CACHE_TTL:
+        return _coach_script_cache["value"]
+    try:
+        row = supabase.table('app_settings').select('value').eq('key', COACH_SCRIPT_KEY).execute()
+        raw = row.data[0]['value'] if row.data else None
+        value = {**DEFAULT_COACH_SCRIPT, **raw} if isinstance(raw, dict) else dict(DEFAULT_COACH_SCRIPT)
+    except Exception as e:
+        print("Coach script lookup failed, using the built-in wording:", repr(e))
+        value = dict(DEFAULT_COACH_SCRIPT)
+    _coach_script_cache.update(value=value, checked_at=now)
+    return value
+
+class CoachScriptRequest(BaseModel):
+    messages: dict[str, dict[str, str]] = Field(default_factory=dict)
+    trait_high: float = 4.5
+    trait_low: float = 2.5
+
+@app.get("/coach-script")
+def get_coach_script():
+    """Unauthenticated: the assessment and pay gate read this on load. Empty messages = the built-in wording."""
+    return _coach_script_settings()
+
+@app.get("/admin/coach-script")
+def get_coach_script_admin(_=Depends(require_admin)):
+    return _coach_script_settings()
+
+@app.post("/admin/coach-script")
+def set_coach_script(body: CoachScriptRequest, _=Depends(require_admin)):
+    if len(body.messages) > 400:
+        raise HTTPException(status_code=422, detail="Too many messages")
+    clean: dict[str, dict[str, str]] = {}
+    for mid, langs in body.messages.items():
+        if not _SCRIPT_ID.match(mid):
+            raise HTTPException(status_code=422, detail=f"Invalid message ID: {mid[:30]}")
+        entry: dict[str, str] = {}
+        for lang, text in langs.items():
+            if lang not in ("en", "ar"):
+                raise HTTPException(status_code=422, detail=f"{mid}: language must be en or ar")
+            text = text.strip()
+            if not text:
+                continue   # empty = back to the built-in wording
+            if len(text) > 1500:
+                raise HTTPException(status_code=422, detail=f"{mid} ({lang}): too long")
+            if _SCRIPT_BANNED.search(text):
+                raise HTTPException(status_code=422, detail=f"{mid} ({lang}): never use \"free\" / مجاناً, and no em dashes")
+            entry[lang] = text
+        if entry:
+            clean[mid] = entry
+    if not (1.0 < body.trait_low < body.trait_high < 6.0):
+        raise HTTPException(status_code=422, detail="Thresholds must satisfy 1 < low < high < 6")
+    value = {"messages": clean, "trait_high": body.trait_high, "trait_low": body.trait_low}
+    supabase.table('app_settings').upsert({
+        'key': COACH_SCRIPT_KEY, 'value': value,
+        'updated_at': datetime.now(timezone.utc).isoformat(),
+    }, on_conflict='key').execute()
+    _coach_script_cache.update(value=value, checked_at=datetime.now(timezone.utc))
+    return value
+
 def _latest_completed_id(user_id: str) -> str | None:
     rows = supabase.table('assessment_responses').select('id').eq('user_id', user_id).eq('completed', True) \
         .order('created_at', desc=True).limit(1).execute().data
@@ -4469,9 +4540,21 @@ def list_sales(_=Depends(require_admin)):
                                  .in_('user_id', user_ids).order('created_at', desc=True)).data or []
         for a in ar:
             people.setdefault(a['user_id'], a)  # newest first, so the first one seen is the latest
+    # Parent purchases are booked under the parent's own (silent) account, which has no assessment: show the parent instead of a blank.
+    parent_by_order: dict[str, dict] = {}
+    try:
+        refs = [r['order_ref'] for r in rows if r.get('order_ref')]
+        if refs:
+            for pp in (_execute_with_retry(supabase.table('parent_purchases').select('order_ref, parent_email, child_first_name').in_('order_ref', refs)).data or []):
+                parent_by_order[pp['order_ref']] = pp
+    except Exception as e:
+        print("admin sales: parent purchase lookup failed:", repr(e)[:120])
     out = []
     for r in rows:
         p = people.get(r.get('user_id')) or {}
+        pp = parent_by_order.get(r.get('order_ref'))
+        if pp:
+            p = {'full_name': f"Parent of {pp.get('child_first_name') or 'a child'}", 'email': pp['parent_email'], 'country': None}
         out.append({
             **r,
             'full_name': p.get('full_name'),
@@ -4927,6 +5010,230 @@ def _close_parent_links(user_id: str, plan_code: str):
             .eq('user_id', user_id).eq('plan_code', plan_code).is_('paid_at', 'null').execute()
     except Exception as e:
         print("parent link close failed:", repr(e))
+
+
+# ── Parent pays first (the parent buys on the parents page; the child redeems the link) ─────────────────────────────
+# Decisions taken as defaults until the team confirms them (see the tracker doc): the parent reads the report through a
+# private read-only link emailed after the child redeems; the parent ticks the terms at purchase and the child ticks that
+# the parent will see the report; the price is whatever PLAN_CATALOG / the launch price says at the time.
+GIFT_VALID_DAYS = 90
+_NO_OWNER = "00000000-0000-0000-0000-000000000000"   # a user id that owns nothing, so the gift is priced as a first purchase
+
+class ParentPurchaseRequest(BaseModel):
+    parent_email: EmailStr
+    child_first_name: str | None = Field(default=None, max_length=60)
+    plan_code: str = "pathfinder"
+    locale: str | None = Field(default=None, max_length=5)
+    currency: str | None = Field(default=None, max_length=3)
+    consent: bool = False
+    fbp: str | None = Field(default=None, max_length=200)
+    fbc: str | None = Field(default=None, max_length=300)
+
+class GiftRedeemRequest(BaseModel):
+    consent: bool = False
+
+def _site_base() -> str:
+    return (os.getenv('FRONTEND_URL') or PARENT_LINK_BASE).rstrip('/')
+
+def _parent_holder_user(email: str) -> str:
+    """The auth user a parent's shop order is booked under: a new confirmed account for this email, or the existing one.
+    The shop and the transactions table need a real user id; the plan itself is never activated on it."""
+    try:
+        res = supabase.auth.admin.create_user({"email": email, "email_confirm": True, "user_metadata": {"parent_holder": True}})
+        return res.user.id
+    except Exception as e:
+        print("parent holder: create failed, looking the email up:", repr(e)[:200])
+    for page in range(1, 21):
+        users = supabase.auth.admin.list_users(page=page, per_page=1000)
+        users = users if isinstance(users, list) else getattr(users, 'users', []) or []
+        for u in users:
+            if (getattr(u, 'email', '') or '').lower() == email.lower():
+                return u.id
+        if len(users) < 1000:
+            break
+    raise HTTPException(status_code=502, detail="The payment page could not be created. Please try again.")
+
+def _gift_row(token: str, column: str = 'token') -> dict:
+    rows = supabase.table('parent_purchases').select('*').eq(column, token).limit(1).execute().data
+    if not rows:
+        raise HTTPException(status_code=404, detail="link_invalid")
+    return rows[0]
+
+def _gift_expired(row: dict) -> bool:
+    stamp = re.sub(r'\.(\d+)', lambda m: '.' + (m.group(1) + '000000')[:6], row['created_at'].replace('Z', '+00:00'))
+    return datetime.fromisoformat(stamp) + timedelta(days=GIFT_VALID_DAYS) < datetime.now(timezone.utc)
+
+def _gift_status(row: dict) -> str:
+    if row.get('redeemed_at'):
+        return 'redeemed'
+    return 'paid' if row.get('paid_at') else 'pending'
+
+@app.post("/parent/purchase")
+def create_parent_purchase(body: ParentPurchaseRequest, request: Request):
+    """Public. A parent pays for their child's report before the child has an account. Returns the shop's checkout URL."""
+    plan = PLAN_CATALOG.get(body.plan_code)
+    if not plan or not plan.get("available", True):
+        raise HTTPException(status_code=400, detail=f"Unknown plan_code: {body.plan_code}")
+    if not body.consent:
+        raise HTTPException(status_code=400, detail="consent_required")
+    email = str(body.parent_email).strip().lower()
+    if not request_guard.allow(f"parentbuy-ip|{_client_ip(request)}", (10, 3600)) or not request_guard.allow(f"parentbuy|{email}", (5, 3600)):
+        raise HTTPException(status_code=429, detail="rate_limited")
+    locale = body.locale if body.locale in ('en', 'ar') else 'en'
+    amount, currency = _resolve_price(_NO_OWNER, body.plan_code, plan, body.currency)
+    holder_id = _parent_holder_user(email)
+    _save_checkout_context(holder_id, request, body.fbp, body.fbc)
+    child_name = (body.child_first_name or '').strip().split(' ')[0] or None
+    token, parent_token = secrets.token_urlsafe(24), secrets.token_urlsafe(24)
+    payload = {
+        "external_user_id": holder_id, "first_name": "Parent", "last_name": child_name or "Account", "email": email,
+        "plan_code": body.plan_code, "plan_name": plan["name"], "amount": amount, "currency": currency,
+        "return_url": f"{_site_base()}/{locale}/parent/{parent_token}",
+    }
+    try:
+        resp = httpx.post(f"{SHOP_BASE_URL}/api/hub/orders", json=payload,
+                          headers={"Authorization": f"Bearer {HUB_API_KEY}"}, timeout=15.0)
+        resp.raise_for_status()
+    except (httpx.HTTPStatusError, httpx.RequestError) as e:
+        print("Parent purchase: shop order failed:", repr(e))
+        raise HTTPException(status_code=502, detail="The payment page could not be created. Please try again.")
+    data = resp.json()
+    checkout_url, order_ref = data.get("checkout_url"), data.get("order_ref")
+    if not checkout_url or not order_ref:
+        raise HTTPException(status_code=502, detail="Shop response did not include a checkout_url")
+    supabase.table('parent_purchases').insert({
+        'token': token, 'parent_token': parent_token, 'parent_email': email, 'child_first_name': child_name,
+        'plan_code': body.plan_code, 'currency': currency, 'locale': locale, 'holder_user_id': holder_id,
+        'order_ref': order_ref, 'parent_consent_at': datetime.now(timezone.utc).isoformat(),
+    }).execute()
+    return {"checkout_url": checkout_url}
+
+def _parent_paid_email(row: dict) -> tuple[str, str]:
+    import html as _h
+    from smtp_service import branded_email
+    base, loc = _site_base(), row.get('locale') or 'en'
+    gift, status_url = f"{base}/{loc}/start/{row['token']}", f"{base}/{loc}/parent/{row['parent_token']}"
+    who = _h.escape(row.get('child_first_name') or '')
+    if loc == 'ar':
+        return "وصلنا دفعك، هذا رابط ابنك أو ابنتك", branded_email(
+            'ar', band="تم الدفع", heading="وصلنا دفعك، شكراً لك",
+            paragraphs=[f'أرسل هذا الرابط إلى {who or "ابنك أو ابنتك"} ليبدأ التقييم ويُفتح له التقرير الكامل:',
+                        f'<a href="{_h.escape(gift)}">{_h.escape(gift)}</a>',
+                        'بعد أن ينهي التقييم نرسل لك رابطاً لقراءة التقرير. يمكنك أيضاً متابعة الحالة من صفحتك الخاصة.', 'فريق إتجاهي'],
+            cta_label="صفحتي", cta_url=status_url)
+    return "Payment received: here is the link for your child", branded_email(
+        'en', band="Payment received", heading="Payment received, thank you",
+        paragraphs=[f'Send this link to {who or "your child"} so they can take the assessment and have the full report unlocked:',
+                    f'<a href="{_h.escape(gift)}">{_h.escape(gift)}</a>',
+                    'When they finish, we email you a link to read the report. You can also follow the progress on your own page.', 'The Etijahi team'],
+        cta_label="Open my page", cta_url=status_url)
+
+def _fulfil_parent_purchase(order_ref: str, background_tasks: BackgroundTasks) -> bool:
+    """Called by the payment webhook when an order is first confirmed paid. True when the order belonged to a parent
+    purchase (so the caller must not activate a plan on the parent's account)."""
+    try:
+        rows = supabase.table('parent_purchases').select('*').eq('order_ref', order_ref).limit(1).execute().data
+    except Exception as e:
+        # Never let this lookup break ordinary payments (e.g. the table is not created yet): treat it as "not a parent order".
+        print(f"parent purchase lookup failed for order_ref={order_ref}:", repr(e)[:200])
+        return False
+    if not rows:
+        return False
+    row = rows[0]
+    if row.get('paid_at'):
+        return True   # a webhook retry: already booked and emailed, and still must not unlock the parent's own account
+    supabase.table('parent_purchases').update({'paid_at': datetime.now(timezone.utc).isoformat()}).eq('token', row['token']).execute()
+    try:
+        subject, html = _parent_paid_email(row)
+        background_tasks.add_task(send_email, row['parent_email'], subject, html, None, None, None, supabase, True)
+    except Exception as e:
+        print("parent purchase: paid email failed:", repr(e))
+    return True
+
+@app.get("/parent/status/{parent_token}")
+def parent_status(parent_token: str):
+    """Public (the token is the secret). What the parent sees: waiting for the child, or the report link."""
+    row = _gift_row(parent_token, 'parent_token')
+    base, loc = _site_base(), row.get('locale') or 'en'
+    out = {"status": _gift_status(row), "child_first_name": row.get('child_first_name'), "locale": loc,
+           "plan_name": PLAN_CATALOG.get(row['plan_code'], {}).get('name')}
+    if out["status"] in ('paid', 'redeemed'):
+        out["gift_url"] = f"{base}/{loc}/start/{row['token']}"
+        out["order_ref"] = row.get('order_ref')
+        try:   # what was charged, for the purchase event on the parent's page
+            t = supabase.table('transactions').select('amount, currency').eq('order_ref', row.get('order_ref')).limit(1).execute().data
+            if t:
+                out["amount"], out["currency"] = t[0].get('amount'), t[0].get('currency')
+        except Exception as e:
+            print("parent status: transaction lookup failed:", repr(e)[:120])
+    if out["status"] == 'redeemed' and row.get('redeemed_by'):
+        rid = _latest_response_id(row['redeemed_by'])
+        if rid:
+            out["report_url"] = f"{base}/{loc}/results/{rid}"
+    return out
+
+def _latest_response_id(user_id: str) -> str | None:
+    rows = supabase.table('assessment_responses').select('id').eq('user_id', user_id).order('created_at', desc=True).limit(1).execute().data
+    return rows[0]['id'] if rows else None
+
+@app.get("/parent/gift/{token}")
+def gift_info(token: str):
+    """Public. What the child sees when they open the link their parent sent: whether it is paid, and what it unlocks."""
+    row = _gift_row(token)
+    if _gift_expired(row) and not row.get('redeemed_at'):
+        raise HTTPException(status_code=410, detail="link_expired")
+    return {"status": _gift_status(row), "plan_name": PLAN_CATALOG.get(row['plan_code'], {}).get('name'),
+            "child_first_name": row.get('child_first_name'), "locale": row.get('locale') or 'en'}
+
+@app.post("/parent/gift/{token}/redeem")
+def redeem_gift(token: str, body: GiftRedeemRequest, background_tasks: BackgroundTasks, user=Depends(get_current_user)):
+    """Signed-in child: unlocks the plan their parent paid for on THIS account, and emails the parent their report link."""
+    row = _gift_row(token)
+    if row.get('redeemed_at'):
+        if row.get('redeemed_by') == user.id:
+            return {"redeemed": True, "already": True}
+        raise HTTPException(status_code=410, detail="link_used")
+    if not row.get('paid_at'):
+        raise HTTPException(status_code=402, detail="not_paid_yet")
+    if _gift_expired(row):
+        raise HTTPException(status_code=410, detail="link_expired")
+    if not body.consent:
+        raise HTTPException(status_code=400, detail="consent_required")
+    rid = _latest_response_id(user.id)
+    if not rid:
+        raise HTTPException(status_code=400, detail="assessment_required")
+    now = datetime.now(timezone.utc).isoformat()
+    # The conditional update is the lock: only one request can move redeemed_at from null, so a double tap or a shared link can't unlock two accounts.
+    won = supabase.table('parent_purchases').update({'redeemed_by': user.id, 'redeemed_at': now, 'child_consent_at': now}) \
+        .eq('token', token).is_('redeemed_at', 'null').execute().data
+    if not won:
+        raise HTTPException(status_code=410, detail="link_used")
+    plan_code = row['plan_code']
+    _activate_plan(user.id, plan_code)
+    background_tasks.add_task(_prewarm_full_report, user.id)
+    if str(plan_code).startswith('launchpad'):
+        plan = PLAN_CATALOG.get(plan_code, {})
+        background_tasks.add_task(_notify_coaching_purchase, user.id, plan.get('amount'), row.get('currency') or plan.get('currency'))
+        background_tasks.add_task(_create_academy_coaching_purchase, user.id, row.get('order_ref'))
+    try:
+        import html as _h
+        from smtp_service import branded_email
+        base, loc = _site_base(), row.get('locale') or 'en'
+        report_url, who = f"{base}/{loc}/results/{rid}", _h.escape(row.get('child_first_name') or '')
+        if loc == 'ar':
+            subject, html = "تقرير ابنك أو ابنتك جاهز للقراءة", branded_email(
+                'ar', band="التقرير جاهز", heading="التقرير الكامل جاهز للقراءة",
+                paragraphs=[f'{who or "ابنك أو ابنتك"} أنهى التقييم وفُتح له التقرير الكامل. يمكنك قراءته الآن من هذا الرابط الخاص بك، وهو للقراءة فقط.', 'فريق إتجاهي'],
+                cta_label="اقرأ التقرير", cta_url=report_url)
+        else:
+            subject, html = "Your child's report is ready to read", branded_email(
+                'en', band="Report ready", heading="The full report is ready to read",
+                paragraphs=[f'{who or "Your child"} finished the assessment and the full report is unlocked. You can read it now with this private, read-only link.', 'The Etijahi team'],
+                cta_label="Read the report", cta_url=report_url)
+        background_tasks.add_task(send_email, row['parent_email'], subject, html, None, None, None, supabase, True)
+    except Exception as e:
+        print("gift redeem: parent email failed:", repr(e))
+    return {"redeemed": True}
 
 
 @app.get("/billing/transaction")
@@ -5457,6 +5764,13 @@ async def receive_hub_transaction(request: Request, background_tasks: Background
         # 200 response.
         print(f"record_hub_transaction failed for order_ref={body.order_ref}:", e)
         raise HTTPException(status_code=500, detail="Failed to record transaction")
+
+    # A parent paying first: book the sale and tell the parent, but unlock nothing yet (the child's account is unlocked on redeem).
+    # Checked on every paid delivery, not only the first, so a retry can finish a purchase whose first attempt failed.
+    if str(body.status).lower() == 'paid' and _fulfil_parent_purchase(body.order_ref, background_tasks):
+        if result.data:
+            _send_meta_purchase_event(body.external_user_id, body.order_ref, body.amount, body.currency, body.tap_charge_id)
+        return {"received": True}
 
     if result.data:
         _settle_discount(body.external_user_id, body.order_ref, body.plan_code, body.amount)
