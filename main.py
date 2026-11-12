@@ -125,6 +125,17 @@ PLAN_CATALOG = {
 # Nothing in the code changes, so the real prices can never ship by accident. Everyone checking out while these are
 # set pays the test price.
 _test_amount = os.getenv("PATHFINDER_TEST_AMOUNT")
+# With PATHFINDER_TEST_EMAIL also set, the test price is NOT applied to everyone: only a parent purchase made with that
+# exact email is charged it (see create_parent_purchase). Every other buyer pays the normal price.
+_test_email = (os.getenv("PATHFINDER_TEST_EMAIL") or "").strip().lower()
+_parent_test_price = None
+if _test_email and _test_amount:
+    try:
+        _parent_test_price = (float(_test_amount), (os.getenv("PATHFINDER_TEST_CURRENCY") or "BHD").upper())
+        print(f"WARNING: parent TEST price {_parent_test_price} active for one email only")
+    except ValueError:
+        print(f"Ignoring PATHFINDER_TEST_AMOUNT={_test_amount!r}: not a number")
+    _test_amount = None
 if _test_amount:
     try:
         for _code in ("pathfinder", "launchpad_monthly"):
@@ -5139,11 +5150,13 @@ def create_parent_purchase(body: ParentPurchaseRequest, request: Request):
         raise HTTPException(status_code=429, detail="rate_limited")
     locale = body.locale if body.locale in ('en', 'ar') else 'en'
     amount, currency = _resolve_price(_NO_OWNER, body.plan_code, plan, body.currency)
+    if _parent_test_price and email == _test_email:
+        amount, currency = _parent_test_price   # payment testing for one email only (PATHFINDER_TEST_EMAIL)
     holder_id = _parent_holder_user(email)
     _save_checkout_context(holder_id, request, body.fbp, body.fbc)
     # A discount code: the parent's holder account stands in for the buyer, so "one use per person" works per parent email.
     original_amount, reservation, discount_amount = amount, None, 0.0
-    if body.discount_code and body.discount_code.strip():
+    if body.discount_code and body.discount_code.strip() and not (_parent_test_price and email == _test_email):
         from types import SimpleNamespace
         reservation = _reserve_discount(SimpleNamespace(id=holder_id, email=email), body.plan_code, body.discount_code, guard_key=f"ip|{_client_ip(request)}")
         try:

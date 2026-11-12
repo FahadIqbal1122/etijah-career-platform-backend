@@ -132,6 +132,16 @@ class ParentPurchaseTests(unittest.TestCase):
             self.buy(plan_code='launchpad_monthly')
         self.assertEqual(self.shop_post.call_args.kwargs['json']['amount'], 330)
 
+    def test_test_price_applies_to_the_test_email_only(self):
+        with mock.patch.object(main, '_parent_test_price', (0.1, 'BHD')), mock.patch.object(main, '_test_email', 'mum@example.com'):
+            self.buy()
+            sent = self.shop_post.call_args.kwargs['json']
+            self.assertEqual((sent['amount'], sent['currency']), (0.1, 'BHD'))
+            self.db.tables['parent_purchases'].clear()
+            self.buy(parent_email='Other@Example.com')
+            sent = self.shop_post.call_args.kwargs['json']
+            self.assertEqual(sent['amount'], 59)
+
     def test_shop_failure_creates_no_row(self):
         self.shop_post.side_effect = main.httpx.RequestError('down')
         with self.assertRaises(HTTPException) as e: self.buy()
