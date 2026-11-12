@@ -48,7 +48,7 @@ class LaunchDateTests(unittest.TestCase):
 
     def test_public_endpoint_returns_the_date(self):
         main._launch_cache.update(value="2026-11-30T20:59:00+00:00", checked_at=main.datetime.now(main.timezone.utc))
-        self.assertEqual(main.get_launch_offer_config(), {"ends_at": "2026-11-30T20:59:00+00:00"})
+        self.assertEqual(main.get_launch_offer_config()["ends_at"], "2026-11-30T20:59:00+00:00")   # "active" follows the clock, see test_launch_price.py
 
 
 class SaveLaunchDateTests(unittest.TestCase):
@@ -80,9 +80,10 @@ class SaveLaunchDateTests(unittest.TestCase):
 
     def test_saving_updates_what_the_gate_reads_straight_away(self):
         self.save("2026-11-30T20:59:00.000Z")
-        self.assertEqual(main.get_launch_offer_config(), {"ends_at": "2026-11-30T20:59:00+00:00"})
+        self.assertEqual(main.get_launch_offer_config()["ends_at"], "2026-11-30T20:59:00+00:00")   # "active" follows the clock, see test_launch_price.py
         self.save(None)
-        self.assertEqual(main.get_launch_offer_config(), {"ends_at": None})
+        out = main.get_launch_offer_config()
+        self.assertEqual((out["ends_at"], out["active"]), (None, True))   # no date: the launch price stays
 
 
 class PaywallConfigReminderFlagTests(unittest.TestCase):

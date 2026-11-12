@@ -145,6 +145,14 @@ LOCAL_PRICES = {
     "launchpad_monthly": {"BHD": 33, "QAR": 321, "KWD": 27, "OMR": 34, "AED": 323, "USD": 88},
 }
 
+# The standard prices, charged once the launch price ends (the Admin end date has passed). Keep in step with the *_standard rows
+# of PRICES in the frontend's src/lib/pricing.ts. SAR is the base; anything not listed here is charged in SAR.
+STANDARD_PRICES_SAR = {"pathfinder": 99, "launchpad_monthly": 440}
+STANDARD_LOCAL_PRICES = {
+    "pathfinder":        {"BHD": 10, "QAR": 96,  "KWD": 8,  "OMR": 10, "AED": 97,  "USD": 26},
+    "launchpad_monthly": {"BHD": 44, "QAR": 428, "KWD": 36, "OMR": 45, "AED": 431, "USD": 117},
+}
+
 # Launchpad for someone who already owns Pathfinder. The 330 SAR launch price is the package price (report + coaching bought
 # together), so a Pathfinder owner who adds coaching later pays this instead. Keep in step with launchpad_upgrade in the
 # frontend's src/lib/pricing.ts.
@@ -450,6 +458,35 @@ class CheckExistingRequest(BaseModel):
     email: str
     phone: str = ''   # the form no longer asks for a phone number
 
+# The minimum age is 16 (Nov 2026). Someone who began an assessment BEFORE the limit and is under 16 may finish it: they are
+# recognised by a draft, or a saved response, created before AGE_LIMIT_FROM that holds an age under 16. Everyone else is refused.
+MIN_ASSESSMENT_AGE = 16
+AGE_LIMIT_FROM = "2026-11-10T12:00:00+00:00"   # the age limit went live on 10 Nov 2026
+
+def _grandfathered_underage(email: str | None, user) -> bool:
+    try:
+        if email:
+            safe = email.strip().replace('\\', '\\\\').replace('%', '\\%').replace('_', '\\_')   # ILIKE wildcards
+            for d in supabase.table('assessment_drafts').select('answers').ilike('email', safe).lt('created_at', AGE_LIMIT_FROM).execute().data or []:
+                try:
+                    if int(float(str((d.get('answers') or {}).get('QO3')))) < MIN_ASSESSMENT_AGE:
+                        return True
+                except (TypeError, ValueError):
+                    continue
+        if user is not None:
+            for r in supabase.table('assessment_responses').select('age').eq('user_id', user.id).lt('created_at', AGE_LIMIT_FROM).execute().data or []:
+                if isinstance(r.get('age'), int) and r['age'] < MIN_ASSESSMENT_AGE:
+                    return True
+    except Exception as e:
+        print("under-16 draft lookup failed, refusing:", repr(e)[:150])
+    return False
+
+def _require_minimum_age(age: int | None, email: str | None, user=None) -> None:
+    if not isinstance(age, int) or age >= MIN_ASSESSMENT_AGE:   # requests always carry an int; anything else is not this check's job
+        return
+    if not _grandfathered_underage(email, user):
+        raise HTTPException(status_code=422, detail="minimum_age_16")
+
 class PartialSaveRequest(BaseModel):
     """The first part of an assessment, saved to the signed-in account at the pay-to-continue step (the paid report is built
     from a saved assessment, so checkout needs one). Every field is optional because the rest is asked after payment."""
@@ -457,7 +494,7 @@ class PartialSaveRequest(BaseModel):
     email: EmailStr
     country: str | None = Field(default=None, max_length=100)
     nationality: str | None = Field(default=None, max_length=100)
-    age: int | None = Field(default=None, ge=16, le=80)
+    age: int | None = Field(default=None, ge=10, le=80)   # under 16 only for drafts begun before the limit: _require_minimum_age
     current_stage: Literal["high_school", "university", "recent_graduate",
         "working_exploring", "career_changer", "returning", "between_roles", "other"] | None = None
     answers: dict[str, Any]
@@ -489,7 +526,7 @@ class SubmitRequest(BaseModel):
     phone: str = Field(default='', max_length=40)   # no longer asked on the form
     country: str = Field(max_length=100)
     nationality: str = Field(max_length=100)
-    age: int = Field(ge=16, le=80)
+    age: int = Field(ge=10, le=80)   # under 16 only for drafts begun before the limit: _require_minimum_age
     experience_level: str = Field(max_length=50)
     # Constrained to QO4's exact option set: content_policy.py's stage-set
     # gating (STILL_ENROLLED_STAGES/ENTERING_MARKET_STAGES/PROFESSIONAL_STAGES)
@@ -916,10 +953,21 @@ def _launch_price_ends_at() -> str | None:
 class LaunchOfferRequest(BaseModel):
     ends_at: str | None = Field(default=None, max_length=40)   # ISO date, or null to hide
 
+def _launch_price_active() -> bool:
+    """True while the launch price applies: no end date set (the date is hidden), or the end date is still ahead. Once the date
+    passes, everything is charged and shown at the standard price. Moving the date in Admin extends the launch price."""
+    ends = _launch_price_ends_at()
+    if not ends:
+        return True
+    try:
+        return datetime.fromisoformat(ends.replace('Z', '+00:00')) > datetime.now(timezone.utc)
+    except ValueError:
+        return True   # an unreadable date never raises a price
+
 @app.get("/launch-offer-config")
 def get_launch_offer_config():
-    """Unauthenticated: the pay gate reads this. null = no deadline shown."""
-    return {"ends_at": _launch_price_ends_at()}
+    """Unauthenticated: the pay gate reads this. ends_at null = no deadline shown. active = the launch price still applies."""
+    return {"ends_at": _launch_price_ends_at(), "active": _launch_price_active()}
 
 @app.get("/admin/launch-offer")
 def get_launch_offer_admin(_=Depends(require_admin)):
@@ -1021,6 +1069,7 @@ def save_partial_assessment(body: PartialSaveRequest, user=Depends(get_current_u
     """Saves the answers so far to the signed-in account as an unfinished assessment (completed=false), so checkout has an
     assessment to point at and the person can carry on after paying. Calling it again updates the same row. The final
     /assessment/submit replaces it with the finished one."""
+    _require_minimum_age(body.age, body.email, user)
     if _assessment_slots_left(user) == 0:
         raise HTTPException(status_code=409, detail="retake_not_included")
     if len(json.dumps(body.answers, default=str)) > DRAFT_MAX_ANSWERS_BYTES:
@@ -1155,6 +1204,7 @@ MAX_RESULT_EMAILS_PER_ADDRESS_PER_DAY = 3
 
 @app.post("/assessment/submit")
 def submit_assessment(body: SubmitRequest, background_tasks: BackgroundTasks, user=Depends(get_optional_user), _beta=Depends(require_beta_open)):
+    _require_minimum_age(body.age, body.email, user)
     # A paid account has used its one full report: no new assessment (a retake would build another full AI report).
     if user and _assessment_slots_left(user) == 0:
         raise HTTPException(status_code=409, detail="retake_not_included")
@@ -4733,17 +4783,24 @@ DISCOUNT_CODE_RE = re.compile(r'^[A-Z0-9_-]{3,32}$')
 DISCOUNT_HOLD_MINUTES = 45   # keep in step with the 45 minutes in discount_code_usage (migrations/discount_codes.sql)
 _THREE_DECIMALS = {"BHD", "KWD", "OMR"}
 
+def _base_sar(plan_code: str, plan: dict):
+    """The SAR price right now: the launch price while it applies, the standard price after. PATHFINDER_TEST_AMOUNT always wins."""
+    if _test_amount or _launch_price_active():
+        return plan["amount"]
+    return STANDARD_PRICES_SAR.get(plan_code, plan["amount"])
+
 def _resolve_price(user_id: str, plan_code: str, plan: dict, wanted_currency: str | None):
     """The amount and currency a buyer is charged before any discount: SAR unless the admin multi-currency switch is on
     and the buyer asked for a currency we have a price for. PATHFINDER_TEST_AMOUNT (payment testing) always wins, so test
     charges never change currency. Adding Launchpad on top of an existing Pathfinder purchase costs the upgrade price."""
-    charge_amount, charge_currency = plan["amount"], plan["currency"]
+    charge_amount, charge_currency = _base_sar(plan_code, plan), plan["currency"]
     upgrade = plan_code == "launchpad_monthly" and not _test_amount and _owns_pathfinder(user_id)
     if upgrade:
         charge_amount = LAUNCHPAD_UPGRADE_SAR
     wanted = (wanted_currency or "").upper()
     if not _test_amount and wanted != charge_currency and _is_multi_currency_enabled():
-        local = (LAUNCHPAD_UPGRADE_LOCAL if upgrade else LOCAL_PRICES.get(plan_code, {})).get(wanted)
+        table = LOCAL_PRICES if _launch_price_active() else STANDARD_LOCAL_PRICES
+        local = (LAUNCHPAD_UPGRADE_LOCAL if upgrade else table.get(plan_code, {})).get(wanted)
         if local is not None:
             charge_amount, charge_currency = local, wanted
     return charge_amount, charge_currency
@@ -4774,7 +4831,7 @@ def _discounted(res: dict, plan_code: str, amount, currency: str) -> tuple[float
     if res["discount_type"] == "percent":
         fraction = Decimal(str(res["percent_off"])) / 100
     else:
-        fraction = min(Decimal(str(res["fixed_off_sar"])) / Decimal(str(PLAN_CATALOG[plan_code]["amount"])), Decimal("0.95"))
+        fraction = min(Decimal(str(res["fixed_off_sar"])) / Decimal(str(_base_sar(plan_code, PLAN_CATALOG[plan_code]))), Decimal("0.95"))
     places = Decimal("0.001") if currency in _THREE_DECIMALS else Decimal("0.01")
     final = (amt - amt * fraction).quantize(places, ROUND_HALF_UP)
     if final <= 0:
@@ -5095,7 +5152,6 @@ def create_parent_purchase(body: ParentPurchaseRequest, request: Request):
             _release_discount(reservation)
             raise
     child_name = (body.child_first_name or '').strip().split(' ')[0] or None
-
     token, parent_token = secrets.token_urlsafe(24), secrets.token_urlsafe(24)
     payload = {
         "external_user_id": holder_id, "first_name": "Parent", "last_name": child_name or "Account", "email": email,
