@@ -224,6 +224,16 @@ class ParentPurchaseTests(unittest.TestCase):
         self.assertTrue(out.get('already'))
         self.assertEqual(self.activate.call_count, 1)
 
+    def test_failed_unlock_gives_the_link_back_so_the_child_can_retry(self):
+        self.buy(); self.pay(); self.give_assessment()
+        self.activate.side_effect = RuntimeError("db down")
+        with self.assertRaises(HTTPException) as e: self.redeem()
+        self.assertEqual(e.exception.status_code, 500)
+        self.assertIsNone(self.row().get('redeemed_at'))
+        self.activate.side_effect = None
+        out, _ = self.redeem()
+        self.assertEqual(out, {"redeemed": True})
+
     def test_launchpad_also_starts_the_coaching_entitlement(self):
         self.buy(plan_code='launchpad_monthly'); self.pay(); self.give_assessment()
         _, tasks = self.redeem()

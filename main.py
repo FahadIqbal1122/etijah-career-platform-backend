@@ -5298,7 +5298,13 @@ def redeem_gift(token: str, body: GiftRedeemRequest, background_tasks: Backgroun
     if not won:
         raise HTTPException(status_code=410, detail="link_used")
     plan_code = row['plan_code']
-    _activate_plan(user.id, plan_code)
+    try:
+        _activate_plan(user.id, plan_code)
+    except Exception as e:
+        # Give the link back so the child can tap again, instead of leaving it used with nothing unlocked.
+        print("gift redeem: activation failed, releasing the link:", repr(e)[:200])
+        supabase.table('parent_purchases').update({'redeemed_by': None, 'redeemed_at': None, 'child_consent_at': None}).eq('token', token).execute()
+        raise HTTPException(status_code=500, detail="Could not unlock the report. Please try again.")
     background_tasks.add_task(_prewarm_full_report, user.id)
     if str(plan_code).startswith('launchpad'):
         plan = PLAN_CATALOG.get(plan_code, {})
