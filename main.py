@@ -5358,17 +5358,44 @@ class FriendInviteRequest(BaseModel):
 class FriendJoinRequest(BaseModel):
     consent: bool = False
 
-def friend_match_pct(scores_a: list[dict], scores_b: list[dict]) -> int | None:
-    """Provisional: how close two people's six interest (RIASEC) scores are, 0-100. 100 = identical profiles.
-    None when either side has too few interest scores to compare."""
-    def vec(scores):
-        return {s['dimension']: float(s['normalized_score']) for s in scores if s.get('framework') == 'riasec'}
-    a, b = vec(scores_a), vec(scores_b)
+# How the study match is worked out (proposal for Noora's approval; the percentage stays hidden until FRIEND_MATCH_ENABLED=1).
+# Two things from the free part of the assessment, both compared after taking away what is true of almost everyone:
+#   1. Interests (70%): the six interest scores (realistic, investigative, artistic, social, enterprising, conventional).
+#   2. Work style (30%): the five personality scores (openness, conscientiousness, extraversion, agreeableness, stability).
+# Almost everyone scores high on a few of these (investigative averages 87, conscientiousness 82), so comparing raw scores would
+# make nearly every pair look 85%+. Each score is first measured against the average student (score_norms.POPULATION_MEANS),
+# so what is compared is what makes each person different. The two "shapes" are compared with cosine similarity
+# (1 = the same shape, 0 = unrelated, -1 = opposite) and mapped to 0-100 as (similarity + 1) / 2.
+# Reading it: 50 is what two unrelated students get, 75+ means clearly similar shapes, below 25 means opposite ones.
+FRIEND_MATCH_WEIGHTS = {"riasec": 0.7, "big_five": 0.3}
+_FRIEND_MIN_DIMS = {"riasec": 4, "big_five": 3}
+
+def _shape_similarity(a: dict, b: dict, framework: str) -> float | None:
+    """0-1 similarity of two people's shapes in one framework, or None when there is too little to compare."""
+    from score_norms import POPULATION_MEANS
     common = [d for d in a if d in b]
-    if len(common) < 4:
+    if len(common) < _FRIEND_MIN_DIMS[framework]:
         return None
-    gap = sum(abs(a[d] - b[d]) for d in common) / len(common)
-    return max(0, min(100, round(100 - gap)))
+    va = [a[d] - POPULATION_MEANS.get((framework, d), 50.0) for d in common]
+    vb = [b[d] - POPULATION_MEANS.get((framework, d), 50.0) for d in common]
+    na, nb = sum(x * x for x in va) ** 0.5, sum(x * x for x in vb) ** 0.5
+    if na < 1e-9 or nb < 1e-9:
+        return 0.5   # someone exactly at the average has no shape to compare: neutral
+    cos = sum(x * y for x, y in zip(va, vb)) / (na * nb)
+    return (max(-1.0, min(1.0, cos)) + 1) / 2
+
+def friend_match_pct(scores_a: list[dict], scores_b: list[dict]) -> int | None:
+    """0-100 study match between two people's free-part scores (see the explanation above). None when interests cannot be compared.
+    The personality part is left out, and its weight given to interests, when either side has too few personality scores."""
+    def vec(scores, fw):
+        return {s['dimension']: float(s['normalized_score']) for s in scores if s.get('framework') == fw}
+    interests = _shape_similarity(vec(scores_a, 'riasec'), vec(scores_b, 'riasec'), 'riasec')
+    if interests is None:
+        return None
+    style = _shape_similarity(vec(scores_a, 'big_five'), vec(scores_b, 'big_five'), 'big_five')
+    w = FRIEND_MATCH_WEIGHTS
+    total = interests if style is None else (w['riasec'] * interests + w['big_five'] * style) / (w['riasec'] + w['big_five'])
+    return max(0, min(100, round(total * 100)))
 
 def _friend_row(token: str) -> dict:
     rows = supabase.table('friend_invites').select('*').eq('token', token).limit(1).execute().data

@@ -18,24 +18,51 @@ from test_parent_purchase import FakeDB
 
 def user(uid): return types.SimpleNamespace(id=uid, email=f"{uid}@example.com", app_metadata={})
 
-def scores(*vals):
-    dims = ['realistic', 'investigative', 'artistic', 'social', 'enterprising', 'conventional']
-    return [{'framework': 'riasec', 'dimension': d, 'normalized_score': v} for d, v in zip(dims, vals)]
+RIASEC = ['realistic', 'investigative', 'artistic', 'social', 'enterprising', 'conventional']
+BIG5 = ['openness', 'conscientiousness', 'extraversion', 'agreeableness', 'stability']
+
+def profile(r=(0,) * 6, b=(0,) * 5):
+    """A person's scores as the average student's plus these differences."""
+    from score_norms import POPULATION_MEANS as M
+    out = [{'framework': 'riasec', 'dimension': d, 'normalized_score': M[('riasec', d)] + x} for d, x in zip(RIASEC, r)]
+    out += [{'framework': 'big_five', 'dimension': d, 'normalized_score': M[('big_five', d)] + x} for d, x in zip(BIG5, b)]
+    return out
+
+SHAPE_R, SHAPE_B = (10, -15, 20, -5, 12, -8), (8, -6, 10, -4, 5)
 
 
 class MatchFormulaTests(unittest.TestCase):
     def test_identical_profiles_are_100(self):
-        self.assertEqual(main.friend_match_pct(scores(10, 20, 30, 40, 50, 60), scores(10, 20, 30, 40, 50, 60)), 100)
+        self.assertEqual(main.friend_match_pct(profile(SHAPE_R, SHAPE_B), profile(SHAPE_R, SHAPE_B)), 100)
 
-    def test_opposite_profiles_are_low_and_stay_in_range(self):
-        pct = main.friend_match_pct(scores(0, 0, 0, 100, 100, 100), scores(100, 100, 100, 0, 0, 0))
-        self.assertEqual(pct, 0)
+    def test_opposite_shapes_are_0(self):
+        neg = lambda t: tuple(-x for x in t)
+        self.assertEqual(main.friend_match_pct(profile(SHAPE_R, SHAPE_B), profile(neg(SHAPE_R), neg(SHAPE_B))), 0)
 
-    def test_close_profiles_are_high(self):
-        self.assertEqual(main.friend_match_pct(scores(50, 50, 50, 50, 50, 50), scores(60, 40, 50, 50, 55, 45)), 95)
+    def test_it_is_the_same_for_both_people(self):
+        a, b = profile(SHAPE_R, SHAPE_B), profile((-5, 20, 3, 9, -12, 4), (-3, 9, 2, 6, -8))
+        self.assertEqual(main.friend_match_pct(a, b), main.friend_match_pct(b, a))
+
+    def test_someone_exactly_at_the_average_gets_a_neutral_50(self):
+        self.assertEqual(main.friend_match_pct(profile(), profile(SHAPE_R, SHAPE_B)), 50)
+
+    def test_being_high_on_what_everyone_is_high_on_does_not_count_as_a_match(self):
+        # investigative averages 87: two students who are both "high" there but differ everywhere else must not look alike
+        a = profile((0, 8, 20, -20, 0, 0), (0,) * 5); b = profile((0, 8, -20, 20, 0, 0), (0,) * 5)
+        self.assertLess(main.friend_match_pct(a, b), 50)
+
+    def test_interests_count_for_70_percent_and_personality_30(self):
+        same_interests_opposite_style = main.friend_match_pct(profile(SHAPE_R, SHAPE_B), profile(SHAPE_R, tuple(-x for x in SHAPE_B)))
+        self.assertEqual(same_interests_opposite_style, 70)
+        opposite_interests_same_style = main.friend_match_pct(profile(SHAPE_R, SHAPE_B), profile(tuple(-x for x in SHAPE_R), SHAPE_B))
+        self.assertEqual(opposite_interests_same_style, 30)
+
+    def test_without_personality_scores_interests_decide_alone(self):
+        only_interests = [s for s in profile(SHAPE_R, SHAPE_B) if s['framework'] == 'riasec']
+        self.assertEqual(main.friend_match_pct(only_interests, profile(SHAPE_R, SHAPE_B)), 100)
 
     def test_too_little_data_gives_nothing(self):
-        self.assertIsNone(main.friend_match_pct(scores(10, 20, 30, 40, 50, 60)[:3], scores(10, 20, 30, 40, 50, 60)))
+        self.assertIsNone(main.friend_match_pct(profile(SHAPE_R, SHAPE_B)[:3], profile(SHAPE_R, SHAPE_B)))
         self.assertIsNone(main.friend_match_pct([], []))
 
 
@@ -104,10 +131,11 @@ class FriendInviteTests(unittest.TestCase):
         t = self.invite()['token']
         main.friend_invite_join(t, main.FriendJoinRequest(consent=True), user('noura'))
         with mock.patch.object(main, 'FRIEND_MATCH_ENABLED', True), \
-             mock.patch.object(main, 'compute_scores', side_effect=lambda a: scores(50, 50, 50, 50, 50, 50) if 'A' in a else scores(60, 40, 50, 50, 55, 45)):
+             mock.patch.object(main, 'compute_scores', side_effect=lambda a: profile(SHAPE_R, SHAPE_B) if 'A' in a else profile((-5, 20, 3, 9, -12, 4), (-3, 9, 2, 6, -8))):
             a = main.friend_mine(user('amal')); b = main.friend_mine(user('noura'))
-        self.assertEqual(a['invites'][0]['match_pct'], 95)
-        self.assertEqual(b['invites'][0]['match_pct'], 95)
+        want = main.friend_match_pct(profile(SHAPE_R, SHAPE_B), profile((-5, 20, 3, 9, -12, 4), (-3, 9, 2, 6, -8)))
+        self.assertEqual((a['invites'][0]['match_pct'], b['invites'][0]['match_pct']), (want, want))
+        self.assertIsNotNone(want)
         self.assertEqual(set(a['invites'][0]), {'token', 'role', 'status', 'other_first_name', 'match_pct'})
 
 

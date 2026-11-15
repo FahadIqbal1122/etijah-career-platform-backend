@@ -14,6 +14,7 @@ import main
 from fastapi import Request
 from fastapi.testclient import TestClient
 from test_parent_purchase import FakeDB
+from test_friend_invite import profile
 
 
 def who(request: Request):
@@ -62,18 +63,13 @@ class FriendHttpTests(unittest.TestCase):
         self.assertIsNone(a['invites'][0]['match_pct']); self.assertFalse(a['match_enabled'])
         # switched on: the same number for both, and nothing else about the other person
         with mock.patch.object(main, 'FRIEND_MATCH_ENABLED', True), \
-             mock.patch.object(main, 'compute_scores', side_effect=lambda ans: self._s(50) if 'A' in ans else self._s(60)):
+             mock.patch.object(main, 'compute_scores', side_effect=lambda ans: profile((10, -15, 20, -5, 12, -8), (8, -6, 10, -4, 5)) if 'A' in ans else profile((12, -10, 15, -8, 9, -5), (6, -5, 9, -2, 4))):
             a = self.c.get('/friend/mine', headers=A).json(); n = self.c.get('/friend/mine', headers=N).json()
-        self.assertEqual((a['invites'][0]['match_pct'], n['invites'][0]['match_pct']), (90, 90))
+        pa, pn = a['invites'][0]['match_pct'], n['invites'][0]['match_pct']
+        self.assertEqual(pa, pn); self.assertGreater(pa, 80)
         self.assertNotIn('answers', str(a)); self.assertNotIn('Saleh', str(n)); self.assertNotIn('Ali', str(a))
         # a stranger sees nothing of this pair
         self.assertEqual(self.c.get('/friend/mine', headers={'x-test-user': 'stranger'}).json()['invites'], [])
-
-    @staticmethod
-    def _s(v):
-        return [{'framework': 'riasec', 'dimension': d, 'normalized_score': v}
-                for d in ['realistic', 'investigative', 'artistic', 'social', 'enterprising', 'conventional']] if v == 50 else \
-               [{'framework': 'riasec', 'dimension': d, 'normalized_score': v + 0} for d in ['realistic', 'investigative', 'artistic', 'social', 'enterprising', 'conventional']]
 
     def test_bad_links_and_rate_limit(self):
         self.assertEqual(self.c.get('/friend/invite/nope').status_code, 404)
