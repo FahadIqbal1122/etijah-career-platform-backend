@@ -5344,6 +5344,113 @@ def redeem_gift(token: str, body: GiftRedeemRequest, background_tasks: Backgroun
     return {"redeemed": True}
 
 
+# ── Friend comparison (Noora's pay-gate point 15) ──────────────────────────────
+# A student at the pay gate invites a friend; the friend takes the free part; both see a "study match" teaser. Only the match
+# percentage is shown to the other person, never answers or scores. The percentage stays hidden until FRIEND_MATCH_ENABLED=1,
+# because the formula below is a first proposal that still needs Noora's approval.
+FRIEND_VALID_DAYS = 30
+FRIEND_MATCH_ENABLED = os.getenv("FRIEND_MATCH_ENABLED") == "1"
+
+class FriendInviteRequest(BaseModel):
+    consent: bool = False
+    locale: str | None = Field(default=None, max_length=5)
+
+class FriendJoinRequest(BaseModel):
+    consent: bool = False
+
+def friend_match_pct(scores_a: list[dict], scores_b: list[dict]) -> int | None:
+    """Provisional: how close two people's six interest (RIASEC) scores are, 0-100. 100 = identical profiles.
+    None when either side has too few interest scores to compare."""
+    def vec(scores):
+        return {s['dimension']: float(s['normalized_score']) for s in scores if s.get('framework') == 'riasec'}
+    a, b = vec(scores_a), vec(scores_b)
+    common = [d for d in a if d in b]
+    if len(common) < 4:
+        return None
+    gap = sum(abs(a[d] - b[d]) for d in common) / len(common)
+    return max(0, min(100, round(100 - gap)))
+
+def _friend_row(token: str) -> dict:
+    rows = supabase.table('friend_invites').select('*').eq('token', token).limit(1).execute().data
+    if not rows:
+        raise HTTPException(status_code=404, detail="link_invalid")
+    return rows[0]
+
+def _friend_expired(row: dict) -> bool:
+    stamp = re.sub(r'\.(\d+)', lambda m: '.' + (m.group(1) + '000000')[:6], row['created_at'].replace('Z', '+00:00'))
+    return datetime.fromisoformat(stamp) + timedelta(days=FRIEND_VALID_DAYS) < datetime.now(timezone.utc)
+
+def _latest_answers(user_id: str) -> tuple[dict, str | None]:
+    rows = supabase.table('assessment_responses').select('answers, full_name').eq('user_id', user_id).order('created_at', desc=True).limit(1).execute().data
+    if not rows:
+        return {}, None
+    name = (rows[0].get('full_name') or '').strip().split(' ')[0] or None
+    return rows[0].get('answers') or {}, name
+
+@app.post("/friend/invite")
+def create_friend_invite(body: FriendInviteRequest, user=Depends(get_current_user)):
+    """Signed-in student at the pay gate: makes a link to send to a friend. The student agrees that the friend will see a match percentage with them."""
+    if not body.consent:
+        raise HTTPException(status_code=400, detail="consent_required")
+    if not request_guard.allow(f"friend-invite|{user.id}", (10, 86400)):
+        raise HTTPException(status_code=429, detail="rate_limited")
+    _, name = _latest_answers(user.id)
+    locale = body.locale if body.locale in ('en', 'ar') else 'en'
+    token = secrets.token_urlsafe(18)
+    supabase.table('friend_invites').insert({
+        'token': token, 'inviter_user_id': user.id, 'inviter_name': name, 'locale': locale,
+        'inviter_consent_at': datetime.now(timezone.utc).isoformat(),
+    }).execute()
+    return {"token": token, "url": f"{_site_base()}/{locale}/friend/{token}"}
+
+@app.get("/friend/invite/{token}")
+def friend_invite_info(token: str):
+    """Public. What the friend sees on opening the link: who invited them, and whether the link can still be used."""
+    row = _friend_row(token)
+    if _friend_expired(row):
+        raise HTTPException(status_code=410, detail="link_expired")
+    return {"inviter_first_name": row.get('inviter_name'), "status": "used" if row.get('friend_user_id') else "open",
+            "locale": row.get('locale') or 'en'}
+
+@app.post("/friend/invite/{token}/join")
+def friend_invite_join(token: str, body: FriendJoinRequest, user=Depends(get_current_user)):
+    """The friend, signed in, agrees to be compared. One friend per invite."""
+    row = _friend_row(token)
+    if row.get('friend_user_id') == user.id:
+        return {"joined": True, "already": True}
+    if row['inviter_user_id'] == user.id:
+        raise HTTPException(status_code=400, detail="own_invite")
+    if row.get('friend_user_id'):
+        raise HTTPException(status_code=410, detail="link_used")
+    if _friend_expired(row):
+        raise HTTPException(status_code=410, detail="link_expired")
+    if not body.consent:
+        raise HTTPException(status_code=400, detail="consent_required")
+    won = supabase.table('friend_invites').update({'friend_user_id': user.id, 'friend_consent_at': datetime.now(timezone.utc).isoformat()}) \
+        .eq('token', token).is_('friend_user_id', 'null').execute().data
+    if not won:
+        raise HTTPException(status_code=410, detail="link_used")
+    return {"joined": True}
+
+@app.get("/friend/mine")
+def friend_mine(user=Depends(get_current_user)):
+    """Signed-in student: the invites they sent or accepted, with the other person's first name and, once switched on, the match."""
+    sent = supabase.table('friend_invites').select('*').eq('inviter_user_id', user.id).execute().data or []
+    got = supabase.table('friend_invites').select('*').eq('friend_user_id', user.id).execute().data or []
+    out = []
+    for row, role in [(r, 'inviter') for r in sent] + [(r, 'friend') for r in got]:
+        other_id = row.get('friend_user_id') if role == 'inviter' else row['inviter_user_id']
+        item = {"token": row['token'], "role": role, "status": "joined" if other_id else "waiting", "other_first_name": None, "match_pct": None}
+        if other_id:
+            mine, _ = _latest_answers(user.id)
+            theirs, their_name = _latest_answers(other_id)
+            item["other_first_name"] = row.get('inviter_name') if role == 'friend' else their_name
+            if FRIEND_MATCH_ENABLED and mine and theirs:
+                item["match_pct"] = friend_match_pct(compute_scores(mine), compute_scores(theirs))
+        out.append(item)
+    return {"invites": out, "match_enabled": FRIEND_MATCH_ENABLED}
+
+
 @app.get("/billing/transaction")
 def get_my_transaction(user=Depends(get_current_user)):
     data = supabase.table('transactions') \
