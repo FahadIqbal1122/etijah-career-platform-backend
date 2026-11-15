@@ -5459,6 +5459,101 @@ def friend_invite_join(token: str, body: FriendJoinRequest, user=Depends(get_cur
         raise HTTPException(status_code=410, detail="link_used")
     return {"joined": True}
 
+# ── Friend comparison, phase 2: the fuller comparison after payment ─────────────
+# Opens only when BOTH people have finished the full assessment on a paid plan AND both have agreed a second time.
+# Fixed rules, no AI. What the other person ever sees of you: your first name, the careers you share, who should lead, and
+# which strengths one of you has more of. Never scores, values, personality results or answers.
+FRIEND_FULL_ENABLED = os.getenv("FRIEND_FULL_ENABLED") == "1"
+_FRIEND_STRENGTHS = ('communication', 'execution', 'leadership', 'learning', 'relationships', 'strategic')
+_FRIEND_LEAD_DIMS = ('leadership', 'strategic', 'communication')
+FRIEND_LEAD_GAP = 8          # points of difference before one person is named the lead
+FRIEND_COMPLEMENT_GAP = 15   # points of difference before a strength counts as one person's
+
+def friend_compare(a: dict, b: dict) -> dict:
+    """a and b: {'strengths': {dimension: 0-100}, 'riasec_top': [types], 'careers': [titles]}. Returns the comparison with
+    'a' meaning the first person. Pure function."""
+    shared_careers = [t for t in a.get('careers', []) if t in set(b.get('careers', []))][:5]
+    shared_types = [t for t in a.get('riasec_top', []) if t in set(b.get('riasec_top', []))]
+    points = len(shared_careers) * 2 + len(shared_types)
+    same_major = 'same' if points >= 4 else 'partly' if points >= 2 else 'different'
+    sa, sb = a.get('strengths', {}), b.get('strengths', {})
+    common = [d for d in _FRIEND_STRENGTHS if d in sa and d in sb]
+    lead, complement = None, None
+    if len(common) >= 4:
+        lead_dims = [d for d in _FRIEND_LEAD_DIMS if d in common]
+        if lead_dims:
+            gap = sum(sa[d] for d in lead_dims) / len(lead_dims) - sum(sb[d] for d in lead_dims) / len(lead_dims)
+            lead = 'a' if gap >= FRIEND_LEAD_GAP else 'b' if gap <= -FRIEND_LEAD_GAP else 'shared'
+        diffs = sorted(((d, sa[d] - sb[d]) for d in common if abs(sa[d] - sb[d]) >= FRIEND_COMPLEMENT_GAP), key=lambda x: -abs(x[1]))[:3]
+        complement = [{'dimension': d, 'stronger': 'a' if g > 0 else 'b'} for d, g in diffs]
+    return {'same_major': same_major, 'shared_careers': shared_careers, 'shared_types': shared_types, 'lead': lead, 'complement': complement}
+
+def _friend_person(user_id: str) -> dict | None:
+    """The comparison inputs for someone's latest finished assessment, or None when they have none. Careers come only from the
+    cache already made for their report (never a new AI call here); without it the interest types alone are compared."""
+    rid = _latest_completed_id(user_id)
+    if not rid:
+        return None
+    rows = supabase.table('assessment_results').select('*').eq('response_id', rid).execute().data or []
+    if not rows:
+        return None
+    summary = build_framework_output(rows)
+    careers: list[str] = []
+    try:
+        prof = supabase.table('assessment_responses').select('career_semantic_scores_cache, education_field, career_direction, sectors_of_interest, experience_level, current_stage, answers') \
+            .eq('id', rid).limit(1).execute().data
+        cache = (prof[0].get('career_semantic_scores_cache') if prof else None)
+        if cache:
+            pool = supabase.table('careers').select('*').eq('is_approved', True).execute().data or []
+            careers = [c['title'] for c in score_careers(summary, prof[0], pool, cache)[:10]]
+    except Exception as e:
+        print("friend compare: careers unavailable, comparing interest types only:", repr(e)[:150])
+    return {'strengths': {r['dimension']: float(r['normalized_score']) for r in rows if r.get('framework') == 'strengths'},
+            'riasec_top': summary.get('riasec', {}).get('top_types', []), 'careers': careers}
+
+def _friend_member(row: dict, user_id: str) -> str | None:
+    if row.get('inviter_user_id') == user_id: return 'inviter'
+    if row.get('friend_user_id') == user_id: return 'friend'
+    return None
+
+@app.post("/friend/invite/{token}/full-consent")
+def friend_full_consent(token: str, body: FriendJoinRequest, user=Depends(get_current_user)):
+    """The second agreement, from each person: the fuller comparison may show their first name, shared careers, who should lead and strengths."""
+    row = _friend_row(token)
+    role = _friend_member(row, user.id)
+    if not role or not row.get('friend_user_id'):
+        raise HTTPException(status_code=403, detail="not_a_member")
+    if not body.consent:
+        raise HTTPException(status_code=400, detail="consent_required")
+    supabase.table('friend_invites').update({f'{role}_full_consent_at': datetime.now(timezone.utc).isoformat()}).eq('token', token).execute()
+    return {"agreed": True}
+
+@app.get("/friend/invite/{token}/compare")
+def friend_full_compare(token: str, user=Depends(get_current_user)):
+    row = _friend_row(token)
+    role = _friend_member(row, user.id)
+    if not role:
+        raise HTTPException(status_code=403, detail="not_a_member")
+    if not FRIEND_FULL_ENABLED:
+        return {"status": "off"}
+    other_id = row.get('friend_user_id') if role == 'inviter' else row['inviter_user_id']
+    if not other_id:
+        return {"status": "waiting_friend"}
+    other_role = 'friend' if role == 'inviter' else 'inviter'
+    mine = _friend_person(user.id) if get_effective_tier(user.id) != "free" else None
+    if not mine:
+        return {"status": "need_my_report"}
+    if not row.get(f'{role}_full_consent_at'):
+        return {"status": "need_my_consent"}
+    if not row.get(f'{other_role}_full_consent_at'):
+        return {"status": "waiting_friend_consent"}
+    theirs = _friend_person(other_id) if get_effective_tier(other_id) != "free" else None
+    if not theirs:
+        return {"status": "waiting_friend_report"}
+    _, their_name = _latest_answers(other_id)
+    return {"status": "ready", "friend_first_name": row.get('inviter_name') if role == 'friend' else their_name,
+            "comparison": friend_compare(mine, theirs)}
+
 @app.get("/friend/mine")
 def friend_mine(user=Depends(get_current_user)):
     """Signed-in student: the invites they sent or accepted, with the other person's first name and, once switched on, the match."""
