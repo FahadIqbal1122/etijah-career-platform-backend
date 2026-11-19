@@ -4791,7 +4791,7 @@ def coach_chat(payload: CoachChatRequest, request: Request, user=Depends(get_opt
 
 # ── Discount codes ─────────────────────────────────────────────────────────────
 DISCOUNT_CODE_RE = re.compile(r'^[A-Z0-9_-]{3,32}$')
-DISCOUNT_HOLD_MINUTES = 45   # keep in step with the 45 minutes in discount_code_usage (migrations/discount_codes.sql)
+DISCOUNT_HOLD_MINUTES = 120   # keep in step with the 120 minutes in discount_code_usage (migrations/discount_codes.sql); long enough to finish paying at the gateway
 _THREE_DECIMALS = {"BHD", "KWD", "OMR"}
 
 def _base_sar(plan_code: str, plan: dict):
@@ -4800,12 +4800,16 @@ def _base_sar(plan_code: str, plan: dict):
         return plan["amount"]
     return STANDARD_PRICES_SAR.get(plan_code, plan["amount"])
 
+def _is_upgrade(user_id: str, plan_code: str) -> bool:
+    """Launchpad bought on top of an existing Pathfinder purchase (charged the upgrade price)."""
+    return plan_code == "launchpad_monthly" and not _test_amount and bool(user_id) and _owns_pathfinder(user_id)
+
 def _resolve_price(user_id: str, plan_code: str, plan: dict, wanted_currency: str | None):
     """The amount and currency a buyer is charged before any discount: SAR unless the admin multi-currency switch is on
     and the buyer asked for a currency we have a price for. PATHFINDER_TEST_AMOUNT (payment testing) always wins, so test
     charges never change currency. Adding Launchpad on top of an existing Pathfinder purchase costs the upgrade price."""
     charge_amount, charge_currency = _base_sar(plan_code, plan), plan["currency"]
-    upgrade = plan_code == "launchpad_monthly" and not _test_amount and _owns_pathfinder(user_id)
+    upgrade = _is_upgrade(user_id, plan_code)
     if upgrade:
         charge_amount = LAUNCHPAD_UPGRADE_SAR
     wanted = (wanted_currency or "").upper()
@@ -4821,7 +4825,9 @@ def _reserve_discount(user, plan_code: str, code: str, dry_run: bool = False, gu
     code = (code or "").strip().upper()
     if not DISCOUNT_CODE_RE.match(code):
         raise HTTPException(status_code=400, detail="discount_invalid")
-    if not request_guard.allow(f"discount|{guard_key or user.id}", (20, 3600)):   # stops scripted guessing of codes
+    # Stops scripted guessing of codes. Per signed-in user: 20 an hour. Per IP (the parent page, no login): 120, because a
+    # school or office shares one address.
+    if not request_guard.allow(f"discount|{guard_key or user.id}", (120, 3600) if guard_key else (20, 3600)):
         raise HTTPException(status_code=429, detail="discount_rate_limited")
     try:
         res = supabase.rpc('reserve_discount_code', {
@@ -4835,14 +4841,16 @@ def _reserve_discount(user, plan_code: str, code: str, dry_run: bool = False, gu
         raise HTTPException(status_code=400, detail=f"discount_{(res or {}).get('error', 'invalid')}")
     return res
 
-def _discounted(res: dict, plan_code: str, amount, currency: str) -> tuple[float, float]:
+def _discounted(res: dict, plan_code: str, amount, currency: str, upgrade: bool = False) -> tuple[float, float]:
     """(final price, discount) for a successful reservation. Fixed discounts are SAR off the plan's SAR price, applied as the
-    same proportion in other currencies. Decimal throughout, rounded to the currency's decimals."""
+    same proportion in other currencies. For a Launchpad upgrade the proportion is taken against the upgrade price, so "30 SAR off"
+    really takes 30 SAR off. Decimal throughout, rounded to the currency's decimals."""
     amt = Decimal(str(amount))
     if res["discount_type"] == "percent":
         fraction = Decimal(str(res["percent_off"])) / 100
     else:
-        fraction = min(Decimal(str(res["fixed_off_sar"])) / Decimal(str(_base_sar(plan_code, PLAN_CATALOG[plan_code]))), Decimal("0.95"))
+        base = LAUNCHPAD_UPGRADE_SAR if upgrade else _base_sar(plan_code, PLAN_CATALOG[plan_code])
+        fraction = min(Decimal(str(res["fixed_off_sar"])) / Decimal(str(base)), Decimal("0.95"))
     places = Decimal("0.001") if currency in _THREE_DECIMALS else Decimal("0.01")
     final = (amt - amt * fraction).quantize(places, ROUND_HALF_UP)
     if final <= 0:
@@ -4899,7 +4907,7 @@ def preview_discount(body: DiscountPreviewRequest, user=Depends(get_current_user
         raise HTTPException(status_code=400, detail=f"Unknown plan_code: {body.plan_code}")
     amount, currency = _resolve_price(user.id, body.plan_code, plan, body.currency)
     res = _reserve_discount(user, body.plan_code, body.code, dry_run=True)
-    final, discount = _discounted(res, body.plan_code, amount, currency)
+    final, discount = _discounted(res, body.plan_code, amount, currency, upgrade=_is_upgrade(user.id, body.plan_code))
     return {"original": amount, "discount": discount, "final": final, "currency": currency}
 
 
@@ -4930,7 +4938,7 @@ def create_checkout(body: CheckoutRequest, request: Request, user=Depends(get_cu
     if body.discount_code and body.discount_code.strip():
         reservation = _reserve_discount(user, body.plan_code, body.discount_code)
         try:
-            charge_amount, discount_amount = _discounted(reservation, body.plan_code, charge_amount, charge_currency)
+            charge_amount, discount_amount = _discounted(reservation, body.plan_code, charge_amount, charge_currency, upgrade=_is_upgrade(user.id, body.plan_code))
         except Exception:
             _release_discount(reservation)
             raise
@@ -5913,6 +5921,14 @@ def _apply_org_grant(user, background_tasks: BackgroundTasks | None = None) -> d
                 supabase.table('org_domain_grants').delete().eq('user_id', user.id).is_('revoked_at', 'null').execute()
                 raise
             out["org_granted"] = True
+            if str(row.get("plan_code") or "").startswith("launchpad"):
+                # Launchpad includes a 1:1 coaching session, so a seat on it needs the academy entitlement too
+                # (idempotent per reference, best-effort).
+                org_ref = f"org:{domain}:{user.id}"
+                if background_tasks is not None:
+                    background_tasks.add_task(_create_academy_coaching_purchase, user.id, org_ref)
+                else:
+                    _create_academy_coaching_purchase(user.id, org_ref)
             if background_tasks is not None:
                 background_tasks.add_task(_prewarm_full_report, user.id)   # builds the full report + sends the "ready" email
             print(f"Org access granted: {email} ({domain})")
@@ -6063,6 +6079,25 @@ def _send_meta_purchase_event(user_id: str, order_ref: str, amount: float, curre
         print(f"Meta CAPI purchase event failed for order_ref={order_ref}:", e)
 
 
+_webhook_inflight: set[str] = set()
+
+def _plan_applied(user_id: str, plan_code: str) -> bool:
+    """True when this paid plan is already on the account: Pathfinder unlocked, or (Launchpad) a running Launchpad window.
+    On a lookup error answers True, so a database hiccup can never apply a plan twice."""
+    try:
+        row = supabase.table('user_plans').select('pathfinder_unlocked,subscription_plan_code,subscription_current_period_end') \
+            .eq('user_id', user_id).execute().data
+        if not row:
+            return False
+        r = row[0]
+        if str(plan_code).startswith('launchpad'):
+            end = r.get('subscription_current_period_end')
+            return bool(r.get('pathfinder_unlocked')) and bool(end) and _parse_ts(end) > datetime.now(timezone.utc)
+        return bool(r.get('pathfinder_unlocked'))
+    except Exception as e:
+        print("plan check failed (assuming applied):", repr(e))
+        return True
+
 @app.post("/hub/transactions")
 async def receive_hub_transaction(request: Request, background_tasks: BackgroundTasks):
     if not HUB_API_KEY:
@@ -6110,13 +6145,24 @@ async def receive_hub_transaction(request: Request, background_tasks: Background
             _send_meta_purchase_event(body.external_user_id, body.order_ref, body.amount, body.currency, body.tap_charge_id)
         return {"received": True}
 
-    if result.data:
+    first_paid = bool(result.data)
+    if first_paid:
         _settle_discount(body.external_user_id, body.order_ref, body.plan_code, body.amount)
         _close_parent_links(body.external_user_id, body.plan_code)
         # Meta first: it's best-effort and never raises, so a failure in the plan
         # write below can't stop the Purchase event from being sent.
         _send_meta_purchase_event(body.external_user_id, body.order_ref, body.amount, body.currency, body.tap_charge_id)
-        _activate_plan(body.external_user_id, body.plan_code)
+    elif str(body.status).lower() == 'paid' and body.order_ref not in _webhook_inflight and not _plan_applied(body.external_user_id, body.plan_code):
+        # A retry of an order that is already booked as paid, but whose first delivery failed before the plan was applied
+        # (the booking is saved first, so without this the buyer would have paid and never been unlocked).
+        print(f"hub webhook retry: plan was not applied for order_ref={body.order_ref}, applying it now")
+        first_paid = True
+    if first_paid:
+        _webhook_inflight.add(body.order_ref)   # a duplicate delivery arriving right now must not apply the plan a second time
+        try:
+            _activate_plan(body.external_user_id, body.plan_code)
+        finally:
+            _webhook_inflight.discard(body.order_ref)
         # Start building the full report now so it is mostly ready when the buyer comes back.
         background_tasks.add_task(_prewarm_full_report, body.external_user_id)
         background_tasks.add_task(_send_payment_receipt, body.external_user_id, body.order_ref)

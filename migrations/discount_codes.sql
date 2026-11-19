@@ -46,14 +46,14 @@ alter table discount_redemptions enable row level security;
 create or replace view discount_code_usage with (security_invoker = true) as
 select c.*,
   count(r.id) filter (where r.status = 'redeemed') as redeemed_count,
-  count(r.id) filter (where r.status = 'reserved' and r.created_at > now() - interval '45 minutes') as pending_count
+  count(r.id) filter (where r.status = 'reserved' and r.created_at > now() - interval '120 minutes') as pending_count
 from discount_codes c left join discount_redemptions r on r.code_id = c.id
 group by c.id;
 
 -- One locked step: check the code and take a use (p_dry_run = check only, used for the price preview).
 create or replace function reserve_discount_code(
   p_code text, p_user_id uuid, p_email text, p_plan_code text,
-  p_dry_run boolean default false, p_hold_minutes int default 45)
+  p_dry_run boolean default false, p_hold_minutes int default 120)
 returns jsonb language plpgsql security definer set search_path = public as $$
 declare c discount_codes%rowtype; v_used int; v_mine int; v_id uuid;
 begin
